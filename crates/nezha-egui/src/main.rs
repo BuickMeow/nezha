@@ -1,6 +1,7 @@
 use eframe::egui;
 use nezha_core::MidiFile;
 use nezha_renderer::NoteInstance;
+use std::sync::Arc;
 
 mod sidebar;
 mod config_panel;
@@ -8,6 +9,7 @@ mod piano_view;
 mod transport;
 
 pub struct App {
+    wgpu_state: Arc<eframe::egui_wgpu::RenderState>,
     renderer: nezha_renderer::Renderer,
     _preview_texture: wgpu::Texture,
     preview_view: wgpu::TextureView,
@@ -19,10 +21,16 @@ pub struct App {
     midi_file: Option<MidiFile>,
     midi_path: Option<String>,
     pending_midi_load: Option<String>,
-    /// 每 key 的扫描指针，指向第一个可能可见的音符
     scan_indices: [usize; 128],
-    /// 上一帧的时间，用于检测时间回退
     last_time: f32,
+    render_width: u32,
+    render_height: u32,
+    fps: u32,
+    needs_resize: bool,
+    timeline_state: transport::TimelineState,
+    export_format: String,
+    encoder: String,
+    export_path: Option<String>,
 }
 
 impl App {
@@ -39,41 +47,21 @@ impl App {
             .insert(0, "MiSans".to_owned());
         cc.egui_ctx.set_fonts(fonts);
 
-        let wgpu_render_state = cc
+        let wgpu_state = cc
             .wgpu_render_state
-            .as_ref()
+            .clone()
             .expect("wgpu backend required");
-        let device = wgpu_render_state.device.clone();
-        let queue = wgpu_render_state.queue.clone();
+        let device = &wgpu_state.device;
+        let queue = &wgpu_state.queue;
 
-        let format = wgpu_render_state.target_format;
+        let format = wgpu_state.target_format;
         let renderer = nezha_renderer::Renderer::new(device.clone(), queue.clone(), format);
 
-        let texture_size = wgpu::Extent3d {
-            width: 1280,
-            height: 720,
-            depth_or_array_layers: 1,
-        };
-        let preview_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("preview_texture"),
-            size: texture_size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let preview_view = preview_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut renderer_lock = wgpu_render_state.renderer.write();
-        let preview_texture_id = renderer_lock.register_native_texture(
-            &device,
-            &preview_view,
-            wgpu::FilterMode::Linear,
-        );
+        let (preview_texture, preview_view, preview_texture_id) =
+            Self::create_preview(device, &mut wgpu_state.renderer.write(), format, 1920, 1080);
 
         Self {
+            wgpu_state: wgpu_state.into(),
             renderer,
             _preview_texture: preview_texture,
             preview_view,
@@ -87,7 +75,46 @@ impl App {
             pending_midi_load: None,
             scan_indices: [0; 128],
             last_time: -1.0,
+            render_width: 1920,
+            render_height: 1080,
+            fps: 60,
+            needs_resize: false,
+            timeline_state: transport::TimelineState::default(),
+            export_format: "MP4".to_string(),
+            encoder: "H.264".to_string(),
+            export_path: None,
         }
+    }
+
+    fn create_preview(
+        device: &wgpu::Device,
+        egui_renderer: &mut eframe::egui_wgpu::Renderer,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView, egui::TextureId) {
+        let texture_size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let preview_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("preview_texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let preview_view = preview_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let preview_texture_id = egui_renderer.register_native_texture(
+            device,
+            &preview_view,
+            wgpu::FilterMode::Linear,
+        );
+        (preview_texture, preview_view, preview_texture_id)
     }
 
     fn load_midi(&mut self, path: String) {
@@ -95,6 +122,7 @@ impl App {
             Ok(midi) => {
                 self.duration = midi.duration;
                 self.midi_path = Some(path);
+                self.timeline_state.update_duration(self.duration);
                 self.midi_file = Some(midi);
                 self.current_time = 0.0;
                 self.scan_indices = [0; 128];
@@ -143,7 +171,6 @@ impl App {
         let time_top = time + visible_future;
         let time_bottom = time - visible_past;
 
-        // 时间回退时重置扫描指针
         if time < self.last_time {
             self.scan_indices = [0; 128];
         }
@@ -159,9 +186,6 @@ impl App {
             }
 
             let mut scan = self.scan_indices[key as usize];
-
-            // 推进扫描指针：跳过已经彻底离开屏幕底部的音符
-            // 音符按 start 排序，但 end 不一定有序，所以只能线性推进
             while scan < notes.len() && notes[scan].end < time_bottom {
                 scan += 1;
             }
@@ -210,6 +234,21 @@ impl eframe::App for App {
         let midi_path_clone = self.midi_path.clone();
         let mut should_open_dialog = false;
 
+        // 检测分辨率变更并重建 texture
+        if self.needs_resize {
+            self.needs_resize = false;
+            let format = self.wgpu_state.target_format;
+            let device = &self.wgpu_state.device;
+            let mut egui_renderer = self.wgpu_state.renderer.write();
+            egui_renderer.free_texture(&self.preview_texture_id);
+            let (tex, view, id) = Self::create_preview(
+                device, &mut egui_renderer, format, self.render_width, self.render_height,
+            );
+            self._preview_texture = tex;
+            self.preview_view = view;
+            self.preview_texture_id = id;
+        }
+
         egui::Panel::left("sidebar")
             .exact_size(60.0)
             .resizable(false)
@@ -228,6 +267,13 @@ impl eframe::App for App {
                     &mut || {
                         should_open_dialog = true;
                     },
+                    &mut self.render_width,
+                    &mut self.render_height,
+                    &mut self.fps,
+                    &mut self.needs_resize,
+                    &mut self.export_format,
+                    &mut self.encoder,
+                    &mut self.export_path,
                 );
             });
 
@@ -236,10 +282,16 @@ impl eframe::App for App {
         }
 
         egui::Panel::bottom("transport")
-            .exact_size(60.0)
+            .exact_size(200.0)
             .resizable(false)
             .show_inside(ui, |ui| {
-                transport::show(ui, &mut self.is_playing, &mut self.current_time, self.duration);
+                transport::show(
+                    ui,
+                    &mut self.is_playing,
+                    &mut self.current_time,
+                    self.duration,
+                    &mut self.timeline_state,
+                );
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -252,19 +304,20 @@ impl eframe::App for App {
             }
 
             let available = ui.available_size();
-            let width = available.x;
-            let height = available.y;
+            let rw = self.render_width as f32;
+            let rh = self.render_height as f32;
 
-            let instances = self.build_instances(width, height, self.current_time);
+            let instances = self.build_instances(rw, rh, self.current_time);
             self.renderer.render(
                 &self.preview_view,
-                1280,
-                720,
+                self.render_width,
+                self.render_height,
                 self.current_time,
                 &instances,
             );
 
-            piano_view::show(ui, self.preview_texture_id, available);
+            let aspect = rw / rh;
+            piano_view::show(ui, self.preview_texture_id, available, aspect);
         });
 
         ui.ctx().request_repaint();
