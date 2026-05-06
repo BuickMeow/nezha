@@ -1,0 +1,10 @@
+[package]
+name = "nezha-renderer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu = { workspace = true }
+pollster = { workspace = true }
+bytemuck = { workspace = true }
+nezha-core = { path = "../nezha-core" }

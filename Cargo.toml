@@ -1,0 +1,10 @@
+[workspace]
+members = ["crates/nezha-core", "crates/nezha-renderer", "crates/nezha-egui"]
+resolver = "2"
+
+[workspace.dependencies]
+wgpu = "29.0.3"
+eframe = { version = "0.34.2", features = ["wgpu"] }
+egui = "0.34.2"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
