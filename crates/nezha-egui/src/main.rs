@@ -19,11 +19,14 @@ pub struct App {
     midi_file: Option<MidiFile>,
     midi_path: Option<String>,
     pending_midi_load: Option<String>,
+    /// 每 key 的扫描指针，指向第一个可能可见的音符
+    scan_indices: [usize; 128],
+    /// 上一帧的时间，用于检测时间回退
+    last_time: f32,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // 加载自定义字体
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "MiSans".to_owned(),
@@ -82,6 +85,8 @@ impl App {
             midi_file: None,
             midi_path: None,
             pending_midi_load: None,
+            scan_indices: [0; 128],
+            last_time: -1.0,
         }
     }
 
@@ -92,6 +97,8 @@ impl App {
                 self.midi_path = Some(path);
                 self.midi_file = Some(midi);
                 self.current_time = 0.0;
+                self.scan_indices = [0; 128];
+                self.last_time = -1.0;
             }
             Err(e) => {
                 eprintln!("Failed to load MIDI: {}", e);
@@ -117,7 +124,7 @@ impl App {
     }
 
     fn build_instances(
-        &self,
+        &mut self,
         width: f32,
         height: f32,
         time: f32,
@@ -127,35 +134,54 @@ impl App {
             None => return Vec::new(),
         };
 
-        let pps = 200.0f32; // pixels per second
+        let pps = 200.0f32;
         let key_count = 128u8;
         let key_width = width / key_count as f32;
 
-        let mut instances = Vec::new();
-        let visible_future = height / pps + 2.0;
-        let visible_past = 2.0f32;
+        let visible_future = height / pps + 1.0;
+        let visible_past = 1.0f32;
+        let time_top = time + visible_future;
+        let time_bottom = time - visible_past;
 
-        for track in &midi.tracks {
-            for note in &track.notes {
-                // Cull invisible notes
-                if note.end < time - visible_past {
-                    continue;
-                }
-                if note.start > time + visible_future {
-                    continue;
-                }
+        // 时间回退时重置扫描指针
+        if time < self.last_time {
+            self.scan_indices = [0; 128];
+        }
+        self.last_time = time;
 
-                let x = note.key as f32 * key_width;
-                let w = key_width.max(1.0); // at least 1px
+        let estimated = ((width * height) as usize / 4).clamp(50_000, 2_000_000);
+        let mut instances = Vec::with_capacity(estimated);
+
+        for key in 0..128u8 {
+            let notes = &midi.key_notes[key as usize];
+            if notes.is_empty() {
+                continue;
+            }
+
+            let mut scan = self.scan_indices[key as usize];
+
+            // 推进扫描指针：跳过已经彻底离开屏幕底部的音符
+            // 音符按 start 排序，但 end 不一定有序，所以只能线性推进
+            while scan < notes.len() && notes[scan].end < time_bottom {
+                scan += 1;
+            }
+            self.scan_indices[key as usize] = scan;
+
+            let x = key as f32 * key_width;
+            let w = key_width;
+
+            for i in scan..notes.len() {
+                let note = &notes[i];
+                if note.start > time_top {
+                    break;
+                }
 
                 let start_y = height - (note.start - time) * pps;
                 let end_y = height - (note.end - time) * pps;
-                // end_y < start_y: end is later in time, so higher up on screen
                 let y = end_y;
-                let h = (start_y - end_y).max(2.0);
+                let h = (start_y - end_y).max(1.0);
 
-                // Color based on pitch (rainbow)
-                let hue = (note.key as f32 / 128.0) * 360.0;
+                let hue = (key as f32 / 128.0) * 360.0;
                 let (r, g, b) = hsv_to_rgb(hue, 0.8, 1.0);
 
                 instances.push(NoteInstance {
@@ -177,7 +203,6 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 非UI更新逻辑
         self.process_pending();
     }
 
@@ -185,7 +210,6 @@ impl eframe::App for App {
         let midi_path_clone = self.midi_path.clone();
         let mut should_open_dialog = false;
 
-        // 1. 最左侧导航栏
         egui::Panel::left("sidebar")
             .exact_size(60.0)
             .resizable(false)
@@ -193,7 +217,6 @@ impl eframe::App for App {
                 sidebar::show(ui, &mut self.active_tab);
             });
 
-        // 2. 配置面板
         egui::Panel::left("config_panel")
             .exact_size(260.0)
             .resizable(true)
@@ -212,7 +235,6 @@ impl eframe::App for App {
             self.check_file_dialog();
         }
 
-        // 3. 底部走带
         egui::Panel::bottom("transport")
             .exact_size(60.0)
             .resizable(false)
@@ -220,9 +242,7 @@ impl eframe::App for App {
                 transport::show(ui, &mut self.is_playing, &mut self.current_time, self.duration);
             });
 
-        // 4. 主钢琴窗口
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            // 更新播放时间
             if self.is_playing {
                 self.current_time += ui.input(|i| i.unstable_dt);
                 if self.current_time > self.duration {
@@ -235,7 +255,6 @@ impl eframe::App for App {
             let width = available.x;
             let height = available.y;
 
-            // 渲染到 texture
             let instances = self.build_instances(width, height, self.current_time);
             self.renderer.render(
                 &self.preview_view,

@@ -23,25 +23,28 @@ fn vs_main(
     instance: NoteInstance,
 ) -> VertexOutput {
     var out: VertexOutput;
-    
+
     let x = instance.xywh.x;
     let y = instance.xywh.y;
     let w = instance.xywh.z;
     let h = instance.xywh.w;
-    
-    // Generate a quad from vertex index 0..3
-    var pos = array<vec2<f32>, 4>(
-        vec2<f32>(x,     y),     // top-left
-        vec2<f32>(x + w, y),     // top-right
-        vec2<f32>(x,     y + h), // bottom-left
-        vec2<f32>(x + w, y + h), // bottom-right
+
+    // TriangleList: 6 个顶点组成两个三角形
+    // 0,1,2: (x+w,y) → (x+w,y+h) → (x,y)     // 右上→右下→左上
+    // 3,4,5: (x+w,y+h) → (x,y+h) → (x,y)     // 右下→左下→左上
+    var pos = array<vec2<f32>, 6>(
+        vec2<f32>(x + w, y),     // 0
+        vec2<f32>(x + w, y + h), // 1
+        vec2<f32>(x,     y),     // 2
+        vec2<f32>(x + w, y + h), // 3
+        vec2<f32>(x,     y + h), // 4
+        vec2<f32>(x,     y),     // 5
     );
-    
-    // Convert from pixel coordinates to clip space (-1 to 1)
+
     let pixel_pos = pos[vertex_index];
     let ndc_x = (pixel_pos.x / u.width) * 2.0 - 1.0;
     let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
-    
+
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
     out.color = instance.rgba;
     return out;

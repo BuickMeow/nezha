@@ -27,9 +27,7 @@ pub struct Renderer {
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
-    instance_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    max_instances: usize,
 }
 
 impl Renderer {
@@ -43,14 +41,6 @@ impl Renderer {
             label: Some("uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let max_instances = 16384;
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instances"),
-            size: (max_instances * std::mem::size_of::<NoteInstance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -93,8 +83,8 @@ impl Renderer {
                     array_stride: std::mem::size_of::<NoteInstance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x4, // x, y, w, h
-                        1 => Float32x4, // r, g, b, a
+                        0 => Float32x4,
+                        1 => Float32x4,
                     ],
                 }],
                 compilation_options: PipelineCompilationOptions::default(),
@@ -110,7 +100,7 @@ impl Renderer {
                 compilation_options: PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 ..wgpu::PrimitiveState::default()
             },
             depth_stencil: None,
@@ -124,9 +114,7 @@ impl Renderer {
             queue,
             pipeline,
             uniform_buffer,
-            instance_buffer,
             bind_group,
-            max_instances,
         }
     }
 
@@ -146,21 +134,49 @@ impl Renderer {
         };
         self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let count = instances.len().min(self.max_instances);
-        if count > 0 {
-            self.queue.write_buffer(
-                &self.instance_buffer,
-                0,
-                bytemuck::cast_slice(&instances[..count]),
-            );
-        }
-
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("render_encoder"),
         });
 
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        // ── FMR 式做法：不设固定 buffer，每帧按需创建临时 buffer ──
+        if !instances.is_empty() {
+            let instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("frame_instances"),
+                size: (instances.len() * std::mem::size_of::<NoteInstance>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue.write_buffer(
+                &instance_buffer,
+                0,
+                bytemuck::cast_slice(instances),
+            );
+
+            {
+                let mut pass = encoder.begin_render_pass(
+                &wgpu::RenderPassDescriptor {
+                    label: Some("render_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.set_vertex_buffer(0, instance_buffer.slice(..));
+                pass.draw(0..6, 0..instances.len() as u32);
+            }
+        } else {
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
@@ -176,12 +192,6 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-            if count > 0 {
-                pass.draw(0..4, 0..count as u32);
-            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
