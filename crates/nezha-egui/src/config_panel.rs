@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::sidebar::SidebarTab;
+use crate::ThemeMode;
 
 pub fn show(
     ui: &mut egui::Ui,
@@ -15,6 +16,7 @@ pub fn show(
     export_path: &mut Option<String>,
     bg_color: &mut [u8; 3],
     note_color: &mut [u8; 3],
+    theme_mode: &mut ThemeMode,
 ) {
     ui.heading("配置");
     ui.separator();
@@ -111,6 +113,24 @@ pub fn show(
             if ui.button("开始导出").clicked() {
                 // TODO: 开始导出
             }
+        }
+        SidebarTab::Settings => {
+            ui.label("主题");
+            ui.horizontal(|ui| {
+                if ui.selectable_label(*theme_mode == ThemeMode::Light, "☀️ 浅色").clicked() {
+                    *theme_mode = ThemeMode::Light;
+                }
+                if ui.selectable_label(*theme_mode == ThemeMode::Dark, "🌙 深色").clicked() {
+                    *theme_mode = ThemeMode::Dark;
+                }
+                if ui.selectable_label(*theme_mode == ThemeMode::System, "💻 跟随系统").clicked() {
+                    *theme_mode = ThemeMode::System;
+                }
+            });
+
+            ui.separator();
+            ui.label("关于");
+            ui.label("Nezha MIDI Renderer v0.1.0");
         }
     }
 }

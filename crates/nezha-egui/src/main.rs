@@ -7,6 +7,39 @@ mod config_panel;
 mod piano_view;
 mod transport;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+    System,
+}
+
+impl ThemeMode {
+    pub fn is_dark(&self, ctx: &egui::Context) -> bool {
+        match self {
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => ctx.options(|o| o.fallback_theme) == egui::Theme::Dark,
+        }
+    }
+
+    pub fn apply(&self, ctx: &egui::Context) {
+        match self {
+            ThemeMode::Dark => ctx.set_visuals(egui::Visuals::dark()),
+            ThemeMode::Light => ctx.set_visuals(egui::Visuals::light()),
+            ThemeMode::System => {
+                let is_dark = ctx.options(|o| o.fallback_theme) == egui::Theme::Dark;
+                if is_dark {
+                    ctx.set_visuals(egui::Visuals::dark());
+                } else {
+                    ctx.set_visuals(egui::Visuals::light());
+                }
+            }
+        }
+    }
+}
+
 pub struct App {
     wgpu_state: Arc<eframe::egui_wgpu::RenderState>,
     renderer: nezha_renderer::Renderer,
@@ -30,6 +63,7 @@ pub struct App {
     export_path: Option<String>,
     bg_color: [u8; 3],
     note_color: [u8; 3],
+    theme_mode: ThemeMode,
 }
 
 impl App {
@@ -46,6 +80,9 @@ impl App {
             .insert(0, "MiSans".to_owned());
         cc.egui_ctx.set_fonts(fonts);
 
+        let theme_mode = ThemeMode::System;
+        theme_mode.apply(&cc.egui_ctx);
+
         let wgpu_state = cc
             .wgpu_render_state
             .clone()
@@ -58,6 +95,9 @@ impl App {
 
         let (preview_texture, preview_view, preview_texture_id) =
             Self::create_preview(device, &mut wgpu_state.renderer.write(), format, 1920, 1080);
+
+        let mut timeline_state = transport::TimelineState::default();
+        timeline_state.fps = 60;
 
         Self {
             wgpu_state: wgpu_state.into(),
@@ -76,12 +116,13 @@ impl App {
             render_height: 1080,
             fps: 60,
             needs_resize: false,
-            timeline_state: transport::TimelineState::default(),
+            timeline_state,
             export_format: "MP4".to_string(),
             encoder: "H.264".to_string(),
             export_path: None,
             bg_color: [0, 0, 0],
             note_color: [100, 150, 255],
+            theme_mode,
         }
     }
 
@@ -155,6 +196,14 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // 应用主题变更
+        self.theme_mode.apply(ui.ctx());
+
+        // 空格键播放/停止
+        if ui.input(|i| i.key_pressed(egui::Key::Space)) {
+            self.is_playing = !self.is_playing;
+        }
+
         let midi_path_clone = self.midi_path.clone();
         let mut should_open_dialog = false;
 
@@ -200,12 +249,16 @@ impl eframe::App for App {
                     &mut self.export_path,
                     &mut self.bg_color,
                     &mut self.note_color,
+                    &mut self.theme_mode,
                 );
             });
 
         if should_open_dialog {
             self.check_file_dialog();
         }
+
+        let dark_mode = self.theme_mode.is_dark(ui.ctx());
+        self.timeline_state.fps = self.fps;
 
         egui::Panel::bottom("transport")
             .exact_size(200.0)
@@ -217,12 +270,14 @@ impl eframe::App for App {
                     &mut self.current_time,
                     self.duration,
                     &mut self.timeline_state,
+                    dark_mode,
                 );
             });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.is_playing {
-                self.current_time += ui.input(|i| i.unstable_dt);
+                // 固定帧率步进，消除 unstable_dt 波动导致的抖动
+                self.current_time += 1.0 / self.fps as f32;
                 if self.current_time > self.duration {
                     self.current_time = 0.0;
                     self.is_playing = false;
@@ -233,11 +288,14 @@ impl eframe::App for App {
             let rw = self.render_width as f32;
             let rh = self.render_height as f32;
 
+            // 渲染前帧对齐，确保时间精确到帧边界
+            let render_time = (self.current_time * self.fps as f32).round() / self.fps as f32;
+
             self.renderer.render(
                 &self.preview_view,
                 self.render_width,
                 self.render_height,
-                self.current_time,
+                render_time,
                 self.midi_file.as_ref(),
             );
 

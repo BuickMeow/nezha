@@ -1,11 +1,12 @@
 use eframe::egui;
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum SidebarTab {
     #[default]
     Midi,
     Style,
     Export,
+    Settings,
 }
 
 pub fn show(ui: &mut egui::Ui, active_tab: &mut SidebarTab) {
@@ -18,6 +19,7 @@ pub fn show(ui: &mut egui::Ui, active_tab: &mut SidebarTab) {
             (SidebarTab::Midi, "🎵", "MIDI"),
             (SidebarTab::Style, "🎨", "样式"),
             (SidebarTab::Export, "📤", "导出"),
+            (SidebarTab::Settings, "⚙️", "设置"),
         ];
 
         for (tab, icon, label) in tabs {

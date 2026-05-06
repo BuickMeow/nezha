@@ -269,8 +269,9 @@ impl Renderer {
                     break;
                 }
 
-                let start_y = height as f32 - (note.start - time) * pps;
-                let end_y = height as f32 - (note.end - time) * pps;
+                // 分别取整以避免连续帧间浮点误差产生的抖动
+                let start_y = (height as f32 - (note.start - time) * pps).round();
+                let end_y = (height as f32 - (note.end - time) * pps).round();
                 let y = end_y;
                 let h = (start_y - end_y).max(1.0);
 
