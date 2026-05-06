@@ -146,12 +146,13 @@ impl App {
                 }
 
                 let x = note.key as f32 * key_width;
-                let w = key_width - 1.0; // 1px gap
+                let w = key_width.max(1.0); // at least 1px
 
-                let top_y = height - (note.start - time) * pps;
-                let bottom_y = height - (note.end - time) * pps;
-                let y = top_y;
-                let h = (bottom_y - top_y).max(2.0);
+                let start_y = height - (note.start - time) * pps;
+                let end_y = height - (note.end - time) * pps;
+                // end_y < start_y: end is later in time, so higher up on screen
+                let y = end_y;
+                let h = (start_y - end_y).max(2.0);
 
                 // Color based on pitch (rainbow)
                 let hue = (note.key as f32 / 128.0) * 360.0;

@@ -109,7 +109,10 @@ impl Renderer {
                 })],
                 compilation_options: PipelineCompilationOptions::default(),
             }),
-            primitive: wgpu::PrimitiveState::default(),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..wgpu::PrimitiveState::default()
+            },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,

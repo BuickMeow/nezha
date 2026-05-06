@@ -23,9 +23,17 @@ pub fn show(ui: &mut egui::Ui, is_playing: &mut bool, current_time: &mut f32, du
 
         ui.add_space(12.0);
 
-        // 进度条
-        let progress = *current_time / duration;
-        ui.add(egui::ProgressBar::new(progress).desired_width(400.0));
+        // 可拖动的进度条
+        let mut progress = *current_time / duration.max(0.001);
+        let response = ui.add(
+            egui::Slider::new(&mut progress, 0.0..=1.0)
+                .show_value(false)
+                .trailing_fill(true),
+        );
+        if response.changed() {
+            *is_playing = false;
+            *current_time = progress * duration;
+        }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(12.0);
