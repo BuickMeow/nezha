@@ -18,6 +18,19 @@ pub struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // 加载自定义字体
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "MiSans".to_owned(),
+            egui::FontData::from_static(include_bytes!("../../../assets/MiSans-Regular.otf")).into(),
+        );
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "MiSans".to_owned());
+        cc.egui_ctx.set_fonts(fonts);
+
         let wgpu_render_state = cc
             .wgpu_render_state
             .as_ref()
