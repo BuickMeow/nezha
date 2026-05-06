@@ -13,6 +13,8 @@ pub fn show(
     export_format: &mut String,
     encoder: &mut String,
     export_path: &mut Option<String>,
+    bg_color: &mut [u8; 3],
+    note_color: &mut [u8; 3],
 ) {
     ui.heading("配置");
     ui.separator();
@@ -56,11 +58,11 @@ pub fn show(
             ui.label("样式设置");
             ui.group(|ui| {
                 ui.label("背景颜色");
-                ui.color_edit_button_srgb(&mut [0, 0, 0]);
+                ui.color_edit_button_srgb(bg_color);
             });
             ui.group(|ui| {
                 ui.label("音符颜色");
-                ui.color_edit_button_srgb(&mut [100, 150, 255]);
+                ui.color_edit_button_srgb(note_color);
             });
         }
         SidebarTab::Export => {

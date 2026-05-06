@@ -1,4 +1,5 @@
 use wgpu::*;
+use nezha_core::MidiFile;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -28,6 +29,10 @@ pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    instance_buffer: wgpu::Buffer,
+    instance_capacity: usize,
+    scan_indices: [usize; 128],
+    last_time: f32,
 }
 
 impl Renderer {
@@ -109,22 +114,34 @@ impl Renderer {
             cache: None,
         });
 
+        let instance_capacity = 1024;
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: (instance_capacity * std::mem::size_of::<NoteInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             device,
             queue,
             pipeline,
             uniform_buffer,
             bind_group,
+            instance_buffer,
+            instance_capacity,
+            scan_indices: [0; 128],
+            last_time: -1.0,
         }
     }
 
     pub fn render(
-        &self,
+        &mut self,
         target: &wgpu::TextureView,
         width: u32,
         height: u32,
         time: f32,
-        instances: &[NoteInstance],
+        midi_file: Option<&MidiFile>,
     ) {
         let uniforms = Uniforms {
             time,
@@ -138,18 +155,23 @@ impl Renderer {
             label: Some("render_encoder"),
         });
 
-        // ── FMR 式做法：不设固定 buffer，每帧按需创建临时 buffer ──
-        if !instances.is_empty() {
-            let instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("frame_instances"),
-                size: (instances.len() * std::mem::size_of::<NoteInstance>()) as u64,
+        let instances = self.build_instances(width, height, time, midi_file);
+
+        if instances.len() > self.instance_capacity {
+            self.instance_capacity = instances.len().max(self.instance_capacity * 2);
+            self.instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("instance_buffer"),
+                size: (self.instance_capacity * std::mem::size_of::<NoteInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+        }
+
+        if !instances.is_empty() {
             self.queue.write_buffer(
-                &instance_buffer,
+                &self.instance_buffer,
                 0,
-                bytemuck::cast_slice(instances),
+                bytemuck::cast_slice(&instances),
             );
 
             {
@@ -172,7 +194,7 @@ impl Renderer {
                 });
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.set_vertex_buffer(0, instance_buffer.slice(..));
+                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
                 pass.draw(0..6, 0..instances.len() as u32);
             }
         } else {
@@ -196,4 +218,100 @@ impl Renderer {
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }
+
+    fn build_instances(
+        &mut self,
+        width: u32,
+        height: u32,
+        time: f32,
+        midi_file: Option<&MidiFile>,
+    ) -> Vec<NoteInstance> {
+        let midi = match midi_file {
+            Some(m) => m,
+            None => return Vec::new(),
+        };
+
+        let pps = 200.0f32;
+        let key_count = 128u8;
+        let key_width = width as f32 / key_count as f32;
+
+        let visible_future = height as f32 / pps + 1.0;
+        let visible_past = 1.0f32;
+        let time_top = time + visible_future;
+        let time_bottom = time - visible_past;
+
+        if time < self.last_time {
+            self.scan_indices = [0; 128];
+        }
+        self.last_time = time;
+
+        let estimated = ((width * height) as usize / 4).clamp(50_000, 2_000_000);
+        let mut instances = Vec::with_capacity(estimated);
+
+        for key in 0..128u8 {
+            let notes = &midi.key_notes[key as usize];
+            if notes.is_empty() {
+                continue;
+            }
+
+            let mut scan = self.scan_indices[key as usize];
+            while scan < notes.len() && notes[scan].end < time_bottom {
+                scan += 1;
+            }
+            self.scan_indices[key as usize] = scan;
+
+            let x = key as f32 * key_width;
+            let w = key_width;
+
+            for i in scan..notes.len() {
+                let note = &notes[i];
+                if note.start > time_top {
+                    break;
+                }
+
+                let start_y = height as f32 - (note.start - time) * pps;
+                let end_y = height as f32 - (note.end - time) * pps;
+                let y = end_y;
+                let h = (start_y - end_y).max(1.0);
+
+                let hue = (key as f32 / 128.0) * 360.0;
+                let (r, g, b) = hsv_to_rgb(hue, 0.8, 1.0);
+
+                instances.push(NoteInstance {
+                    x,
+                    y,
+                    w,
+                    h,
+                    r,
+                    g,
+                    b,
+                    a: 0.9,
+                });
+            }
+        }
+
+        instances
+    }
+}
+
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+
+    let (r, g, b) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+
+    (r + m, g + m, b + m)
 }

@@ -1,6 +1,5 @@
 use eframe::egui;
 use nezha_core::MidiFile;
-use nezha_renderer::NoteInstance;
 use std::sync::Arc;
 
 mod sidebar;
@@ -21,8 +20,6 @@ pub struct App {
     midi_file: Option<MidiFile>,
     midi_path: Option<String>,
     pending_midi_load: Option<String>,
-    scan_indices: [usize; 128],
-    last_time: f32,
     render_width: u32,
     render_height: u32,
     fps: u32,
@@ -31,6 +28,8 @@ pub struct App {
     export_format: String,
     encoder: String,
     export_path: Option<String>,
+    bg_color: [u8; 3],
+    note_color: [u8; 3],
 }
 
 impl App {
@@ -73,8 +72,6 @@ impl App {
             midi_file: None,
             midi_path: None,
             pending_midi_load: None,
-            scan_indices: [0; 128],
-            last_time: -1.0,
             render_width: 1920,
             render_height: 1080,
             fps: 60,
@@ -83,6 +80,8 @@ impl App {
             export_format: "MP4".to_string(),
             encoder: "H.264".to_string(),
             export_path: None,
+            bg_color: [0, 0, 0],
+            note_color: [100, 150, 255],
         }
     }
 
@@ -125,8 +124,6 @@ impl App {
                 self.timeline_state.update_duration(self.duration);
                 self.midi_file = Some(midi);
                 self.current_time = 0.0;
-                self.scan_indices = [0; 128];
-                self.last_time = -1.0;
             }
             Err(e) => {
                 eprintln!("Failed to load MIDI: {}", e);
@@ -149,79 +146,6 @@ impl App {
         if let Some(path) = self.pending_midi_load.take() {
             self.load_midi(path);
         }
-    }
-
-    fn build_instances(
-        &mut self,
-        width: f32,
-        height: f32,
-        time: f32,
-    ) -> Vec<NoteInstance> {
-        let midi = match &self.midi_file {
-            Some(m) => m,
-            None => return Vec::new(),
-        };
-
-        let pps = 200.0f32;
-        let key_count = 128u8;
-        let key_width = width / key_count as f32;
-
-        let visible_future = height / pps + 1.0;
-        let visible_past = 1.0f32;
-        let time_top = time + visible_future;
-        let time_bottom = time - visible_past;
-
-        if time < self.last_time {
-            self.scan_indices = [0; 128];
-        }
-        self.last_time = time;
-
-        let estimated = ((width * height) as usize / 4).clamp(50_000, 2_000_000);
-        let mut instances = Vec::with_capacity(estimated);
-
-        for key in 0..128u8 {
-            let notes = &midi.key_notes[key as usize];
-            if notes.is_empty() {
-                continue;
-            }
-
-            let mut scan = self.scan_indices[key as usize];
-            while scan < notes.len() && notes[scan].end < time_bottom {
-                scan += 1;
-            }
-            self.scan_indices[key as usize] = scan;
-
-            let x = key as f32 * key_width;
-            let w = key_width;
-
-            for i in scan..notes.len() {
-                let note = &notes[i];
-                if note.start > time_top {
-                    break;
-                }
-
-                let start_y = height - (note.start - time) * pps;
-                let end_y = height - (note.end - time) * pps;
-                let y = end_y;
-                let h = (start_y - end_y).max(1.0);
-
-                let hue = (key as f32 / 128.0) * 360.0;
-                let (r, g, b) = hsv_to_rgb(hue, 0.8, 1.0);
-
-                instances.push(NoteInstance {
-                    x,
-                    y,
-                    w,
-                    h,
-                    r,
-                    g,
-                    b,
-                    a: 0.9,
-                });
-            }
-        }
-
-        instances
     }
 }
 
@@ -274,6 +198,8 @@ impl eframe::App for App {
                     &mut self.export_format,
                     &mut self.encoder,
                     &mut self.export_path,
+                    &mut self.bg_color,
+                    &mut self.note_color,
                 );
             });
 
@@ -307,13 +233,12 @@ impl eframe::App for App {
             let rw = self.render_width as f32;
             let rh = self.render_height as f32;
 
-            let instances = self.build_instances(rw, rh, self.current_time);
             self.renderer.render(
                 &self.preview_view,
                 self.render_width,
                 self.render_height,
                 self.current_time,
-                &instances,
+                self.midi_file.as_ref(),
             );
 
             let aspect = rw / rh;
@@ -322,28 +247,6 @@ impl eframe::App for App {
 
         ui.ctx().request_repaint();
     }
-}
-
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-
-    let (r, g, b) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-
-    (r + m, g + m, b + m)
 }
 
 fn main() {
