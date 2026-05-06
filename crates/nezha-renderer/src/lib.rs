@@ -9,18 +9,33 @@ struct Uniforms {
     _pad: f32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct NoteInstance {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
+    instance_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    max_instances: usize,
 }
 
 impl Renderer {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("test_shader"),
+            label: Some("waterfall_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
@@ -31,11 +46,19 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        let max_instances = 16384;
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("instances"),
+            size: (max_instances * std::mem::size_of::<NoteInstance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bind_group_layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -66,7 +89,14 @@ impl Renderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[],
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<NoteInstance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x4, // x, y, w, h
+                        1 => Float32x4, // r, g, b, a
+                    ],
+                }],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -74,7 +104,7 @@ impl Renderer {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: PipelineCompilationOptions::default(),
@@ -91,11 +121,20 @@ impl Renderer {
             queue,
             pipeline,
             uniform_buffer,
+            instance_buffer,
             bind_group,
+            max_instances,
         }
     }
 
-    pub fn render(&self, target: &wgpu::TextureView, width: u32, height: u32, time: f32) {
+    pub fn render(
+        &self,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        time: f32,
+        instances: &[NoteInstance],
+    ) {
         let uniforms = Uniforms {
             time,
             width: width as f32,
@@ -103,6 +142,15 @@ impl Renderer {
             _pad: 0.0,
         };
         self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        let count = instances.len().min(self.max_instances);
+        if count > 0 {
+            self.queue.write_buffer(
+                &self.instance_buffer,
+                0,
+                bytemuck::cast_slice(&instances[..count]),
+            );
+        }
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("render_encoder"),
@@ -127,7 +175,10 @@ impl Renderer {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+            if count > 0 {
+                pass.draw(0..4, 0..count as u32);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

@@ -1,7 +1,12 @@
 use eframe::egui;
 use crate::sidebar::SidebarTab;
 
-pub fn show(ui: &mut egui::Ui, active_tab: SidebarTab) {
+pub fn show(
+    ui: &mut egui::Ui,
+    active_tab: SidebarTab,
+    midi_path: &Option<String>,
+    on_select_midi: &mut dyn FnMut(),
+) {
     ui.heading("配置");
     ui.separator();
 
@@ -9,9 +14,13 @@ pub fn show(ui: &mut egui::Ui, active_tab: SidebarTab) {
         SidebarTab::Midi => {
             ui.label("MIDI 文件");
             if ui.button("选择 MIDI 文件").clicked() {
-                // TODO: 打开文件选择器
+                on_select_midi();
             }
-            ui.label("暂无文件");
+            if let Some(path) = midi_path {
+                ui.label(format!("已加载: {}", path));
+            } else {
+                ui.label("暂无文件");
+            }
         }
         SidebarTab::Style => {
             ui.label("样式设置");
