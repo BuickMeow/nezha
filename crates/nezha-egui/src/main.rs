@@ -1,11 +1,19 @@
 use eframe::egui;
 
-struct App {
+mod sidebar;
+mod config_panel;
+mod piano_view;
+mod transport;
+
+pub struct App {
     renderer: nezha_renderer::Renderer,
     _preview_texture: wgpu::Texture,
     preview_view: wgpu::TextureView,
     preview_texture_id: egui::TextureId,
-    start_time: std::time::Instant,
+    active_tab: sidebar::SidebarTab,
+    is_playing: bool,
+    current_time: f32,
+    duration: f32,
 }
 
 impl App {
@@ -49,25 +57,60 @@ impl App {
             _preview_texture: preview_texture,
             preview_view,
             preview_texture_id,
-            start_time: std::time::Instant::now(),
+            active_tab: sidebar::SidebarTab::Midi,
+            is_playing: false,
+            current_time: 0.0,
+            duration: 120.0,
         }
     }
 }
 
 impl eframe::App for App {
     fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 非UI更新逻辑可以放在这里
+        // 非UI更新逻辑
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let elapsed = self.start_time.elapsed().as_secs_f32();
-        self.renderer.render(&self.preview_view, 800, 600, elapsed);
+        // 1. 最左侧导航栏
+        egui::Panel::left("sidebar")
+            .exact_size(60.0)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                sidebar::show(ui, &mut self.active_tab);
+            });
 
+        // 2. 配置面板
+        egui::Panel::left("config_panel")
+            .exact_size(260.0)
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                config_panel::show(ui, self.active_tab);
+            });
+
+        // 3. 底部走带
+        egui::Panel::bottom("transport")
+            .exact_size(60.0)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                transport::show(ui, &mut self.is_playing, &mut self.current_time, self.duration);
+            });
+
+        // 4. 主钢琴窗口
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.image(egui::ImageSource::Texture(egui::load::SizedTexture::new(
-                self.preview_texture_id,
-                [800.0, 600.0],
-            )));
+            // 更新播放时间
+            if self.is_playing {
+                self.current_time += ui.input(|i| i.unstable_dt);
+                if self.current_time > self.duration {
+                    self.current_time = 0.0;
+                }
+            }
+
+            // 渲染到 texture
+            self.renderer.render(
+                &self.preview_view, 800, 600, self.current_time);
+
+            let available = ui.available_size();
+            piano_view::show(ui, self.preview_texture_id, available);
         });
 
         ui.ctx().request_repaint();
