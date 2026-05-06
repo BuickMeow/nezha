@@ -64,6 +64,8 @@ pub struct App {
     bg_color: [u8; 3],
     note_color: [u8; 3],
     theme_mode: ThemeMode,
+    zoom: f32,
+    pan_offset: egui::Vec2,
 }
 
 impl App {
@@ -123,6 +125,8 @@ impl App {
             bg_color: [0, 0, 0],
             note_color: [100, 150, 255],
             theme_mode,
+            zoom: 1.0,
+            pan_offset: egui::Vec2::ZERO,
         }
     }
 
@@ -300,7 +304,14 @@ impl eframe::App for App {
             );
 
             let aspect = rw / rh;
-            piano_view::show(ui, self.preview_texture_id, available, aspect);
+            piano_view::show(
+                ui,
+                self.preview_texture_id,
+                available,
+                aspect,
+                &mut self.zoom,
+                &mut self.pan_offset,
+            );
         });
 
         ui.ctx().request_repaint();
