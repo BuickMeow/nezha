@@ -20,22 +20,15 @@ impl ThemeMode {
         match self {
             ThemeMode::Dark => true,
             ThemeMode::Light => false,
-            ThemeMode::System => ctx.options(|o| o.fallback_theme) == egui::Theme::Dark,
+            ThemeMode::System => ctx.global_style().visuals.dark_mode,
         }
     }
 
     pub fn apply(&self, ctx: &egui::Context) {
         match self {
-            ThemeMode::Dark => ctx.set_visuals(egui::Visuals::dark()),
-            ThemeMode::Light => ctx.set_visuals(egui::Visuals::light()),
-            ThemeMode::System => {
-                let is_dark = ctx.options(|o| o.fallback_theme) == egui::Theme::Dark;
-                if is_dark {
-                    ctx.set_visuals(egui::Visuals::dark());
-                } else {
-                    ctx.set_visuals(egui::Visuals::light());
-                }
-            }
+            ThemeMode::Dark => ctx.set_theme(egui::ThemePreference::Dark),
+            ThemeMode::Light => ctx.set_theme(egui::ThemePreference::Light),
+            ThemeMode::System => ctx.set_theme(egui::ThemePreference::System),
         }
     }
 }
