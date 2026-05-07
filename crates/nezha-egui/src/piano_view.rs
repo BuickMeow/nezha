@@ -7,7 +7,7 @@ pub fn show(
     aspect: f32,
     zoom: &mut f32,
     pan_offset: &mut egui::Vec2,
-) {
+) -> f32 {
     let container_aspect = available.x / available.y.max(0.001);
 
     let base_size = if container_aspect > aspect {
@@ -19,9 +19,11 @@ pub fn show(
     let (_rect, response) =
         ui.allocate_exact_size(available, egui::Sense::click_and_drag());
 
-    let pointer_in_rect = response.hovered();
+    let pointer_pos = ui.input(|i| i.pointer.hover_pos());
 
-    if pointer_in_rect {
+    if response.hovered() {
+        let old_zoom = *zoom;
+
         let zoom_delta = ui.input(|i| i.zoom_delta());
         if zoom_delta != 1.0 {
             *zoom *= zoom_delta;
@@ -33,9 +35,18 @@ pub fn show(
         } else if scroll_delta.y < 0.0 {
             *zoom /= 1.1;
         }
-    }
 
-    *zoom = zoom.clamp(1.0, 10.0);
+        *zoom = zoom.clamp(1.0, 10.0);
+
+        // 以鼠标位置为中心缩放
+        if *zoom != old_zoom {
+            if let Some(cursor) = pointer_pos {
+                let center = available / 2.0;
+                let cursor_rel = cursor - response.rect.min - center;
+                *pan_offset += cursor_rel * (1.0 - old_zoom / *zoom);
+            }
+        }
+    }
 
     let scaled_size = base_size * *zoom;
 
@@ -61,7 +72,7 @@ pub fn show(
     let top_left = center - scaled_size / 2.0 + *pan_offset;
 
     let image_rect = egui::Rect::from_min_size(
-        ui.min_rect().min + top_left,
+        response.rect.min + top_left,
         scaled_size,
     );
 
@@ -70,16 +81,5 @@ pub fn show(
         egui::Image::new(egui::load::SizedTexture::new(texture_id, scaled_size)),
     );
 
-    if *zoom > 1.01 {
-        let zoom_text = format!("{:.0}%", *zoom * 100.0);
-        let text_pos = ui.min_rect().min
-            + egui::Vec2::new(available.x - 50.0, available.y - 20.0);
-        ui.painter().text(
-            text_pos,
-            egui::Align2::RIGHT_BOTTOM,
-            zoom_text,
-            egui::FontId::proportional(12.0),
-            ui.visuals().text_color(),
-        );
-    }
+    *zoom
 }

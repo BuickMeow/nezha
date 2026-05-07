@@ -144,7 +144,7 @@ impl eframe::App for App {
                 .exact_size(220.0)
                 .resizable(true)
                 .show_inside(ui, |ui| {
-                    properties_panel::show(ui, &mut self.project.timeline_state);
+                    properties_panel::show(ui, &mut self.project.timeline_state, self.ui.zoom);
                 });
 
             // 5. 中央预览区
@@ -218,7 +218,7 @@ impl eframe::App for App {
                 );
 
                 let aspect = rw / rh;
-                piano_view::show(
+                self.ui.zoom = piano_view::show(
                     ui,
                     self.render_ctx.preview_texture_id,
                     available,

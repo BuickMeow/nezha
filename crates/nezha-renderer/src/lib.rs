@@ -368,33 +368,38 @@ impl Renderer {
                 let border_px = style.border_width * w / 2.0;
                 let rounding_radius = style.rounding * f32::min(w, h) / 2.0;
 
-                // 外层：暗色描边矩形
-                instances.push(NoteInstance {
-                    x: x - border_px,
-                    y: y - border_px,
-                    w: w + 2.0 * border_px,
-                    h: h + 2.0 * border_px,
-                    r: cr * 0.4,
-                    g: cg * 0.4,
-                    b: cb * 0.4,
-                    a: 0.9,
-                    corner_radius: rounding_radius + border_px,
-                    _pad: 0.0,
-                });
-
-                // 内层：亮色填充矩形
+                // 外层：暗色描边矩形 (内边框：填充整个音符，内层盖在它上面)
                 instances.push(NoteInstance {
                     x,
                     y,
                     w,
                     h,
-                    r: cr,
-                    g: cg,
-                    b: cb,
+                    r: cr * 0.4,
+                    g: cg * 0.4,
+                    b: cb * 0.4,
                     a: 0.9,
                     corner_radius: rounding_radius,
                     _pad: 0.0,
                 });
+
+                // 内层：亮色填充矩形 (向内缩进 bp，露出边框)
+                let fill_w = w - 2.0 * border_px;
+                let fill_h = h - 2.0 * border_px;
+                let fill_r = (rounding_radius - border_px).max(0.0);
+                if fill_w >= 1.0 && fill_h >= 1.0 {
+                    instances.push(NoteInstance {
+                        x: x + border_px,
+                        y: y + border_px,
+                        w: fill_w,
+                        h: fill_h,
+                        r: cr,
+                        g: cg,
+                        b: cb,
+                        a: 0.9,
+                        corner_radius: fill_r,
+                        _pad: 0.0,
+                    });
+                }
             }
         }
 

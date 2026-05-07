@@ -1,8 +1,8 @@
 use eframe::egui;
 use crate::transport::TimelineState;
 
-pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState) {
-    ui.heading("属性");
+pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState, zoom: f32) {
+    ui.heading(format!("属性（{:.0}%）", zoom * 100.0));
     ui.separator();
 
     if let Some(selected_id) = timeline_state.selected_clip_id {
