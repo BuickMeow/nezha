@@ -141,6 +141,7 @@ impl Renderer {
         width: u32,
         height: u32,
         time: f32,
+        speed: f32,
         midi_file: Option<&MidiFile>,
     ) {
         let uniforms = Uniforms {
@@ -155,7 +156,7 @@ impl Renderer {
             label: Some("render_encoder"),
         });
 
-        let instances = self.build_instances(width, height, time, midi_file);
+        let instances = self.build_instances(width, height, time, speed, midi_file);
 
         if instances.len() > self.instance_capacity {
             self.instance_capacity = instances.len().max(self.instance_capacity * 2);
@@ -224,6 +225,7 @@ impl Renderer {
         width: u32,
         height: u32,
         time: f32,
+        speed: f32,
         midi_file: Option<&MidiFile>,
     ) -> Vec<NoteInstance> {
         let midi = match midi_file {
@@ -231,7 +233,7 @@ impl Renderer {
             None => return Vec::new(),
         };
 
-        let pps = 200.0f32;
+        let pps = 200.0f32 * speed.max(0.01);
         let key_count = 128u8;
         let key_width = width as f32 / key_count as f32;
 

@@ -128,6 +128,32 @@ fn snap_to_frame(time: f32, fps: u32) -> f32 {
     (frame / fps as f32).max(0.0)
 }
 
+fn format_timecode_frames(time: f32, fps: u32) -> String {
+    let total_frames = (time * fps.max(1) as f32).round() as u32;
+    let frames = total_frames % fps.max(1);
+    let total_seconds = total_frames / fps.max(1);
+    let seconds = total_seconds % 60;
+    let minutes = (total_seconds / 60) % 60;
+    format!("{:02}:{:02}:{:02}", minutes, seconds, frames)
+}
+
+fn format_timecode_seconds(time: f32) -> String {
+    let min = (time as u32) / 60;
+    let sec = (time as u32) % 60;
+    format!("{}:{:02}", min, sec)
+}
+
+fn format_timecode_full(time: f32, fps: u32) -> String {
+    let total_frames = (time * fps.max(1) as f32).round() as u32;
+    let frames = total_frames % fps.max(1);
+    let total_seconds = total_frames / fps.max(1);
+    let seconds = total_seconds % 60;
+    let total_minutes = total_seconds / 60;
+    let minutes = total_minutes % 60;
+    let hours = total_minutes / 60;
+    format!("{:02}:{:02}:{:02}:{:02}", hours, minutes, seconds, frames)
+}
+
 fn font(size: f32) -> egui::FontId {
     egui::FontId::new(size, egui::FontFamily::Proportional)
 }
@@ -247,7 +273,7 @@ pub fn show(
         // 垂直滚轮 / 触控板纵向：缩放
         if scroll_y != 0.0 {
             let old_zoom = state.zoom;
-            state.zoom = (state.zoom * (1.0 + scroll_y * 0.001)).clamp(0.2, 500.0);
+            state.zoom = (state.zoom * (1.0 + scroll_y * 0.001)).clamp(0.2, 5000.0);
             if let Some(mouse_pos) = response.hover_pos() {
                 let mouse_time = (mouse_pos.x - timeline_rect.min.x - state.header_width) / old_zoom
                     + state.scroll_offset;
@@ -264,7 +290,7 @@ pub fn show(
         // 捏合缩放（触控板双指捏合）
         if zoom_delta != 1.0 {
             let old_zoom = state.zoom;
-            state.zoom = (state.zoom * zoom_delta).clamp(0.2, 500.0);
+            state.zoom = (state.zoom * zoom_delta).clamp(0.2, 5000.0);
             if let Some(mouse_pos) = response.hover_pos() {
                 let mouse_time = (mouse_pos.x - timeline_rect.min.x - state.header_width) / old_zoom
                     + state.scroll_offset;
@@ -302,8 +328,22 @@ pub fn show(
         }
     }
 
-    let major_interval = if state.zoom > 100.0 {
-        1.0
+    let frame_interval = 1.0 / state.fps.max(1) as f32;
+
+    let major_interval = if state.zoom > 5000.0 {
+        frame_interval // 1 帧
+    } else if state.zoom > 3000.0 {
+        2.0 * frame_interval // 2 帧
+    } else if state.zoom > 1500.0 {
+        5.0 * frame_interval // 5 帧
+    } else if state.zoom > 750.0 {
+        5.0 * frame_interval // 5 帧
+    } else if state.zoom > 300.0 {
+        10.0 * frame_interval // 10 帧
+    } else if state.zoom > 150.0 {
+        30.0 * frame_interval // 0.5 秒 (30帧@60fps)
+    } else if state.zoom > 100.0 {
+        60.0 * frame_interval // 1 秒
     } else if state.zoom > 50.0 {
         2.0
     } else if state.zoom > 20.0 {
@@ -320,7 +360,7 @@ pub fn show(
         300.0
     };
 
-    // 绘制刻度
+    // 绘制主刻度
     let mut t = (visible_start / major_interval).floor() * major_interval;
     while t <= visible_end {
         let x = timeline_rect.min.x + state.header_width + (t - state.scroll_offset) * state.zoom;
@@ -332,17 +372,41 @@ pub fn show(
                 ],
                 egui::Stroke::new(1.0, c.ruler_tick),
             );
-            let min = (t as u32) / 60;
-            let sec = (t as u32) % 60;
+            let label = if major_interval < 1.0 {
+                format_timecode_frames(t, state.fps)
+            } else {
+                format_timecode_seconds(t)
+            };
             painter.text(
                 egui::pos2(x + 3.0, ruler_rect.min.y + 2.0),
                 egui::Align2::LEFT_TOP,
-                format!("{}:{:02}", min, sec),
+                label,
                 font(11.0),
                 c.ruler_text,
             );
         }
         t += major_interval;
+    }
+
+    // 在帧级别放大时，绘制次刻度线（每帧）
+    if state.zoom > 3000.0 {
+        let mut ft = (visible_start / frame_interval).floor() * frame_interval;
+        while ft <= visible_end {
+            let x = timeline_rect.min.x + state.header_width + (ft - state.scroll_offset) * state.zoom;
+            if x >= timeline_rect.min.x + state.header_width {
+                let is_major = (ft / major_interval).round() * major_interval == ft;
+                if !is_major {
+                    painter.line_segment(
+                        [
+                            egui::pos2(x, ruler_rect.min.y + 20.0),
+                            egui::pos2(x, ruler_rect.max.y),
+                        ],
+                        egui::Stroke::new(1.0, c.ruler_tick.gamma_multiply(0.5)),
+                    );
+                }
+            }
+            ft += frame_interval;
+        }
     }
 
     // ── 横向滚动条 ──
@@ -422,13 +486,13 @@ pub fn show(
                     ScrollbarDrag::LeftEdge => {
                         let new_start = mouse_time.clamp(0.0, vis_end - 1.0 / state.fps.max(1) as f32);
                         let new_zoom = content_width / (vis_end - new_start);
-                        state.zoom = new_zoom.clamp(0.2, 500.0);
+                        state.zoom = new_zoom.clamp(0.2, 5000.0);
                         state.scroll_offset = new_start;
                     }
                     ScrollbarDrag::RightEdge => {
                         let new_end = mouse_time.clamp(vis_start + 1.0 / state.fps.max(1) as f32, total_dur);
                         let new_zoom = content_width / (new_end - vis_start);
-                        state.zoom = new_zoom.clamp(0.2, 500.0);
+                        state.zoom = new_zoom.clamp(0.2, 5000.0);
                     }
                 }
             }
@@ -790,8 +854,12 @@ pub fn show(
         }
         ui.add_space(12.0);
         ui.label(
-            egui::RichText::new(format!("{:06.2} / {:06.2}", *current_time, duration))
-                .font(font(12.0)),
+            egui::RichText::new(format!(
+                "{} / {}",
+                format_timecode_full(*current_time, state.fps),
+                format_timecode_full(duration, state.fps),
+            ))
+            .font(font(12.0)),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(

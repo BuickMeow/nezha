@@ -202,6 +202,17 @@ impl eframe::App for App {
             self.is_playing = !self.is_playing;
         }
 
+        // 左右键按帧前后浏览
+        if !self.is_playing {
+            let frame_duration = 1.0 / self.fps.max(1) as f32;
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+                self.current_time = (self.current_time - frame_duration).max(0.0);
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+                self.current_time = (self.current_time + frame_duration).min(self.duration);
+            }
+        }
+
         let midi_path_clone = self.midi_path.clone();
         let mut should_open_dialog = false;
 
@@ -301,11 +312,26 @@ impl eframe::App for App {
             // 渲染前帧对齐，确保时间精确到帧边界
             let render_time = (self.current_time * self.fps as f32).round() / self.fps as f32;
 
+            // 应用选中 clip 的流速（音符纵向缩放/下落速度）
+            let speed = self
+                .timeline_state
+                .selected_clip_id
+                .and_then(|id| {
+                    self.timeline_state
+                        .tracks
+                        .iter()
+                        .flat_map(|t| t.clips.iter())
+                        .find(|c| c.id == id)
+                        .map(|c| c.speed)
+                })
+                .unwrap_or(1.0);
+
             self.renderer.render(
                 &self.preview_view,
                 self.render_width,
                 self.render_height,
                 render_time,
+                speed,
                 self.midi_file.as_ref(),
             );
 
