@@ -1,3 +1,4 @@
+use std::time::Instant;
 use eframe::egui;
 use crate::sidebar;
 use crate::config_panel;
@@ -59,16 +60,19 @@ impl eframe::App for App {
 
         if ui.input(|i| i.key_pressed(egui::Key::Space)) {
             self.project.is_playing = !self.project.is_playing;
+            self.project.playback_start = None;
         }
 
         if !self.project.is_playing {
-            let frame_duration = 1.0 / self.project.fps.max(1) as f32;
+            let frame_duration = 1.0 / self.project.fps.max(1) as f64;
             if ui.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
                 self.project.current_time = (self.project.current_time - frame_duration).max(0.0);
+                self.project.playback_start = None;
             }
             if ui.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
                 self.project.current_time = (self.project.current_time + frame_duration)
                     .min(self.project.duration);
+                self.project.playback_start = None;
             }
         }
 
@@ -92,14 +96,16 @@ impl eframe::App for App {
                 .exact_size(200.0)
                 .resizable(false)
                 .show_inside(ui, |ui| {
+                    let mut transport_time = self.project.current_time as f32;
                     transport::show(
                         ui,
                         &mut self.project.is_playing,
-                        &mut self.project.current_time,
-                        self.project.duration,
+                        &mut transport_time,
+                        self.project.duration as f32,
                         &mut self.project.timeline_state,
                         dark_mode,
                     );
+                    self.project.current_time = transport_time as f64;
                 });
 
             // 3. 左侧面板 — 配置
@@ -144,19 +150,24 @@ impl eframe::App for App {
             // 5. 中央预览区
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 if self.project.is_playing {
-                    self.project.current_time += 1.0 / self.project.fps as f32;
-                    if self.project.current_time > self.project.duration {
+                    let now = Instant::now();
+                    let (start_instant, start_time) = self.project.playback_start.get_or_insert_with(|| (now, self.project.current_time));
+                    let elapsed = now.duration_since(*start_instant).as_secs_f64();
+                    self.project.current_time = (*start_time + elapsed).min(self.project.duration);
+                    if self.project.current_time >= self.project.duration {
                         self.project.current_time = 0.0;
                         self.project.is_playing = false;
+                        self.project.playback_start = None;
                     }
+                } else {
+                    self.project.playback_start = None;
                 }
 
                 let available = ui.available_size();
                 let rw = self.project.render_width as f32;
                 let rh = self.project.render_height as f32;
 
-                let render_time = (self.project.current_time * self.project.fps as f32).round()
-                    / self.project.fps as f32;
+                let render_time = (self.project.current_time * self.project.fps as f64).round() / self.project.fps as f64;
 
                 let speed = self
                     .project
@@ -177,7 +188,7 @@ impl eframe::App for App {
                 self.render_ctx.render(
                     self.project.render_width,
                     self.project.render_height,
-                    render_time as f64,
+                    render_time,
                     speed,
                     self.project.midi_file.as_ref().map(|m| m as &dyn nezha_renderer::NoteSource),
                 );

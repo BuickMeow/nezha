@@ -256,6 +256,9 @@ impl Renderer {
         let key_count = 128u8;
         let key_width = width as f64 / key_count as f64;
 
+        let time_px = (time * pps).round() as i64;
+        let screen_top = height as i64 + time_px;
+
         let visible_future = height as f64 / pps + 1.0;
         let visible_past = 1.0f64;
         let time_top = time + visible_future;
@@ -280,8 +283,9 @@ impl Renderer {
             }
             state.scan_indices[key as usize] = scan;
 
-            let x = key as f64 * key_width;
-            let w = key_width;
+            let x = (key as f64 * key_width).round() as f32;
+            let next_x = ((key as f64 + 1.0) * key_width).round() as f32;
+            let w = (next_x - x).max(1.0);
 
             for i in scan..notes.len() {
                 let note = &notes[i];
@@ -289,19 +293,18 @@ impl Renderer {
                     break;
                 }
 
-                let start_y = (height as f64 - (note.start - time) * pps).round();
-                let end_y = (height as f64 - (note.end - time) * pps).round();
-                let y = end_y;
-                let h = (start_y - end_y).max(1.0);
+                let abs_end = (note.end * pps).round() as i64;
+                let y = (screen_top - abs_end) as f32;
+                let h = (((note.end - note.start) * pps).round() as f32).max(1.0);
 
                 let hue = (key as f64 / 128.0) * 360.0;
                 let (r, g, b) = hsv_to_rgb(hue as f32, 0.8, 1.0);
 
                 instances.push(NoteInstance {
-                    x: x as f32,
-                    y: y as f32,
-                    w: w as f32,
-                    h: h as f32,
+                    x,
+                    y,
+                    w,
+                    h,
                     r,
                     g,
                     b,
