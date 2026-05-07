@@ -21,6 +21,8 @@ pub struct NoteInstance {
     pub g: f32,
     pub b: f32,
     pub a: f32,
+    pub corner_radius: f32,
+    pub _pad: f32,
 }
 
 /// 音符数据源抽象，解耦 renderer 与具体 MIDI 格式
@@ -29,6 +31,29 @@ pub trait NoteSource {
     fn key_notes(&self, key: u8) -> &[nezha_core::Note];
     /// 总时长（秒）
     fn duration(&self) -> f64;
+    /// PPQ (ticks per beat)，返回 None 表示无 tick 信息，降级为秒计算
+    fn ticks_per_beat(&self) -> Option<u32> { None }
+}
+
+/// 渲染风格配置
+#[derive(Clone)]
+pub struct RenderStyle {
+    /// 边框宽度比例 0.0~1.0（1.0 表示左边 50% + 右边 50% 都是边框）
+    pub border_width: f32,
+    /// 圆角比例 0.0~1.0（1.0 表示底部是完全的半圆）
+    pub rounding: f32,
+    /// 每个 MIDI channel 的颜色 (channel 0..15)
+    pub channel_colors: [[f32; 3]; 16],
+}
+
+impl Default for RenderStyle {
+    fn default() -> Self {
+        Self {
+            border_width: 0.1,
+            rounding: 0.0,
+            channel_colors: [[0.3, 0.5, 0.9]; 16],
+        }
+    }
 }
 
 impl NoteSource for MidiFile {
@@ -38,6 +63,10 @@ impl NoteSource for MidiFile {
 
     fn duration(&self) -> f64 {
         self.duration
+    }
+
+    fn ticks_per_beat(&self) -> Option<u32> {
+        Some(self.ticks_per_beat)
     }
 }
 
@@ -129,6 +158,7 @@ impl Renderer {
                     attributes: &wgpu::vertex_attr_array![
                         0 => Float32x4,
                         1 => Float32x4,
+                        2 => Float32x2,
                     ],
                 }],
                 compilation_options: PipelineCompilationOptions::default(),
@@ -181,6 +211,7 @@ impl Renderer {
         speed: f32,
         midi_file: Option<&dyn NoteSource>,
         render_state: &mut MidiRenderState,
+        style: &RenderStyle,
     ) {
         let uniforms = Uniforms {
             time: time as f32,
@@ -196,7 +227,7 @@ impl Renderer {
         });
 
         let instances = midi_file
-            .map(|midi| self.build_instances(width, height, time, speed, midi, render_state))
+            .map(|midi| self.build_instances(width, height, time, speed, midi, render_state, style))
             .unwrap_or_default();
 
         if instances.len() > self.instance_capacity {
@@ -251,13 +282,13 @@ impl Renderer {
         speed: f32,
         midi: &dyn NoteSource,
         state: &mut MidiRenderState,
+        style: &RenderStyle,
     ) -> Vec<NoteInstance> {
         let pps = 200.0f64 * speed.max(0.01) as f64;
         let key_count = 128u8;
         let key_width = width as f64 / key_count as f64;
 
-        let time_px = (time * pps).round() as i64;
-        let screen_top = height as i64 + time_px;
+        let screen_top = height as f64 + time * pps;
 
         let visible_future = height as f64 / pps + 1.0;
         let visible_past = 1.0f64;
@@ -293,48 +324,45 @@ impl Renderer {
                     break;
                 }
 
-                let abs_end = (note.end * pps).round() as i64;
-                let y = (screen_top - abs_end) as f32;
-                let h = (((note.end - note.start) * pps).round() as f32).max(1.0);
+                let y = (screen_top - note.end * pps) as f32;
+                let h = ((note.end - note.start) * pps).max(1.0) as f32;
 
-                let hue = (key as f64 / 128.0) * 360.0;
-                let (r, g, b) = hsv_to_rgb(hue as f32, 0.8, 1.0);
+                let ch = (note.channel & 0x0F) as usize;
+                let [cr, cg, cb] = style.channel_colors[ch];
 
+                let border_px = style.border_width * w / 2.0;
+                let rounding_radius = style.rounding * f32::min(w, h) / 2.0;
+
+                // 外层：暗色描边矩形
+                instances.push(NoteInstance {
+                    x: x - border_px,
+                    y: y - border_px,
+                    w: w + 2.0 * border_px,
+                    h: h + 2.0 * border_px,
+                    r: cr * 0.4,
+                    g: cg * 0.4,
+                    b: cb * 0.4,
+                    a: 0.9,
+                    corner_radius: rounding_radius + border_px,
+                    _pad: 0.0,
+                });
+
+                // 内层：亮色填充矩形
                 instances.push(NoteInstance {
                     x,
                     y,
                     w,
                     h,
-                    r,
-                    g,
-                    b,
+                    r: cr,
+                    g: cg,
+                    b: cb,
                     a: 0.9,
+                    corner_radius: rounding_radius,
+                    _pad: 0.0,
                 });
             }
         }
 
         instances
     }
-}
-
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-
-    let (r, g, b) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-
-    (r + m, g + m, b + m)
 }

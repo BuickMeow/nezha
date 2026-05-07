@@ -80,10 +80,12 @@ impl RenderContext {
         time: f64,
         speed: f32,
         midi: Option<&dyn nezha_renderer::NoteSource>,
+        style: &nezha_renderer::RenderStyle,
     ) {
         self.renderer.render(
             &self.preview_view, width, height, time, speed, midi,
             &mut self.midi_render_state,
+            style,
         );
     }
 

@@ -144,7 +144,12 @@ impl eframe::App for App {
                 .exact_size(220.0)
                 .resizable(true)
                 .show_inside(ui, |ui| {
-                    properties_panel::show(ui, &mut self.project.timeline_state);
+                    let mut style = properties_panel::PropsPanelStyle {
+                        border_width: &mut self.ui.border_width,
+                        rounding: &mut self.ui.rounding,
+                        palette: &mut self.ui.palette,
+                    };
+                    properties_panel::show(ui, &mut self.project.timeline_state, &mut style);
                 });
 
             // 5. 中央预览区
@@ -167,7 +172,7 @@ impl eframe::App for App {
                 let rw = self.project.render_width as f32;
                 let rh = self.project.render_height as f32;
 
-                let render_time = (self.project.current_time * self.project.fps as f64).round() / self.project.fps as f64;
+                let render_time = self.project.current_time;
 
                 let speed = self
                     .project
@@ -185,12 +190,19 @@ impl eframe::App for App {
                     })
                     .unwrap_or(1.0);
 
+                let style = nezha_renderer::RenderStyle {
+                    border_width: self.ui.border_width,
+                    rounding: self.ui.rounding,
+                    channel_colors: self.ui.palette,
+                };
+
                 self.render_ctx.render(
                     self.project.render_width,
                     self.project.render_height,
                     render_time,
                     speed,
                     self.project.midi_file.as_ref().map(|m| m as &dyn nezha_renderer::NoteSource),
+                    &style,
                 );
 
                 let aspect = rw / rh;

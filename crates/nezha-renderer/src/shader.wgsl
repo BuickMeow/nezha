@@ -8,19 +8,15 @@ struct Uniforms {
 struct NoteInstance {
     @location(0) xywh: vec4<f32>,
     @location(1) rgba: vec4<f32>,
+    @location(2) corner_radius: f32,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
-    @location(1) rect_min: vec2<f32>,
-    @location(2) rect_max: vec2<f32>,
-}
-
-struct FragmentInput {
-    @location(0) color: vec4<f32>,
-    @location(1) rect_min: vec2<f32>,
-    @location(2) rect_max: vec2<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) half_size: vec2<f32>,
+    @location(3) radius: f32,
 }
 
 @group(0) @binding(0)
@@ -47,35 +43,36 @@ fn vs_main(
         vec2<f32>(x,     y),
     );
 
+    var uv = array<vec2<f32>, 6>(
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+    );
+
     let pixel_pos = pos[vertex_index];
     let ndc_x = (pixel_pos.x / u.width) * 2.0 - 1.0;
     let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
     out.color = instance.rgba;
-    out.rect_min = vec2<f32>(x, y);
-    out.rect_max = vec2<f32>(x + w, y + h);
+    out.uv = uv[vertex_index];
+    out.half_size = vec2<f32>(w, h) * 0.5;
+    out.radius = instance.corner_radius;
     return out;
 }
 
+fn sd_rounded_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
+    let d = abs(p) - half + r;
+    return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - r;
+}
+
 @fragment
-fn fs_main(
-    @builtin(position) frag_coord: vec4<f32>,
-    in: FragmentInput,
-) -> @location(0) vec4<f32> {
-    let dx = min(frag_coord.x - in.rect_min.x, in.rect_max.x - frag_coord.x);
-    let dy = min(frag_coord.y - in.rect_min.y, in.rect_max.y - frag_coord.y);
-    let d = min(dx, dy);
-
-    let border_px = 1.5;
-    let is_border = d < border_px;
-
-    let border_color = in.color * vec4<f32>(0.4, 0.4, 0.4, 1.0);
-    let fill_color = in.color;
-
-    if is_border {
-        return border_color;
-    } else {
-        return fill_color;
-    }
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let p = (in.uv - 0.5) * in.half_size * 2.0;
+    let d = sd_rounded_box(p, in.half_size, in.radius);
+    let alpha = 1.0 - smoothstep(-1.0, 1.0, d);
+    return vec4<f32>(in.color.rgb, in.color.a * alpha);
 }
