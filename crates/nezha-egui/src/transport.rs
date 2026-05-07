@@ -6,10 +6,17 @@ pub enum TrackKind {
     Audio,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClipKind {
+    Waterfall,
+    SolidColor,
+}
+
 #[derive(Clone, Debug)]
 pub struct TrackClip {
     pub id: usize,
     pub name: String,
+    pub kind: ClipKind,
     pub start: f32,
     pub end: f32,
     pub color: egui::Color32,
@@ -90,6 +97,7 @@ impl Default for TimelineData {
         video_track.clips.push(TrackClip {
             id: 0,
             name: "主渲染".to_string(),
+            kind: ClipKind::Waterfall,
             start: 0.0,
             end: 0.0,
             color: egui::Color32::from_rgb(80, 120, 200),

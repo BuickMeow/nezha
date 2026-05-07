@@ -11,8 +11,6 @@ pub struct ConfigState<'a> {
     pub export_format: &'a mut String,
     pub encoder: &'a mut String,
     pub export_path: &'a mut Option<String>,
-    pub bg_color: &'a mut [u8; 3],
-    pub note_color: &'a mut [u8; 3],
     pub theme_mode: &'a mut ThemeMode,
 }
 
@@ -20,6 +18,8 @@ pub struct ConfigState<'a> {
 pub enum ConfigAction {
     SelectMidi,
     Resize { width: u32, height: u32 },
+    AddWaterfall,
+    AddSolidColor,
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> {
@@ -67,15 +67,16 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
             });
         }
         SidebarTab::Style => {
-            ui.label("样式设置");
-            ui.group(|ui| {
-                ui.label("背景颜色");
-                ui.color_edit_button_srgb(state.bg_color);
-            });
-            ui.group(|ui| {
-                ui.label("音符颜色");
-                ui.color_edit_button_srgb(state.note_color);
-            });
+            ui.label("添加图层到时间轴");
+            ui.add_space(4.0);
+
+            if ui.button("🌊 默认瀑布流").clicked() {
+                action = Some(ConfigAction::AddWaterfall);
+            }
+            ui.add_space(4.0);
+            if ui.button("🎨 纯色图层").clicked() {
+                action = Some(ConfigAction::AddSolidColor);
+            }
         }
         SidebarTab::Export => {
             ui.label("导出设置");

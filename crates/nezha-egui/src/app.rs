@@ -122,8 +122,6 @@ impl eframe::App for App {
                         export_format: &mut self.ui.export_format,
                         encoder: &mut self.ui.encoder,
                         export_path: &mut self.ui.export_path,
-                        bg_color: &mut self.ui.bg_color,
-                        note_color: &mut self.ui.note_color,
                         theme_mode: &mut self.ui.theme_mode,
                     };
                     if let Some(action) = config_panel::show(ui, &mut state) {
@@ -135,6 +133,48 @@ impl eframe::App for App {
                 Some(config_panel::ConfigAction::SelectMidi) => self.pick_midi_file(),
                 Some(config_panel::ConfigAction::Resize { width, height }) => {
                     self.render_ctx.resize(width, height);
+                }
+                Some(config_panel::ConfigAction::AddWaterfall) => {
+                    let ts = &mut self.project.timeline_state;
+                    let id = ts.next_clip_id;
+                    ts.next_clip_id += 1;
+                    let dur = self.project.duration as f32;
+                    let mut new_track = crate::transport::Track::new_video(
+                        &format!("视频 {}", ts.data.tracks.len() + 1)
+                    );
+                    new_track.clips.push(crate::transport::TrackClip {
+                        id,
+                        name: format!("瀑布流 {}", id),
+                        kind: crate::transport::ClipKind::Waterfall,
+                        start: 0.0,
+                        end: dur.max(1.0),
+                        color: egui::Color32::from_rgb(80, 150, 220),
+                        speed: 1.0,
+                        border_width: 0.1,
+                        rounding: 0.0,
+                    });
+                    ts.data.tracks.push(new_track);
+                }
+                Some(config_panel::ConfigAction::AddSolidColor) => {
+                    let ts = &mut self.project.timeline_state;
+                    let id = ts.next_clip_id;
+                    ts.next_clip_id += 1;
+                    let dur = self.project.duration as f32;
+                    let mut new_track = crate::transport::Track::new_video(
+                        &format!("视频 {}", ts.data.tracks.len() + 1)
+                    );
+                    new_track.clips.push(crate::transport::TrackClip {
+                        id,
+                        name: format!("纯色 {}", id),
+                        kind: crate::transport::ClipKind::SolidColor,
+                        start: 0.0,
+                        end: dur.max(1.0),
+                        color: egui::Color32::from_rgb(200, 80, 80),
+                        speed: 1.0,
+                        border_width: 0.0,
+                        rounding: 0.0,
+                    });
+                    ts.data.tracks.push(new_track);
                 }
                 None => {}
             }
@@ -201,11 +241,30 @@ impl eframe::App for App {
                     })
                     .unwrap_or((0.1, 0.0, 0));
 
+                let bg_color = self
+                    .project
+                    .timeline_state
+                    .data
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.clips.iter())
+                    .find(|c| c.kind == crate::transport::ClipKind::SolidColor)
+                    .map(|c| {
+                        [
+                            c.color.r() as f64 / 255.0,
+                            c.color.g() as f64 / 255.0,
+                            c.color.b() as f64 / 255.0,
+                            1.0,
+                        ]
+                    })
+                    .unwrap_or([0.0, 0.0, 0.0, 1.0]);
+
                 let style = nezha_renderer::RenderStyle {
                     border_width: selected_border,
                     rounding: selected_rounding,
                     track_index: selected_track,
                     palette: nezha_renderer::random_palette(),
+                    background: bg_color,
                 };
 
                 self.render_ctx.render(

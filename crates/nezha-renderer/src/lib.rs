@@ -46,6 +46,20 @@ pub struct RenderStyle {
     pub track_index: usize,
     /// 16×8 调色板，128 色
     pub palette: [[f32; 3]; 128],
+    /// 背景色 RGBA (0.0~1.0)，透出纯色图层
+    pub background: [f64; 4],
+}
+
+impl Default for RenderStyle {
+    fn default() -> Self {
+        Self {
+            border_width: 0.1,
+            rounding: 0.0,
+            track_index: 0,
+            palette: random_palette(),
+            background: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
 }
 
 /// 用 golden ratio 生成 Zenith 风格的 Random 调色板
@@ -60,16 +74,6 @@ pub fn random_palette() -> [[f32; 3]; 128] {
     palette
 }
 
-impl Default for RenderStyle {
-    fn default() -> Self {
-        Self {
-            border_width: 0.1,
-            rounding: 0.0,
-            track_index: 0,
-            palette: random_palette(),
-        }
-    }
-}
 
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let c = v * s;
@@ -283,7 +287,12 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: style.background[0],
+                            g: style.background[1],
+                            b: style.background[2],
+                            a: style.background[3],
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

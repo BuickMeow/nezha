@@ -46,8 +46,8 @@ pub fn draw_tracks(
         );
         y += label_height;
 
-        for track in state.data.tracks.iter().filter(|t| t.kind == TrackKind::Video) {
-            y = draw_track_row(ui, painter, c, timeline_rect, view, selected_id, track, visible_start, visible_end, y);
+        for track in state.data.tracks.iter_mut().filter(|t| t.kind == TrackKind::Video) {
+            y = draw_track_row(ui, painter, c, timeline_rect, view, selected_id, track, visible_start, visible_end, y, state.fps);
         }
     }
 
@@ -70,8 +70,8 @@ pub fn draw_tracks(
         );
         y += label_height;
 
-        for track in state.data.tracks.iter().filter(|t| t.kind == TrackKind::Audio) {
-            y = draw_track_row(ui, painter, c, timeline_rect, view, selected_id, track, visible_start, visible_end, y);
+        for track in state.data.tracks.iter_mut().filter(|t| t.kind == TrackKind::Audio) {
+            y = draw_track_row(ui, painter, c, timeline_rect, view, selected_id, track, visible_start, visible_end, y, state.fps);
         }
     }
 
@@ -85,10 +85,11 @@ fn draw_track_row(
     timeline_rect: &egui::Rect,
     view: &TimelineView,
     selected_id: &mut Option<usize>,
-    track: &Track,
+    track: &mut Track,
     visible_start: f32,
     visible_end: f32,
     y: f32,
+    fps: u32,
 ) -> f32 {
     let track_bg = match track.kind {
         TrackKind::Video => c.video_track_bg,
@@ -158,59 +159,84 @@ fn draw_track_row(
     }
 
     let mut clip_clicked = false;
+    let mut dragged_clip_id: Option<usize> = None;
+    let frame_dur = 1.0f32 / fps.max(1) as f32;
+    let edge_width = 6.0f32; // 边缘拖拽区域宽度（像素）
+    let snap = |t: f32| -> f32 { (t / frame_dur).round() * frame_dur };
 
-    for clip in &track.clips {
-        if clip.end < visible_start || clip.start > visible_end {
+    for clip_idx in 0..track.clips.len() {
+        let clip_start = track.clips[clip_idx].start;
+        let clip_end = track.clips[clip_idx].end;
+        if clip_end < visible_start || clip_start > visible_end {
             continue;
         }
-        let x1 = timeline_rect.min.x
-            + view.header_width
-            + (clip.start - view.scroll_offset) * view.zoom;
-        let x2 = timeline_rect.min.x
-            + view.header_width
-            + (clip.end - view.scroll_offset) * view.zoom;
+        let clip_id = track.clips[clip_idx].id;
+        let clip_name = track.clips[clip_idx].name.clone();
+        let clip_color = track.clips[clip_idx].color;
+        let x1 = timeline_rect.min.x + view.header_width + (clip_start - view.scroll_offset) * view.zoom;
+        let x2 = timeline_rect.min.x + view.header_width + (clip_end - view.scroll_offset) * view.zoom;
         let clip_rect = egui::Rect::from_min_max(
             egui::pos2(x1.max(track_rect.min.x + view.header_width), track_rect.min.y + 3.0),
             egui::pos2(x2.min(track_rect.max.x), track_rect.max.y - 3.0),
         );
         if clip_rect.width() > 1.0 {
-            let is_selected = *selected_id == Some(clip.id);
+            let is_selected = *selected_id == Some(clip_id);
 
             let clip_interact = ui.interact(
                 clip_rect,
-                egui::Id::new(("timeline_clip", clip.id)),
-                egui::Sense::click(),
+                egui::Id::new(("timeline_clip", clip_id)),
+                egui::Sense::drag(),
             );
             if clip_interact.clicked() {
-                *selected_id = Some(clip.id);
+                *selected_id = Some(clip_id);
                 clip_clicked = true;
             }
+            if clip_interact.dragged() {
+                let delta = clip_interact.drag_delta().x / view.zoom;
+                let clip = &mut track.clips[clip_idx];
+                if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
+                    let ptr_x = ptr.x;
+                    let dist_left = (ptr_x - x1).abs();
+                    let dist_right = (ptr_x - x2).abs();
+                    if is_selected && dist_left < edge_width {
+                        clip.start = snap((clip.start + delta).max(0.0));
+                    } else if is_selected && dist_right < edge_width {
+                        clip.end = snap((clip.end + delta).max(clip.start + frame_dur));
+                    } else {
+                        let width = clip.end - clip.start;
+                        clip.start = snap((clip.start + delta).max(0.0));
+                        clip.end = clip.start + width;
+                    }
+                }
+                *selected_id = Some(clip.id);
+                dragged_clip_id = Some(clip.id);
+            }
 
-            painter.rect_filled(clip_rect, 3.0, clip.color);
+            painter.rect_filled(clip_rect, 3.0, clip_color);
 
             if is_selected {
-                painter.rect_stroke(
-                    clip_rect,
-                    3.0,
-                    egui::Stroke::new(2.0, egui::Color32::WHITE),
-                    egui::StrokeKind::Inside,
+                painter.rect_stroke(clip_rect, 3.0, egui::Stroke::new(2.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
+                // 边缘拖拽把手
+                let left_edge = egui::Rect::from_min_size(clip_rect.min, egui::vec2(edge_width, clip_rect.height()));
+                let right_edge = egui::Rect::from_min_size(
+                    egui::pos2(clip_rect.max.x - edge_width, clip_rect.min.y),
+                    egui::vec2(edge_width, clip_rect.height()),
                 );
+                painter.rect_filled(left_edge, 0.0, egui::Color32::from_white_alpha(60));
+                painter.rect_filled(right_edge, 0.0, egui::Color32::from_white_alpha(60));
             }
 
             if clip_rect.width() > 40.0 {
                 painter.text(
                     egui::pos2(clip_rect.min.x + 4.0, clip_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    &clip.name,
-                    font(10.0),
-                    egui::Color32::WHITE,
+                    egui::Align2::LEFT_CENTER, &clip_name, font(10.0), egui::Color32::WHITE,
                 );
             }
         }
     }
 
-    // 点击本 clip 之外的区域取消选择（使用 track 底部留白区域）
-    if !clip_clicked {
+    // 点击本 clip 之外的区域取消选择 (拖动 clip 时不取消）
+    if !clip_clicked && dragged_clip_id.is_none() {
         let deselect_area = egui::Rect::from_min_max(
             egui::pos2(track_rect.min.x, track_rect.max.y - 4.0),
             egui::pos2(track_rect.max.x, track_rect.max.y),

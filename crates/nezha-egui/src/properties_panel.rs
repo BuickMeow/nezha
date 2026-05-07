@@ -1,5 +1,5 @@
 use eframe::egui;
-use crate::transport::TimelineState;
+use crate::transport::{TimelineState, ClipKind};
 
 pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState, zoom: f32) {
     ui.heading(format!("属性（{:.0}%）", zoom * 100.0));
@@ -30,55 +30,66 @@ pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState, zoom: f32) {
 
                     ui.add_space(8.0);
                     ui.separator();
-                    ui.add_space(4.0);
 
-                    ui.label("流速");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Slider::new(&mut clip.speed, 0.1..=100.0)
-                                .step_by(0.1)
-                                .text("x"),
-                        );
-                    });
-                    ui.label(
-                        egui::RichText::new(format!("当前: {:.1}x", clip.speed))
-                            .size(11.0)
-                            .color(ui.visuals().weak_text_color()),
-                    );
+                    match clip.kind {
+                        ClipKind::Waterfall => {
+                            ui.add_space(4.0);
+                            ui.label("流速");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::Slider::new(&mut clip.speed, 0.1..=100.0)
+                                        .step_by(0.1)
+                                        .text("x"),
+                                );
+                            });
+                            ui.label(
+                                egui::RichText::new(format!("当前: {:.1}x", clip.speed))
+                                    .size(11.0)
+                                    .color(ui.visuals().weak_text_color()),
+                            );
 
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.heading("瀑布流样式");
-                    ui.add_space(4.0);
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.heading("瀑布流样式");
+                            ui.add_space(4.0);
 
-                    ui.label("边框宽度");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Slider::new(&mut clip.border_width, 0.0..=1.0)
-                                .step_by(0.05)
-                                .text(""),
-                        );
-                    });
-                    ui.label(
-                        egui::RichText::new(format!("{:.0}%", clip.border_width * 100.0))
-                            .size(11.0)
-                            .color(ui.visuals().weak_text_color()),
-                    );
+                            ui.label("边框宽度");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::Slider::new(&mut clip.border_width, 0.0..=1.0)
+                                        .step_by(0.05)
+                                        .text(""),
+                                );
+                            });
+                            ui.label(
+                                egui::RichText::new(format!("{:.0}%", clip.border_width * 100.0))
+                                    .size(11.0)
+                                    .color(ui.visuals().weak_text_color()),
+                            );
 
-                    ui.add_space(4.0);
-                    ui.label("圆角");
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::Slider::new(&mut clip.rounding, 0.0..=1.0)
-                                .step_by(0.05)
-                                .text(""),
-                        );
-                    });
-                    ui.label(
-                        egui::RichText::new(format!("{:.0}%", clip.rounding * 100.0))
-                            .size(11.0)
-                            .color(ui.visuals().weak_text_color()),
-                    );
+                            ui.add_space(4.0);
+                            ui.label("圆角");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::Slider::new(&mut clip.rounding, 0.0..=1.0)
+                                        .step_by(0.05)
+                                        .text(""),
+                                );
+                            });
+                            ui.label(
+                                egui::RichText::new(format!("{:.0}%", clip.rounding * 100.0))
+                                    .size(11.0)
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                        }
+                        ClipKind::SolidColor => {
+                            ui.add_space(4.0);
+                            ui.label("颜色");
+                            let mut rgb = [clip.color.r(), clip.color.g(), clip.color.b()];
+                            ui.color_edit_button_srgb(&mut rgb);
+                            clip.color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+                        }
+                    }
 
                     break;
                 }
