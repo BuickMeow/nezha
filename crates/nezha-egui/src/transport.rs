@@ -23,6 +23,7 @@ pub struct TrackClip {
     pub speed: f32,
     pub border_width: f32,
     pub rounding: f32,
+    pub render_mode: nezha_renderer::RenderMode,
 }
 
 #[derive(Clone, Debug)]
@@ -104,6 +105,7 @@ impl Default for TimelineData {
             speed: 1.0,
             border_width: 0.1,
             rounding: 0.0,
+            render_mode: nezha_renderer::RenderMode::TimeBased,
         });
         tracks.push(video_track);
         Self { tracks }

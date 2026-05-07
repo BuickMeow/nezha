@@ -152,6 +152,7 @@ impl eframe::App for App {
                         speed: 1.0,
                         border_width: 0.1,
                         rounding: 0.0,
+                        render_mode: nezha_renderer::RenderMode::TimeBased,
                     });
                     ts.data.tracks.insert(0, new_track);
                 }
@@ -173,6 +174,7 @@ impl eframe::App for App {
                         speed: 1.0,
                         border_width: 0.0,
                         rounding: 0.0,
+                        render_mode: nezha_renderer::RenderMode::TimeBased,
                     });
                     ts.data.tracks.insert(0, new_track);
                 }
@@ -225,7 +227,7 @@ impl eframe::App for App {
                     })
                     .unwrap_or(1.0);
 
-                let (selected_border, selected_rounding, selected_track) = self
+                let (selected_border, selected_rounding, selected_track, selected_render_mode) = self
                     .project
                     .timeline_state
                     .selected_clip_id
@@ -237,9 +239,9 @@ impl eframe::App for App {
                             .iter()
                             .flat_map(|t| t.clips.iter())
                             .find(|c| c.id == id)
-                            .map(|c| (c.border_width, c.rounding, c.id))
+                            .map(|c| (c.border_width, c.rounding, c.id, c.render_mode))
                     })
-                    .unwrap_or((0.1, 0.0, 0));
+                    .unwrap_or((0.1, 0.0, 0, nezha_renderer::RenderMode::TimeBased));
 
                 let bg_color = self
                     .project
@@ -262,6 +264,7 @@ impl eframe::App for App {
                     .unwrap_or([0.0, 0.0, 0.0, 1.0]);
 
                 let style = nezha_renderer::RenderStyle {
+                    render_mode: selected_render_mode,
                     border_width: selected_border,
                     rounding: selected_rounding,
                     track_index: selected_track,

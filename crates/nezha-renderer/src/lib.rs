@@ -35,9 +35,21 @@ pub trait NoteSource {
     fn ticks_per_beat(&self) -> Option<u32> { None }
 }
 
+/// 渲染模式
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum RenderMode {
+    /// 基于秒计算音符位置（原有逻辑）
+    TimeBased,
+    /// 基于 MIDI tick 计算音符位置（整数 tick，无累积误差）
+    /// BPM 控制滚动流速但不影响音符高度
+    TickBased { bpm: f32 },
+}
+
 /// 渲染风格配置
 #[derive(Clone)]
 pub struct RenderStyle {
+    /// 渲染模式
+    pub render_mode: RenderMode,
     /// 边框宽度比例 0.0~1.0（1.0 表示左边 50% + 右边 50% 都是边框）
     pub border_width: f32,
     /// 圆角比例 0.0~1.0（1.0 表示底部是完全的半圆）
@@ -53,6 +65,7 @@ pub struct RenderStyle {
 impl Default for RenderStyle {
     fn default() -> Self {
         Self {
+            render_mode: RenderMode::TimeBased,
             border_width: 0.1,
             rounding: 0.0,
             track_index: 0,
@@ -113,6 +126,8 @@ impl NoteSource for MidiFile {
 pub struct MidiRenderState {
     scan_indices: [usize; 128],
     last_time: f64,
+    /// Tick 模式下记录上次的 scroll_tick，用于检测 seek
+    last_scroll_tick: f64,
 }
 
 impl Default for MidiRenderState {
@@ -120,6 +135,7 @@ impl Default for MidiRenderState {
         Self {
             scan_indices: [0; 128],
             last_time: -1.0,
+            last_scroll_tick: -1.0,
         }
     }
 }
@@ -128,6 +144,7 @@ impl MidiRenderState {
     pub fn reset(&mut self) {
         self.scan_indices = [0; 128];
         self.last_time = -1.0;
+        self.last_scroll_tick = -1.0;
     }
 }
 
@@ -328,6 +345,26 @@ impl Renderer {
         state: &mut MidiRenderState,
         style: &RenderStyle,
     ) -> Vec<NoteInstance> {
+        match style.render_mode {
+            RenderMode::TimeBased => {
+                self.build_instances_time(width, height, time, speed, midi, state, style)
+            }
+            RenderMode::TickBased { bpm } => {
+                self.build_instances_tick(width, height, time, speed, bpm, midi, state, style)
+            }
+        }
+    }
+
+    fn build_instances_time(
+        &self,
+        width: u32,
+        height: u32,
+        time: f64,
+        speed: f32,
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
+        style: &RenderStyle,
+    ) -> Vec<NoteInstance> {
         let pps = 200.0f64 * speed.max(0.01) as f64;
         let key_count = 128u8;
         let key_width = width as f64 / key_count as f64;
@@ -368,9 +405,101 @@ impl Renderer {
                     break;
                 }
 
-                // 直接从基准点算出上下边，避免 y 和 h 各自 f64→f32 截断导致相邻音符 ±1px 间隙
                 let note_bottom = (screen_top - note.start * pps) as f32;
                 let note_top = (screen_top - note.end * pps) as f32;
+                let y = note_top;
+                let h = (note_bottom - note_top).max(1.0);
+
+                let trk = note.track as usize % 128;
+                let [cr, cg, cb] = style.palette[trk];
+
+                let border_px = style.border_width * w / 2.0;
+                let rounding_radius = style.rounding * f32::min(w, h) / 2.0;
+
+                instances.push(NoteInstance {
+                    x,
+                    y,
+                    w,
+                    h,
+                    r: cr,
+                    g: cg,
+                    b: cb,
+                    a: 1.0,
+                    corner_radius: rounding_radius,
+                    border_width: border_px,
+                });
+            }
+        }
+
+        instances
+    }
+
+    fn build_instances_tick(
+        &self,
+        width: u32,
+        height: u32,
+        time: f64,
+        speed: f32,
+        bpm: f32,
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
+        style: &RenderStyle,
+    ) -> Vec<NoteInstance> {
+        let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
+        let eff_speed = speed.max(0.01) as f64;
+
+        // 像素/每 tick：与 TimeBased 120BPM 缩放一致（一拍 = 100px @1x）
+        let ppt = 100.0 / ticks_per_beat * eff_speed;
+
+        // 当前 tick 位置 = time × (tick/sec) × speed
+        let tick_per_sec = ticks_per_beat * bpm as f64 / 60.0;
+        let scroll_tick = time * tick_per_sec * eff_speed;
+
+        // 屏幕上可见的 tick 范围
+        let visible_ticks = height as f64 / ppt;
+        let tick_at_bottom = scroll_tick;                          // 屏幕最底对应的 tick
+        let tick_at_top = scroll_tick + visible_ticks;             // 屏幕最顶对应的 tick
+
+        // seek 检测
+        if scroll_tick < state.last_scroll_tick {
+            state.scan_indices = [0; 128];
+        }
+        state.last_scroll_tick = scroll_tick;
+
+        let key_count = 128u8;
+        let key_width = width as f64 / key_count as f64;
+        // screen_bottom = 屏幕 Y 坐标中 tick=0 的位置
+        let screen_bottom = height as f64 + scroll_tick * ppt;
+
+        let mut instances = Vec::new();
+
+        for key in 0..128u8 {
+            let notes = midi.key_notes(key);
+            if notes.is_empty() {
+                continue;
+            }
+
+            let mut scan = state.scan_indices[key as usize];
+            // 跳过已完全滚出屏幕底部的音符 (end_tick < tick_at_bottom)
+            while scan < notes.len() && (notes[scan].end_tick as f64) < tick_at_bottom {
+                scan += 1;
+            }
+            state.scan_indices[key as usize] = scan;
+
+            let x = (key as f64 * key_width).round() as f32;
+            let next_x = ((key as f64 + 1.0) * key_width).round() as f32;
+            let w = (next_x - x).max(1.0);
+
+            for i in scan..notes.len() {
+                let note = &notes[i];
+                // 音符完全在屏幕上方，停止扫描
+                if (note.start_tick as f64) > tick_at_top + 1.0 {
+                    break;
+                }
+
+                // 上边 = end_tick（较晚的 tick = 屏幕上方），下边 = start_tick
+                let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
+                let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
                 let y = note_top;
                 let h = (note_bottom - note_top).max(1.0);
 
