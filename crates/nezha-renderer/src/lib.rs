@@ -22,7 +22,7 @@ pub struct NoteInstance {
     pub b: f32,
     pub a: f32,
     pub corner_radius: f32,
-    pub _pad: f32,
+    pub border_width: f32,
 }
 
 /// 音符数据源抽象，解耦 renderer 与具体 MIDI 格式
@@ -368,8 +368,11 @@ impl Renderer {
                     break;
                 }
 
-                let y = (screen_top - note.end * pps) as f32;
-                let h = ((note.end - note.start) * pps).max(1.0) as f32;
+                // 直接从基准点算出上下边，避免 y 和 h 各自 f64→f32 截断导致相邻音符 ±1px 间隙
+                let note_bottom = (screen_top - note.start * pps) as f32;
+                let note_top = (screen_top - note.end * pps) as f32;
+                let y = note_top;
+                let h = (note_bottom - note_top).max(1.0);
 
                 let trk = note.track as usize % 128;
                 let [cr, cg, cb] = style.palette[trk];
@@ -377,38 +380,18 @@ impl Renderer {
                 let border_px = style.border_width * w / 2.0;
                 let rounding_radius = style.rounding * f32::min(w, h) / 2.0;
 
-                // 外层：暗色描边矩形 (内边框：填充整个音符，内层盖在它上面)
                 instances.push(NoteInstance {
                     x,
                     y,
                     w,
                     h,
-                    r: cr * 0.4,
-                    g: cg * 0.4,
-                    b: cb * 0.4,
-                    a: 0.9,
+                    r: cr,
+                    g: cg,
+                    b: cb,
+                    a: 1.0,
                     corner_radius: rounding_radius,
-                    _pad: 0.0,
+                    border_width: border_px,
                 });
-
-                // 内层：亮色填充矩形 (向内缩进 bp，露出边框)
-                let fill_w = w - 2.0 * border_px;
-                let fill_h = h - 2.0 * border_px;
-                let fill_r = (rounding_radius - border_px).max(0.0);
-                if fill_w >= 1.0 && fill_h >= 1.0 {
-                    instances.push(NoteInstance {
-                        x: x + border_px,
-                        y: y + border_px,
-                        w: fill_w,
-                        h: fill_h,
-                        r: cr,
-                        g: cg,
-                        b: cb,
-                        a: 0.9,
-                        corner_radius: fill_r,
-                        _pad: 0.0,
-                    });
-                }
             }
         }
 

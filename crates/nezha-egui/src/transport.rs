@@ -96,7 +96,7 @@ impl Default for TimelineData {
         let mut video_track = Track::new_video("视频 1");
         video_track.clips.push(TrackClip {
             id: 0,
-            name: "主渲染".to_string(),
+            name: "默认瀑布流".to_string(),
             kind: ClipKind::Waterfall,
             start: 0.0,
             end: 0.0,

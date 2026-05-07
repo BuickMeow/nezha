@@ -144,7 +144,7 @@ impl eframe::App for App {
                     );
                     new_track.clips.push(crate::transport::TrackClip {
                         id,
-                        name: format!("瀑布流 {}", id),
+                        name: format!("默认瀑布流 {}", id),
                         kind: crate::transport::ClipKind::Waterfall,
                         start: 0.0,
                         end: dur.max(1.0),
@@ -153,7 +153,7 @@ impl eframe::App for App {
                         border_width: 0.1,
                         rounding: 0.0,
                     });
-                    ts.data.tracks.push(new_track);
+                    ts.data.tracks.insert(0, new_track);
                 }
                 Some(config_panel::ConfigAction::AddSolidColor) => {
                     let ts = &mut self.project.timeline_state;
@@ -174,7 +174,7 @@ impl eframe::App for App {
                         border_width: 0.0,
                         rounding: 0.0,
                     });
-                    ts.data.tracks.push(new_track);
+                    ts.data.tracks.insert(0, new_track);
                 }
                 None => {}
             }
@@ -248,7 +248,9 @@ impl eframe::App for App {
                     .tracks
                     .iter()
                     .flat_map(|t| t.clips.iter())
-                    .find(|c| c.kind == crate::transport::ClipKind::SolidColor)
+                    .find(|c| c.kind == crate::transport::ClipKind::SolidColor
+                        && (render_time as f32) >= c.start
+                        && (render_time as f32) < c.end)
                     .map(|c| {
                         [
                             c.color.r() as f64 / 255.0,

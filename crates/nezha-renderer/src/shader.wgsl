@@ -8,7 +8,7 @@ struct Uniforms {
 struct NoteInstance {
     @location(0) xywh: vec4<f32>,
     @location(1) rgba: vec4<f32>,
-    @location(2) corner_radius: f32,
+    @location(2) props: vec2<f32>,  // x = corner_radius, y = border_width
 }
 
 struct VertexOutput {
@@ -17,6 +17,7 @@ struct VertexOutput {
     @location(1) uv: vec2<f32>,
     @location(2) half_size: vec2<f32>,
     @location(3) radius: f32,
+    @location(4) border_width: f32,
 }
 
 @group(0) @binding(0)
@@ -35,12 +36,12 @@ fn vs_main(
     let h = instance.xywh.w;
 
     var pos = array<vec2<f32>, 6>(
-        vec2<f32>(x + w, y),
-        vec2<f32>(x + w, y + h),
-        vec2<f32>(x,     y),
-        vec2<f32>(x + w, y + h),
-        vec2<f32>(x,     y + h),
-        vec2<f32>(x,     y),
+        vec2<f32>(x + w + 1.0, y - 1.0),
+        vec2<f32>(x + w + 1.0, y + h + 1.0),
+        vec2<f32>(x - 1.0,     y - 1.0),
+        vec2<f32>(x + w + 1.0, y + h + 1.0),
+        vec2<f32>(x - 1.0,     y + h + 1.0),
+        vec2<f32>(x - 1.0,     y - 1.0),
     );
 
     var uv = array<vec2<f32>, 6>(
@@ -60,7 +61,8 @@ fn vs_main(
     out.color = instance.rgba;
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(w, h) * 0.5;
-    out.radius = instance.corner_radius;
+    out.radius = instance.props.x;
+    out.border_width = instance.props.y;
     return out;
 }
 
@@ -72,7 +74,28 @@ fn sd_rounded_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = (in.uv - 0.5) * in.half_size * 2.0;
-    let d = sd_rounded_box(p, in.half_size, in.radius);
-    let alpha = 1.0 - smoothstep(-1.0, 1.0, d);
-    return vec4<f32>(in.color.rgb, in.color.a * alpha);
+
+    // 外层 SDF：整颗音符（含描边），偏移 -0.5px 使边界不透明、消除邻接间隙
+    let d_outer = sd_rounded_box(p, in.half_size, in.radius) - 0.5;
+    let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
+
+    // 内层 SDF：填充区域（向内缩进 border_width）
+    let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
+    let inner_r = max(in.radius - in.border_width, 0.0);
+    let d_inner = sd_rounded_box(p, inner_half, inner_r) - 0.5;
+    let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
+
+    let fill_a = inner_a;
+    let border_a = outer_a - inner_a;
+    let total_a = fill_a + border_a;
+
+    // 描边色 = 填充色 * 0.4（暗色）
+    let border_color = in.color.rgb * 0.4;
+
+    // 输出非预乘 alpha 颜色（wgpu ALPHA_BLENDING 使用 SrcAlpha 因子）
+    var rgb = vec3(0.0);
+    if total_a > 0.0 {
+        rgb = (in.color.rgb * fill_a + border_color * border_a) / total_a;
+    }
+    return vec4(rgb, in.color.a * total_a);
 }
