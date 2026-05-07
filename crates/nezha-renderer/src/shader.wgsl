@@ -77,8 +77,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // 外层 SDF：整颗音符边界（d>0 外侧, d<0 内侧）
     let d_outer = sd_rounded_box(p, in.half_size, in.radius);
-    // 外侧抗锯齿：边界(d=0)处 alpha=1, 1px外 alpha=0
-    let outer_a = 1.0 - smoothstep(0.0, 1.0, d_outer);
+    // 对称抗锯齿：过渡区跨边界两侧各 0.5px
+    let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
 
     // 内层 SDF：填充区域，向内缩进 border_width
     let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
@@ -89,7 +89,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     if inner_half.x > 0.0 && inner_half.y > 0.0 {
         let d_inner = sd_rounded_box(p, inner_half, inner_r);
-        let inner_a = 1.0 - smoothstep(0.0, 1.0, d_inner);
+        let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
         fill_a = inner_a;
         border_a = outer_a - inner_a;
     }
