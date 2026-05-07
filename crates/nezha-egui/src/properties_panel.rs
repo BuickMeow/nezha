@@ -7,8 +7,8 @@ pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState) {
 
     if let Some(selected_id) = timeline_state.selected_clip_id {
         let mut found = false;
-        for track in &timeline_state.tracks {
-            for clip in &track.clips {
+        for track in &mut timeline_state.data.tracks {
+            for clip in &mut track.clips {
                 if clip.id == selected_id {
                     found = true;
 
@@ -32,27 +32,12 @@ pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState) {
                     ui.separator();
                     ui.add_space(4.0);
 
-                    // 找到可变引用以编辑
-                    break;
-                }
-            }
-            if found { break; }
-        }
-
-        // 需要可变引用编辑流速，单独遍历
-        let mut edited = false;
-        for track in &mut timeline_state.tracks {
-            for clip in &mut track.clips {
-                if clip.id == selected_id {
-                    edited = true;
                     ui.label("流速");
                     ui.horizontal(|ui| {
                         ui.add(
-                            egui::Slider::new(&mut clip.speed,
-                                0.1..=5.0,
-                            )
-                            .step_by(0.1)
-                            .text("x"),
+                            egui::Slider::new(&mut clip.speed, 0.1..=5.0)
+                                .step_by(0.1)
+                                .text("x"),
                         );
                     });
                     ui.label(
@@ -63,7 +48,7 @@ pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState) {
                     break;
                 }
             }
-            if edited { break; }
+            if found { break; }
         }
 
         ui.add_space(8.0);

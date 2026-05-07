@@ -2,6 +2,7 @@ struct Uniforms {
     time: f32,
     width: f32,
     height: f32,
+    _pad: f32,
 }
 
 struct NoteInstance {

@@ -23,6 +23,47 @@ pub struct NoteInstance {
     pub a: f32,
 }
 
+/// 音符数据源抽象，解耦 renderer 与具体 MIDI 格式
+pub trait NoteSource {
+    /// 返回该 key 的所有音符（已按 start 排序）
+    fn key_notes(&self, key: u8) -> &[nezha_core::Note];
+    /// 总时长（秒）
+    fn duration(&self) -> f64;
+}
+
+impl NoteSource for MidiFile {
+    fn key_notes(&self, key: u8) -> &[nezha_core::Note] {
+        &self.key_notes[key as usize]
+    }
+
+    fn duration(&self) -> f64 {
+        self.duration
+    }
+}
+
+/// MIDI 渲染业务状态（与 GPU 资源分离）
+pub struct MidiRenderState {
+    scan_indices: [usize; 128],
+    last_time: f64,
+}
+
+impl Default for MidiRenderState {
+    fn default() -> Self {
+        Self {
+            scan_indices: [0; 128],
+            last_time: -1.0,
+        }
+    }
+}
+
+impl MidiRenderState {
+    pub fn reset(&mut self) {
+        self.scan_indices = [0; 128];
+        self.last_time = -1.0;
+    }
+}
+
+/// GPU 资源管理 + 渲染调度
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -31,8 +72,6 @@ pub struct Renderer {
     bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
-    scan_indices: [usize; 128],
-    last_time: f32,
 }
 
 impl Renderer {
@@ -130,8 +169,6 @@ impl Renderer {
             bind_group,
             instance_buffer,
             instance_capacity,
-            scan_indices: [0; 128],
-            last_time: -1.0,
         }
     }
 
@@ -140,23 +177,27 @@ impl Renderer {
         target: &wgpu::TextureView,
         width: u32,
         height: u32,
-        time: f32,
+        time: f64,
         speed: f32,
-        midi_file: Option<&MidiFile>,
+        midi_file: Option<&dyn NoteSource>,
+        render_state: &mut MidiRenderState,
     ) {
         let uniforms = Uniforms {
-            time,
+            time: time as f32,
             width: width as f32,
             height: height as f32,
             _pad: 0.0,
         };
         self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.device.create_command_encoder(
+&wgpu::CommandEncoderDescriptor {
             label: Some("render_encoder"),
         });
 
-        let instances = self.build_instances(width, height, time, speed, midi_file);
+        let instances = midi_file
+            .map(|midi| self.build_instances(width, height, time, speed, midi, render_state))
+            .unwrap_or_default();
 
         if instances.len() > self.instance_capacity {
             self.instance_capacity = instances.len().max(self.instance_capacity * 2);
@@ -168,38 +209,8 @@ impl Renderer {
             });
         }
 
-        if !instances.is_empty() {
-            self.queue.write_buffer(
-                &self.instance_buffer,
-                0,
-                bytemuck::cast_slice(&instances),
-            );
-
-            {
-                let mut pass = encoder.begin_render_pass(
-                &wgpu::RenderPassDescriptor {
-                    label: Some("render_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: target,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-                pass.draw(0..6, 0..instances.len() as u32);
-            }
-        } else {
-            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
@@ -215,54 +226,61 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+
+            if !instances.is_empty() {
+                self.queue.write_buffer(
+                    &self.instance_buffer,
+                    0,
+                    bytemuck::cast_slice(&instances),
+                );
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                pass.draw(0..6, 0..instances.len() as u32);
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
     fn build_instances(
-        &mut self,
+        &self,
         width: u32,
         height: u32,
-        time: f32,
+        time: f64,
         speed: f32,
-        midi_file: Option<&MidiFile>,
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
     ) -> Vec<NoteInstance> {
-        let midi = match midi_file {
-            Some(m) => m,
-            None => return Vec::new(),
-        };
-
-        let pps = 200.0f32 * speed.max(0.01);
+        let pps = 200.0f64 * speed.max(0.01) as f64;
         let key_count = 128u8;
-        let key_width = width as f32 / key_count as f32;
+        let key_width = width as f64 / key_count as f64;
 
-        let visible_future = height as f32 / pps + 1.0;
-        let visible_past = 1.0f32;
+        let visible_future = height as f64 / pps + 1.0;
+        let visible_past = 1.0f64;
         let time_top = time + visible_future;
         let time_bottom = time - visible_past;
 
-        if time < self.last_time {
-            self.scan_indices = [0; 128];
+        if time < state.last_time {
+            state.scan_indices = [0; 128];
         }
-        self.last_time = time;
+        state.last_time = time;
 
-        let estimated = ((width * height) as usize / 4).clamp(50_000, 2_000_000);
-        let mut instances = Vec::with_capacity(estimated);
+        let mut instances = Vec::new();
 
         for key in 0..128u8 {
-            let notes = &midi.key_notes[key as usize];
+            let notes = midi.key_notes(key);
             if notes.is_empty() {
                 continue;
             }
 
-            let mut scan = self.scan_indices[key as usize];
+            let mut scan = state.scan_indices[key as usize];
             while scan < notes.len() && notes[scan].end < time_bottom {
                 scan += 1;
             }
-            self.scan_indices[key as usize] = scan;
+            state.scan_indices[key as usize] = scan;
 
-            let x = key as f32 * key_width;
+            let x = key as f64 * key_width;
             let w = key_width;
 
             for i in scan..notes.len() {
@@ -271,20 +289,19 @@ impl Renderer {
                     break;
                 }
 
-                // 分别取整以避免连续帧间浮点误差产生的抖动
-                let start_y = (height as f32 - (note.start - time) * pps).round();
-                let end_y = (height as f32 - (note.end - time) * pps).round();
+                let start_y = (height as f64 - (note.start - time) * pps).round();
+                let end_y = (height as f64 - (note.end - time) * pps).round();
                 let y = end_y;
                 let h = (start_y - end_y).max(1.0);
 
-                let hue = (key as f32 / 128.0) * 360.0;
-                let (r, g, b) = hsv_to_rgb(hue, 0.8, 1.0);
+                let hue = (key as f64 / 128.0) * 360.0;
+                let (r, g, b) = hsv_to_rgb(hue as f32, 0.8, 1.0);
 
                 instances.push(NoteInstance {
-                    x,
-                    y,
-                    w,
-                    h,
+                    x: x as f32,
+                    y: y as f32,
+                    w: w as f32,
+                    h: h as f32,
                     r,
                     g,
                     b,
