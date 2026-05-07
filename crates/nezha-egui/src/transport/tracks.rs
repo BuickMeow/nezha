@@ -157,6 +157,8 @@ fn draw_track_row(
         );
     }
 
+    let mut clip_clicked = false;
+
     for clip in &track.clips {
         if clip.end < visible_start || clip.start > visible_end {
             continue;
@@ -181,6 +183,7 @@ fn draw_track_row(
             );
             if clip_interact.clicked() {
                 *selected_id = Some(clip.id);
+                clip_clicked = true;
             }
 
             painter.rect_filled(clip_rect, 3.0, clip.color);
@@ -203,6 +206,22 @@ fn draw_track_row(
                     egui::Color32::WHITE,
                 );
             }
+        }
+    }
+
+    // 点击本 clip 之外的区域取消选择（使用 track 底部留白区域）
+    if !clip_clicked {
+        let deselect_area = egui::Rect::from_min_max(
+            egui::pos2(track_rect.min.x, track_rect.max.y - 4.0),
+            egui::pos2(track_rect.max.x, track_rect.max.y),
+        );
+        let deselect = ui.interact(
+            deselect_area,
+            egui::Id::new(("track_deselect", &track.name)),
+            egui::Sense::click(),
+        );
+        if deselect.clicked() {
+            *selected_id = None;
         }
     }
 

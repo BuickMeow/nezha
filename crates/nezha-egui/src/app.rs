@@ -144,12 +144,7 @@ impl eframe::App for App {
                 .exact_size(220.0)
                 .resizable(true)
                 .show_inside(ui, |ui| {
-                    let mut style = properties_panel::PropsPanelStyle {
-                        border_width: &mut self.ui.border_width,
-                        rounding: &mut self.ui.rounding,
-                        palette: &mut self.ui.palette,
-                    };
-                    properties_panel::show(ui, &mut self.project.timeline_state, &mut style);
+                    properties_panel::show(ui, &mut self.project.timeline_state);
                 });
 
             // 5. 中央预览区
@@ -190,10 +185,27 @@ impl eframe::App for App {
                     })
                     .unwrap_or(1.0);
 
+                let (selected_border, selected_rounding, selected_track) = self
+                    .project
+                    .timeline_state
+                    .selected_clip_id
+                    .and_then(|id| {
+                        self.project
+                            .timeline_state
+                            .data
+                            .tracks
+                            .iter()
+                            .flat_map(|t| t.clips.iter())
+                            .find(|c| c.id == id)
+                            .map(|c| (c.border_width, c.rounding, c.id))
+                    })
+                    .unwrap_or((0.1, 0.0, 0));
+
                 let style = nezha_renderer::RenderStyle {
-                    border_width: self.ui.border_width,
-                    rounding: self.ui.rounding,
-                    channel_colors: self.ui.palette,
+                    border_width: selected_border,
+                    rounding: selected_rounding,
+                    track_index: selected_track,
+                    palette: nezha_renderer::random_palette(),
                 };
 
                 self.render_ctx.render(

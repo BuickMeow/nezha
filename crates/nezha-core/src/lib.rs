@@ -54,6 +54,7 @@ pub struct Note {
     pub end_tick: u32,        // absolute MIDI tick
     pub velocity: u8,         // 0-127
     pub channel: u8,
+    pub track: u16,           // MIDI track index (0-based)
 }
 
 #[derive(Clone, Debug)]
@@ -94,8 +95,8 @@ impl MidiFile {
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
         let mut global_duration = 0.0f64;
 
-        for track in &smf.tracks {
-            Self::parse_track(track, &tempo_segments, ticks_per_beat, &mut key_notes, &mut global_duration);
+        for (track_idx, track) in smf.tracks.iter().enumerate() {
+            Self::parse_track(track, &tempo_segments, ticks_per_beat, track_idx as u16, &mut key_notes, &mut global_duration);
         }
 
         // 每个 key 内按 start 排序
@@ -150,10 +151,11 @@ impl MidiFile {
         track: &midly::Track,
         segments: &[TempoSegment],
         ticks_per_beat: u32,
+        track_idx: u16,
         key_notes: &mut [Vec<Note>; 128],
         global_duration: &mut f64,
     ) {
-        let mut active_notes: Vec<(u8, f64, u8, u8, u32)> = Vec::new();
+        let mut active_notes: Vec<(u8, f64, u8, u8, u32, u16)> = Vec::new();
         let mut current_tick: u32 = 0;
         let mut current_seconds: f64 = 0.0;
         let mut seg_idx: usize = 0;
@@ -193,15 +195,15 @@ impl MidiFile {
                         let k = key.as_int();
                         let ch = channel.as_int();
                         if vel.as_int() > 0 {
-                            active_notes.push((k, current_seconds, vel.as_int(), ch, current_tick));
+                            active_notes.push((k, current_seconds, vel.as_int(), ch, current_tick, track_idx));
                         } else {
-                            Self::resolve_note_off(k, ch, current_seconds, current_tick, &mut active_notes, key_notes, global_duration);
+                            Self::resolve_note_off(k, ch, current_seconds, current_tick, track_idx, &mut active_notes, key_notes, global_duration);
                         }
                     }
                     midly::MidiMessage::NoteOff { key, .. } => {
                         let k = key.as_int();
                         let ch = channel.as_int();
-                        Self::resolve_note_off(k, ch, current_seconds, current_tick, &mut active_notes, key_notes, global_duration);
+                        Self::resolve_note_off(k, ch, current_seconds, current_tick, track_idx, &mut active_notes, key_notes, global_duration);
                     }
                     _ => {}
                 }
@@ -214,15 +216,16 @@ impl MidiFile {
         channel: u8,
         end_time: f64,
         end_tick: u32,
-        active_notes: &mut Vec<(u8, f64, u8, u8, u32)>,
+        _track_idx: u16,
+        active_notes: &mut Vec<(u8, f64, u8, u8, u32, u16)>,
         key_notes: &mut [Vec<Note>; 128],
         global_duration: &mut f64,
     ) {
         if let Some(idx) = active_notes
             .iter()
-            .rposition(|(ak, _, _, ach, _)| *ak == key && *ach == channel)
+            .rposition(|(ak, _, _, ach, _, _)| *ak == key && *ach == channel)
         {
-            let (k, start, velocity, ch, start_tick) = active_notes.swap_remove(idx);
+            let (k, start, velocity, ch, start_tick, trk) = active_notes.swap_remove(idx);
             *global_duration = global_duration.max(end_time);
             key_notes[k as usize].push(Note {
                 key: k,
@@ -232,6 +235,7 @@ impl MidiFile {
                 end_tick,
                 velocity,
                 channel: ch,
+                track: trk,
             });
         }
     }

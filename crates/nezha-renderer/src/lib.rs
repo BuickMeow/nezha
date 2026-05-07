@@ -42,8 +42,22 @@ pub struct RenderStyle {
     pub border_width: f32,
     /// 圆角比例 0.0~1.0（1.0 表示底部是完全的半圆）
     pub rounding: f32,
-    /// 每个 MIDI channel 的颜色 (channel 0..15)
-    pub channel_colors: [[f32; 3]; 16],
+    /// 音轨索引，用于从调色板中偏移取色
+    pub track_index: usize,
+    /// 16×8 调色板，128 色
+    pub palette: [[f32; 3]; 128],
+}
+
+/// 用 golden ratio 生成 Zenith 风格的 Random 调色板
+pub fn random_palette() -> [[f32; 3]; 128] {
+    let mult = 0.12345f32;
+    let mut palette = [[0.0f32; 3]; 128];
+    for i in 0..128 {
+        let hue = ((i as f32 * mult) % 1.0) * 360.0;
+        let (r, g, b) = hsv_to_rgb(hue, 0.8, 1.0);
+        palette[i] = [r, g, b];
+    }
+    palette
 }
 
 impl Default for RenderStyle {
@@ -51,9 +65,30 @@ impl Default for RenderStyle {
         Self {
             border_width: 0.1,
             rounding: 0.0,
-            channel_colors: [[0.3, 0.5, 0.9]; 16],
+            track_index: 0,
+            palette: random_palette(),
         }
     }
+}
+
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    (r + m, g + m, b + m)
 }
 
 impl NoteSource for MidiFile {
@@ -327,8 +362,8 @@ impl Renderer {
                 let y = (screen_top - note.end * pps) as f32;
                 let h = ((note.end - note.start) * pps).max(1.0) as f32;
 
-                let ch = (note.channel & 0x0F) as usize;
-                let [cr, cg, cb] = style.channel_colors[ch];
+                let trk = note.track as usize % 128;
+                let [cr, cg, cb] = style.palette[trk];
 
                 let border_px = style.border_width * w / 2.0;
                 let rounding_radius = style.rounding * f32::min(w, h) / 2.0;

@@ -14,6 +14,8 @@ pub struct TrackClip {
     pub end: f32,
     pub color: egui::Color32,
     pub speed: f32,
+    pub border_width: f32,
+    pub rounding: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +94,8 @@ impl Default for TimelineData {
             end: 0.0,
             color: egui::Color32::from_rgb(80, 120, 200),
             speed: 1.0,
+            border_width: 0.1,
+            rounding: 0.0,
         });
         tracks.push(video_track);
         Self { tracks }
