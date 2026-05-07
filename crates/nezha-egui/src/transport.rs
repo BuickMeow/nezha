@@ -8,10 +8,12 @@ pub enum TrackKind {
 
 #[derive(Clone, Debug)]
 pub struct TrackClip {
+    pub id: usize,
     pub name: String,
     pub start: f32,
     pub end: f32,
     pub color: egui::Color32,
+    pub speed: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +66,8 @@ pub struct TimelineState {
     pub tracks: Vec<Track>,
     pub dragging_playhead: bool,
     pub fps: u32,
+    pub selected_clip_id: Option<usize>,
+    pub next_clip_id: usize,
     scrollbar_drag: Option<ScrollbarDrag>,
 }
 
@@ -72,10 +76,12 @@ impl Default for TimelineState {
         let mut tracks = Vec::new();
         let mut video_track = Track::new_video("视频 1");
         video_track.clips.push(TrackClip {
+            id: 0,
             name: "主渲染".to_string(),
             start: 0.0,
             end: 0.0,
             color: egui::Color32::from_rgb(80, 120, 200),
+            speed: 1.0,
         });
         tracks.push(video_track);
 
@@ -87,6 +93,8 @@ impl Default for TimelineState {
             tracks,
             dragging_playhead: false,
             fps: 60,
+            selected_clip_id: None,
+            next_clip_id: 1,
             scrollbar_drag: None,
         }
     }
@@ -542,7 +550,29 @@ pub fn show(
                     egui::pos2(x2.min(track_rect.max.x), track_rect.max.y - 3.0),
                 );
                 if clip_rect.width() > 1.0 {
+                    let is_selected = state.selected_clip_id == Some(clip.id);
+
+                    // 检测点击
+                    let clip_interact = ui.interact(
+                        clip_rect,
+                        egui::Id::new(("timeline_clip", clip.id)),
+                        egui::Sense::click(),
+                    );
+                    if clip_interact.clicked() {
+                        state.selected_clip_id = Some(clip.id);
+                    }
+
                     painter.rect_filled(clip_rect, 3.0, clip.color);
+
+                    if is_selected {
+                        painter.rect_stroke(
+                            clip_rect,
+                            3.0,
+                            egui::Stroke::new(2.0, egui::Color32::WHITE),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+
                     if clip_rect.width() > 40.0 {
                         painter.text(
                             egui::pos2(clip_rect.min.x + 4.0, clip_rect.center().y),
@@ -622,7 +652,28 @@ pub fn show(
                     egui::pos2(x2.min(track_rect.max.x), track_rect.max.y - 3.0),
                 );
                 if clip_rect.width() > 1.0 {
+                    let is_selected = state.selected_clip_id == Some(clip.id);
+
+                    let clip_interact = ui.interact(
+                        clip_rect,
+                        egui::Id::new(("timeline_clip", clip.id)),
+                        egui::Sense::click(),
+                    );
+                    if clip_interact.clicked() {
+                        state.selected_clip_id = Some(clip.id);
+                    }
+
                     painter.rect_filled(clip_rect, 3.0, clip.color);
+
+                    if is_selected {
+                        painter.rect_stroke(
+                            clip_rect,
+                            3.0,
+                            egui::Stroke::new(2.0, egui::Color32::WHITE),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+
                     if clip_rect.width() > 40.0 {
                         painter.text(
                             egui::pos2(clip_rect.min.x + 4.0, clip_rect.center().y),

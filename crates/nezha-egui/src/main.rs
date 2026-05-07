@@ -6,6 +6,7 @@ mod sidebar;
 mod config_panel;
 mod piano_view;
 mod transport;
+mod properties_panel;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ThemeMode {
@@ -219,6 +220,7 @@ impl eframe::App for App {
             self.preview_texture_id = id;
         }
 
+        // 1. 左侧导航栏 — 最左边，完整高度
         egui::Panel::left("sidebar")
             .exact_size(60.0)
             .resizable(false)
@@ -226,6 +228,25 @@ impl eframe::App for App {
                 sidebar::show(ui, &mut self.active_tab);
             });
 
+        // 2. 底部走带 — 在 sidebar 右侧横贯底部
+        let dark_mode = self.theme_mode.is_dark(ui.ctx());
+        self.timeline_state.fps = self.fps;
+
+        egui::Panel::bottom("transport")
+            .exact_size(200.0)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                transport::show(
+                    ui,
+                    &mut self.is_playing,
+                    &mut self.current_time,
+                    self.duration,
+                    &mut self.timeline_state,
+                    dark_mode,
+                );
+            });
+
+        // 3. 左侧面板 — 配置
         egui::Panel::left("config_panel")
             .exact_size(260.0)
             .resizable(true)
@@ -254,23 +275,15 @@ impl eframe::App for App {
             self.check_file_dialog();
         }
 
-        let dark_mode = self.theme_mode.is_dark(ui.ctx());
-        self.timeline_state.fps = self.fps;
-
-        egui::Panel::bottom("transport")
-            .exact_size(200.0)
-            .resizable(false)
+        // 4. 右侧面板 — 属性
+        egui::Panel::right("properties_panel")
+            .exact_size(220.0)
+            .resizable(true)
             .show_inside(ui, |ui| {
-                transport::show(
-                    ui,
-                    &mut self.is_playing,
-                    &mut self.current_time,
-                    self.duration,
-                    &mut self.timeline_state,
-                    dark_mode,
-                );
+                properties_panel::show(ui, &mut self.timeline_state);
             });
 
+        // 5. 中央预览区
         egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.is_playing {
                 // 固定帧率步进，消除 unstable_dt 波动导致的抖动
