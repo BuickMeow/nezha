@@ -26,6 +26,8 @@ pub struct TrackClip {
     pub render_mode: nezha_renderer::RenderMode,
     /// 是否等宽钢琴键（false = 白键比黑键宽，黑键在白键上方）
     pub equal_key_width: bool,
+    /// 关联的 MIDI 索引（None = 使用当前高亮 MIDI）
+    pub midi_idx: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -109,6 +111,7 @@ impl Default for TimelineData {
             rounding: 0.0,
             render_mode: nezha_renderer::RenderMode::TimeBased,
             equal_key_width: true,
+            midi_idx: None,
         });
         tracks.push(video_track);
         Self { tracks }

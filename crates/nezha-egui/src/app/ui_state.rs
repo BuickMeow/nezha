@@ -40,7 +40,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            active_tab: SidebarTab::Midi,
+            active_tab: SidebarTab::Style,
             export_format: "MP4".to_string(),
             encoder: "H.264".to_string(),
             export_path: None,

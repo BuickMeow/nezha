@@ -7,7 +7,7 @@ use crate::piano_view;
 use crate::transport;
 
 mod render_context;
-mod project_state;
+pub mod project_state;
 mod ui_state;
 
 pub use render_context::RenderContext;
@@ -71,13 +71,12 @@ impl eframe::App for App {
             }
             if ui.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
                 self.project.current_time = (self.project.current_time + frame_duration)
-                    .min(self.project.duration);
+                    .min(self.project.duration());
                 self.project.playback_start = None;
             }
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let midi_path_clone = self.project.midi_path.clone();
             let mut config_action: Option<config_panel::ConfigAction> = None;
 
             // 1. 左侧导航栏
@@ -92,6 +91,7 @@ impl eframe::App for App {
             let dark_mode = self.ui.theme_mode.is_dark(ui.ctx());
             self.project.timeline_state.fps = self.project.fps;
 
+            let dur = self.project.duration() as f32;
             egui::Panel::bottom("transport")
                 .exact_size(200.0)
                 .resizable(false)
@@ -101,7 +101,7 @@ impl eframe::App for App {
                         ui,
                         &mut self.project.is_playing,
                         &mut transport_time,
-                        self.project.duration as f32,
+                        dur,
                         &mut self.project.timeline_state,
                         dark_mode,
                     );
@@ -115,7 +115,8 @@ impl eframe::App for App {
                 .show_inside(ui, |ui| {
                     let mut state = config_panel::ConfigState {
                         active_tab: self.ui.active_tab,
-                        midi_path: &midi_path_clone,
+                        midi_files: &self.project.midi_files,
+                        highlighted_midi_idx: &mut self.project.highlighted_midi_idx,
                         render_width: &mut self.project.render_width,
                         render_height: &mut self.project.render_height,
                         fps: &mut self.project.fps,
@@ -135,12 +136,14 @@ impl eframe::App for App {
                     self.render_ctx.resize(width, height);
                 }
                 Some(config_panel::ConfigAction::AddWaterfall) => {
+                    let dur = self.project.duration() as f32;
+                    let midi_idx = self.project.highlighted_midi_idx;
                     let ts = &mut self.project.timeline_state;
                     let id = ts.next_clip_id;
                     ts.next_clip_id += 1;
-                    let dur = self.project.duration as f32;
+                    let track_len = ts.data.tracks.len();
                     let mut new_track = crate::transport::Track::new_video(
-                        &format!("视频 {}", ts.data.tracks.len() + 1)
+                        &format!("视频 {}", track_len + 1)
                     );
                     new_track.clips.push(crate::transport::TrackClip {
                         id,
@@ -154,16 +157,18 @@ impl eframe::App for App {
                         rounding: 0.0,
                         render_mode: nezha_renderer::RenderMode::TimeBased,
                         equal_key_width: true,
+                        midi_idx,
                     });
                     ts.data.tracks.insert(0, new_track);
                 }
                 Some(config_panel::ConfigAction::AddSolidColor) => {
+                    let dur = self.project.duration() as f32;
                     let ts = &mut self.project.timeline_state;
                     let id = ts.next_clip_id;
                     ts.next_clip_id += 1;
-                    let dur = self.project.duration as f32;
+                    let track_len = ts.data.tracks.len();
                     let mut new_track = crate::transport::Track::new_video(
-                        &format!("视频 {}", ts.data.tracks.len() + 1)
+                        &format!("视频 {}", track_len + 1)
                     );
                     new_track.clips.push(crate::transport::TrackClip {
                         id,
@@ -177,8 +182,12 @@ impl eframe::App for App {
                         rounding: 0.0,
                         render_mode: nezha_renderer::RenderMode::TimeBased,
                         equal_key_width: true,
+                        midi_idx: None,
                     });
                     ts.data.tracks.insert(0, new_track);
+                }
+                Some(config_panel::ConfigAction::RemoveMidi(idx)) => {
+                    self.project.remove_midi(idx);
                 }
                 None => {}
             }
@@ -197,8 +206,8 @@ impl eframe::App for App {
                     let now = Instant::now();
                     let (start_instant, start_time) = self.project.playback_start.get_or_insert_with(|| (now, self.project.current_time));
                     let elapsed = now.duration_since(*start_instant).as_secs_f64();
-                    self.project.current_time = (*start_time + elapsed).min(self.project.duration);
-                    if self.project.current_time >= self.project.duration {
+                    self.project.current_time = (*start_time + elapsed).min(self.project.duration());
+                    if self.project.current_time >= self.project.duration() {
                         self.project.current_time = 0.0;
                         self.project.is_playing = false;
                         self.project.playback_start = None;
@@ -275,12 +284,34 @@ impl eframe::App for App {
                     equal_key_width: selected_equal_key,
                 };
 
+                // 根据选中 clip 的 midi_idx 决定渲染哪个 MIDI，否则用高亮 MIDI
+                let midi_source: Option<&dyn nezha_renderer::NoteSource> = self
+                    .project
+                    .timeline_state
+                    .selected_clip_id
+                    .and_then(|id| {
+                        self.project
+                            .timeline_state
+                            .data
+                            .tracks
+                            .iter()
+                            .flat_map(|t| t.clips.iter())
+                            .find(|c| c.id == id)
+                            .and_then(|c| c.midi_idx)
+                    })
+                    .and_then(|idx| self.project.midi_files.get(idx))
+                    .map(|e| &e.file as &dyn nezha_renderer::NoteSource)
+                    .or_else(|| {
+                        self.project.highlighted_midi()
+                            .map(|m| m as &dyn nezha_renderer::NoteSource)
+                    });
+
                 self.render_ctx.render(
                     self.project.render_width,
                     self.project.render_height,
                     render_time,
                     speed,
-                    self.project.midi_file.as_ref().map(|m| m as &dyn nezha_renderer::NoteSource),
+                    midi_source,
                     &style,
                 );
 

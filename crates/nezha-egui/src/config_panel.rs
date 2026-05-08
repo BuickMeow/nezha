@@ -1,10 +1,12 @@
 use eframe::egui;
 use crate::sidebar::SidebarTab;
 use crate::app::ThemeMode;
+use crate::app::project_state::MidiEntry;
 
 pub struct ConfigState<'a> {
     pub active_tab: SidebarTab,
-    pub midi_path: &'a Option<String>,
+    pub midi_files: &'a [MidiEntry],
+    pub highlighted_midi_idx: &'a mut Option<usize>,
     pub render_width: &'a mut u32,
     pub render_height: &'a mut u32,
     pub fps: &'a mut u32,
@@ -20,6 +22,7 @@ pub enum ConfigAction {
     Resize { width: u32, height: u32 },
     AddWaterfall,
     AddSolidColor,
+    RemoveMidi(usize),
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> {
@@ -29,43 +32,6 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
     ui.separator();
 
     match state.active_tab {
-        SidebarTab::Midi => {
-            ui.label("MIDI 文件");
-            if ui.button("选择 MIDI 文件").clicked() {
-                action = Some(ConfigAction::SelectMidi);
-            }
-            if let Some(path) = state.midi_path {
-                ui.label(format!("已加载: {}", path));
-            } else {
-                ui.label("暂无文件");
-            }
-
-            ui.separator();
-            ui.label("渲染设置");
-
-            ui.horizontal(|ui| {
-                ui.label("分辨率:");
-                ui.add(
-                    egui::DragValue::new(state.render_width).speed(1.0).range(1..=7680),
-                );
-                ui.label("x");
-                ui.add(
-                    egui::DragValue::new(state.render_height).speed(1.0).range(1..=4320),
-                );
-                if ui.button("应用").clicked() {
-                    action = Some(ConfigAction::Resize {
-                        width: *state.render_width,
-                        height: *state.render_height,
-                    });
-                }
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("帧率:");
-                ui.add(egui::DragValue::new(state.fps).speed(1.0).range(1..=240));
-                ui.label("fps");
-            });
-        }
         SidebarTab::Style => {
             ui.label("添加图层到时间轴");
             ui.add_space(4.0);
@@ -77,6 +43,69 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
             if ui.button("🎨 纯色图层").clicked() {
                 action = Some(ConfigAction::AddSolidColor);
             }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.label("MIDI 文件");
+            ui.add_space(4.0);
+
+            if state.midi_files.is_empty() {
+                ui.label("暂无 MIDI 文件");
+            } else {
+                for (idx, entry) in state.midi_files.iter().enumerate() {
+                    let is_highlighted = state.highlighted_midi_idx == &Some(idx);
+                    ui.horizontal(|ui| {
+                        let name = std::path::Path::new(&entry.path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(&entry.path);
+                        let label = if is_highlighted {
+                            egui::RichText::new(format!("▶ {}", name)).strong()
+                        } else {
+                            egui::RichText::new(format!("  {}", name))
+                        };
+                        if ui.selectable_label(is_highlighted, label).clicked() {
+                            *state.highlighted_midi_idx = Some(idx);
+                        }
+                        if ui.button("🗑").clicked() {
+                            action = Some(ConfigAction::RemoveMidi(idx));
+                        }
+                    });
+                }
+            }
+
+            ui.add_space(8.0);
+            if ui.button("➕ 选择 MIDI 文件").clicked() {
+                action = Some(ConfigAction::SelectMidi);
+            }
+        }
+        SidebarTab::Project => {
+            ui.label("渲染设置");
+            ui.add_space(4.0);
+
+            let mut width = *state.render_width;
+            let mut height = *state.render_height;
+            ui.horizontal(|ui| {
+                ui.label("分辨率:");
+                ui.add(
+                    egui::DragValue::new(&mut width).speed(1.0).range(1..=7680),
+                );
+                ui.label("x");
+                ui.add(
+                    egui::DragValue::new(&mut height).speed(1.0).range(1..=4320),
+                );
+            });
+            if width != *state.render_width || height != *state.render_height {
+                *state.render_width = width;
+                *state.render_height = height;
+                action = Some(ConfigAction::Resize { width, height });
+            }
+
+            ui.horizontal(|ui| {
+                ui.label("帧率:");
+                ui.add(egui::DragValue::new(state.fps).speed(1.0).range(1..=240));
+                ui.label("fps");
+            });
         }
         SidebarTab::Export => {
             ui.label("导出设置");
