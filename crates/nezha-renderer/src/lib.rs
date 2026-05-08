@@ -33,6 +33,8 @@ pub trait NoteSource {
     fn duration(&self) -> f64;
     /// PPQ (ticks per beat)，返回 None 表示无 tick 信息，降级为秒计算
     fn ticks_per_beat(&self) -> Option<u32> { None }
+    /// 将秒时间转换为 tick（Tick 模式下由 tempo 决定）
+    fn tick_at_time(&self, _time: f64) -> Option<f64> { None }
 }
 
 /// 渲染模式
@@ -41,8 +43,8 @@ pub enum RenderMode {
     /// 基于秒计算音符位置（原有逻辑）
     TimeBased,
     /// 基于 MIDI tick 计算音符位置（整数 tick，无累积误差）
-    /// BPM 控制滚动流速但不影响音符高度
-    TickBased { bpm: f32 },
+    /// 音符高度由 tick 长度决定，BPM 变化自动影响下落速度
+    TickBased,
 }
 
 /// 渲染风格配置
@@ -119,6 +121,10 @@ impl NoteSource for MidiFile {
 
     fn ticks_per_beat(&self) -> Option<u32> {
         Some(self.ticks_per_beat)
+    }
+
+    fn tick_at_time(&self, time: f64) -> Option<f64> {
+        Some(self.tick_at_time(time))
     }
 }
 
@@ -353,8 +359,8 @@ impl Renderer {
             RenderMode::TimeBased => {
                 self.build_instances_time(width, height, time, speed, midi, state, style)
             }
-            RenderMode::TickBased { bpm } => {
-                self.build_instances_tick(width, height, time, speed, bpm, midi, state, style)
+            RenderMode::TickBased => {
+                self.build_instances_tick(width, height, time, speed, midi, state, style)
             }
         }
     }
@@ -418,7 +424,7 @@ impl Renderer {
                 let [cr, cg, cb] = style.palette[trk];
 
                 let border_px = style.border_width * w / 2.0;
-                let rounding_radius = style.rounding * f32::min(w, h) / 2.0;
+                let rounding_radius = style.rounding * f32::min(w, h);
 
                 instances.push(NoteInstance {
                     x,
@@ -444,7 +450,6 @@ impl Renderer {
         height: u32,
         time: f64,
         speed: f32,
-        bpm: f32,
         midi: &dyn NoteSource,
         state: &mut MidiRenderState,
         style: &RenderStyle,
@@ -452,12 +457,11 @@ impl Renderer {
         let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
         let eff_speed = speed.max(0.01) as f64;
 
-        // 像素/每 tick：与 TimeBased 120BPM 缩放一致（一拍 = 100px @1x）
+        // 像素/每 tick：speed 只控制视觉下落速度
         let ppt = 100.0 / ticks_per_beat * eff_speed;
 
-        // 当前 tick 位置 = time × (tick/sec) × speed
-        let tick_per_sec = ticks_per_beat * bpm as f64 / 60.0;
-        let scroll_tick = time * tick_per_sec * eff_speed;
+        // 当前播放位置对应的 tick（由 MIDI tempo 事件自动决定）
+        let scroll_tick = midi.tick_at_time(time).unwrap_or(time * ticks_per_beat * 2.0);
 
         // 屏幕上可见的 tick 范围
         let visible_ticks = height as f64 / ppt;
@@ -511,7 +515,7 @@ impl Renderer {
                 let [cr, cg, cb] = style.palette[trk];
 
                 let border_px = style.border_width * w / 2.0;
-                let rounding_radius = style.rounding * f32::min(w, h) / 2.0;
+                let rounding_radius = style.rounding * f32::min(w, h);
 
                 instances.push(NoteInstance {
                     x,

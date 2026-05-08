@@ -38,7 +38,7 @@ pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState, zoom: f32) {
 
                             // 渲染模式
                             ui.label("渲染模式");
-                            let is_tick = matches!(clip.render_mode, RenderMode::TickBased { .. });
+                            let is_tick = clip.render_mode == RenderMode::TickBased;
                             let mut mode_idx: usize = if is_tick { 1 } else { 0 };
                             ui.horizontal(|ui| {
                                 ui.selectable_value(&mut mode_idx, 0, "秒模式");
@@ -47,24 +47,7 @@ pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState, zoom: f32) {
                             if mode_idx == 0 && is_tick {
                                 clip.render_mode = RenderMode::TimeBased;
                             } else if mode_idx == 1 && !is_tick {
-                                clip.render_mode = RenderMode::TickBased { bpm: 120.0 };
-                            }
-
-                            if let RenderMode::TickBased { bpm } = &mut clip.render_mode {
-                                ui.add_space(2.0);
-                                ui.label("BPM");
-                                ui.horizontal(|ui| {
-                                    ui.add(
-                                        egui::Slider::new(bpm, 20.0..=300.0)
-                                            .step_by(1.0)
-                                            .text(""),
-                                    );
-                                });
-                                ui.label(
-                                    egui::RichText::new(format!("{:.0} BPM", bpm))
-                                        .size(11.0)
-                                        .color(ui.visuals().weak_text_color()),
-                                );
+                                clip.render_mode = RenderMode::TickBased;
                             }
 
                             ui.add_space(4.0);

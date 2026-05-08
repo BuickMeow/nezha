@@ -63,6 +63,8 @@ pub struct MidiFile {
     pub key_notes: [Vec<Note>; 128],
     pub duration: f64,
     pub ticks_per_beat: u32,
+    /// tempo 区间，按 start_tick / start_time 排序
+    pub tempo_segments: Vec<TempoSegment>,
 }
 
 /// 全局 tempo 事件，按 tick 排序
@@ -74,9 +76,10 @@ struct TempoEvent {
 
 /// 一段连续的 tempo 区间
 #[derive(Clone, Debug)]
-struct TempoSegment {
-    start_tick: u32,
-    micros_per_quarter: u64,
+pub struct TempoSegment {
+    pub start_tick: u32,
+    pub start_time: f64,
+    pub micros_per_quarter: u64,
 }
 
 impl MidiFile {
@@ -90,7 +93,7 @@ impl MidiFile {
         };
 
         let tempo_events = Self::collect_tempo_events(&smf.tracks);
-        let tempo_segments = Self::build_tempo_segments(tempo_events);
+        let tempo_segments = Self::build_tempo_segments(tempo_events, ticks_per_beat);
 
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
         let mut global_duration = 0.0f64;
@@ -108,6 +111,7 @@ impl MidiFile {
             key_notes,
             duration: global_duration,
             ticks_per_beat,
+            tempo_segments,
         })
     }
 
@@ -130,19 +134,33 @@ impl MidiFile {
         events
     }
 
-    fn build_tempo_segments(events: Vec<TempoEvent>) -> Vec<TempoSegment> {
+    fn build_tempo_segments(events: Vec<TempoEvent>, ticks_per_beat: u32) -> Vec<TempoSegment> {
         let mut segments = Vec::new();
+        let mut last_tick: u32 = 0;
+        let mut last_time: f64 = 0.0;
+        let mut last_mpq: u64 = 500_000;
+
         if events.is_empty() || events[0].tick > 0 {
             segments.push(TempoSegment {
                 start_tick: 0,
+                start_time: 0.0,
                 micros_per_quarter: 500_000,
             });
         }
+
         for ev in events {
+            let dtick = ev.tick - last_tick;
+            if dtick > 0 {
+                last_time += (dtick as u64 * last_mpq) as f64
+                    / (ticks_per_beat as f64 * 1_000_000.0);
+            }
             segments.push(TempoSegment {
                 start_tick: ev.tick,
+                start_time: last_time,
                 micros_per_quarter: ev.micros_per_quarter,
             });
+            last_tick = ev.tick;
+            last_mpq = ev.micros_per_quarter;
         }
         segments
     }
@@ -209,6 +227,34 @@ impl MidiFile {
                 }
             }
         }
+    }
+
+    /// 将秒时间转换为对应的 MIDI tick（考虑 tempo 变化）
+    pub fn tick_at_time(&self, time: f64) -> f64 {
+        if self.tempo_segments.is_empty() {
+            return time * self.ticks_per_beat as f64 * 2.0; // 120BPM default
+        }
+
+        // 找到包含该时间的 segment
+        let seg_idx = self.tempo_segments.iter()
+            .rposition(|s| s.start_time <= time)
+            .unwrap_or(0);
+        let seg = &self.tempo_segments[seg_idx];
+
+        let dt = time - seg.start_time;
+        seg.start_tick as f64 + dt * self.ticks_per_beat as f64 * 1_000_000.0 / seg.micros_per_quarter as f64
+    }
+
+    /// 获取指定时间的 BPM
+    pub fn bpm_at_time(&self, time: f64) -> f32 {
+        if self.tempo_segments.is_empty() {
+            return 120.0;
+        }
+        let seg_idx = self.tempo_segments.iter()
+            .rposition(|s| s.start_time <= time)
+            .unwrap_or(0);
+        let mpq = self.tempo_segments[seg_idx].micros_per_quarter;
+        (60_000_000.0 / mpq as f64) as f32
     }
 
     fn resolve_note_off(
