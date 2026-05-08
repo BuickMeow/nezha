@@ -148,15 +148,18 @@ impl MidiRenderState {
     }
 }
 
+/// wgpu 默认 max buffer size 约 256MB；NoteInstance = 40 bytes
+const MAX_INSTANCE_COUNT: usize = 6_000_000; // ~228MB，留余量
+
 /// GPU 资源管理 + 渲染调度
+/// 支持无限音符：超出单 buffer 上限时拆分为多个 buffer，同一 render pass 内多批次 draw
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
-    instance_buffer: wgpu::Buffer,
-    instance_capacity: usize,
+    instance_buffers: Vec<wgpu::Buffer>,
 }
 
 impl Renderer {
@@ -239,22 +242,13 @@ impl Renderer {
             cache: None,
         });
 
-        let instance_capacity = 1024;
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("instance_buffer"),
-            size: (instance_capacity * std::mem::size_of::<NoteInstance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         Self {
             device,
             queue,
             pipeline,
             uniform_buffer,
             bind_group,
-            instance_buffer,
-            instance_capacity,
+            instance_buffers: Vec::new(),
         }
     }
 
@@ -286,14 +280,27 @@ impl Renderer {
             .map(|midi| self.build_instances(width, height, time, speed, midi, render_state, style))
             .unwrap_or_default();
 
-        if instances.len() > self.instance_capacity {
-            self.instance_capacity = instances.len().max(self.instance_capacity * 2);
-            self.instance_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let instance_size = std::mem::size_of::<NoteInstance>() as u64;
+        let batches: Vec<&[NoteInstance]> = instances.chunks(MAX_INSTANCE_COUNT).collect();
+
+        // 按需创建 buffer（每个固定上限，避免超过 wgpu max_buffer_size）
+        while self.instance_buffers.len() < batches.len() {
+            let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instance_buffer"),
-                size: (self.instance_capacity * std::mem::size_of::<NoteInstance>()) as u64,
+                size: MAX_INSTANCE_COUNT as u64 * instance_size,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            self.instance_buffers.push(buf);
+        }
+
+        // render pass 前先把所有 batch 数据写入对应 buffer
+        for (i, batch) in batches.iter().enumerate() {
+            self.queue.write_buffer(
+                &self.instance_buffers[i],
+                0,
+                bytemuck::cast_slice(batch),
+            );
         }
 
         {
@@ -320,15 +327,12 @@ impl Renderer {
             });
 
             if !instances.is_empty() {
-                self.queue.write_buffer(
-                    &self.instance_buffer,
-                    0,
-                    bytemuck::cast_slice(&instances),
-                );
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.bind_group, &[]);
-                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-                pass.draw(0..6, 0..instances.len() as u32);
+                for (i, batch) in batches.iter().enumerate() {
+                    pass.set_vertex_buffer(0, self.instance_buffers[i].slice(..));
+                    pass.draw(0..6, 0..batch.len() as u32);
+                }
             }
         }
 
