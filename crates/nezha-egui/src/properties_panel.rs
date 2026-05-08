@@ -1,8 +1,23 @@
 use eframe::egui;
 use crate::transport::{TimelineState, ClipKind};
+use crate::app::project_state::MidiEntry;
 use nezha_renderer::RenderMode;
 
-pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState, zoom: f32) {
+/// 截断字符串，超过 max_chars 个字符时末尾加 "…"
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        s.chars().take(max_chars - 1).collect::<String>() + "…"
+    }
+}
+
+pub fn show(
+    ui: &mut egui::Ui,
+    timeline_state: &mut TimelineState,
+    zoom: f32,
+    midi_files: &[MidiEntry],
+) {
     ui.heading(format!("属性（{:.0}%）", zoom * 100.0));
     ui.separator();
 
@@ -34,6 +49,38 @@ pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState, zoom: f32) {
 
                     match clip.kind {
                         ClipKind::Waterfall => {
+                            ui.add_space(4.0);
+
+                            // MIDI 来源
+                            ui.label("MIDI 来源");
+
+                            let clip_id = clip.id;
+                            let current_name = clip.midi_idx
+                                .and_then(|idx| midi_files.get(idx))
+                                .and_then(|e| {
+                                    std::path::Path::new(&e.path)
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                })
+                                .unwrap_or("（已删除）");
+                            let current_display = truncate_str(current_name, 20);
+
+                            egui::ComboBox::from_id_salt(format!("midi_source_{}", clip_id))
+                                .selected_text(current_display)
+                                .width(ui.available_width())
+                                .show_ui(ui, |ui| {
+                                    for (idx, entry) in midi_files.iter().enumerate() {
+                                        let name = std::path::Path::new(&entry.path)
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or(&entry.path);
+                                        let selected = clip.midi_idx == Some(idx);
+                                        if ui.selectable_label(selected, name).clicked() {
+                                            clip.midi_idx = Some(idx);
+                                        }
+                                    }
+                                });
+
                             ui.add_space(4.0);
 
                             // 渲染模式

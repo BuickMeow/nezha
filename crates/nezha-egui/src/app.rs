@@ -110,7 +110,8 @@ impl eframe::App for App {
 
             // 3. 左侧面板 — 配置
             egui::Panel::left("config_panel")
-                .exact_size(260.0)
+                .default_size(260.0)
+                .min_size(180.0)
                 .resizable(true)
                 .show_inside(ui, |ui| {
                     let mut state = config_panel::ConfigState {
@@ -194,10 +195,16 @@ impl eframe::App for App {
 
             // 4. 右侧面板 — 属性
             egui::Panel::right("properties_panel")
-                .exact_size(220.0)
+                .default_size(220.0)
+                .min_size(160.0)
                 .resizable(true)
                 .show_inside(ui, |ui| {
-                    properties_panel::show(ui, &mut self.project.timeline_state, self.ui.zoom);
+                    properties_panel::show(
+                        ui,
+                        &mut self.project.timeline_state,
+                        self.ui.zoom,
+                        &self.project.midi_files,
+                    );
                 });
 
             // 5. 中央预览区
@@ -284,7 +291,7 @@ impl eframe::App for App {
                     equal_key_width: selected_equal_key,
                 };
 
-                // 根据选中 clip 的 midi_idx 决定渲染哪个 MIDI，否则用高亮 MIDI
+                // 瀑布流直接用自己绑定的 midi_idx，不回退到高亮
                 let midi_source: Option<&dyn nezha_renderer::NoteSource> = self
                     .project
                     .timeline_state
@@ -300,11 +307,7 @@ impl eframe::App for App {
                             .and_then(|c| c.midi_idx)
                     })
                     .and_then(|idx| self.project.midi_files.get(idx))
-                    .map(|e| &e.file as &dyn nezha_renderer::NoteSource)
-                    .or_else(|| {
-                        self.project.highlighted_midi()
-                            .map(|m| m as &dyn nezha_renderer::NoteSource)
-                    });
+                    .map(|e| &e.file as &dyn nezha_renderer::NoteSource);
 
                 self.render_ctx.render(
                     self.project.render_width,

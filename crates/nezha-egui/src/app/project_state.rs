@@ -67,6 +67,16 @@ impl ProjectState {
                 let idx = self.midi_files.len();
                 self.midi_files.push(MidiEntry { path, file: midi });
                 self.highlighted_midi_idx = Some(idx);
+                // 把所有未绑定的瀑布流 clip 都绑定到这个新 MIDI
+                for track in &mut self.timeline_state.data.tracks {
+                    for clip in &mut track.clips {
+                        if clip.kind == crate::transport::ClipKind::Waterfall
+                            && clip.midi_idx.is_none()
+                        {
+                            clip.midi_idx = Some(idx);
+                        }
+                    }
+                }
                 let dur = self.duration();
                 self.timeline_state.update_duration(dur as f32);
                 self.current_time = 0.0;

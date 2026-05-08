@@ -3,6 +3,14 @@ use crate::sidebar::SidebarTab;
 use crate::app::ThemeMode;
 use crate::app::project_state::MidiEntry;
 
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        s.chars().take(max_chars - 1).collect::<String>() + "…"
+    }
+}
+
 pub struct ConfigState<'a> {
     pub active_tab: SidebarTab,
     pub midi_files: &'a [MidiEntry],
@@ -54,17 +62,26 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
             } else {
                 for (idx, entry) in state.midi_files.iter().enumerate() {
                     let is_highlighted = state.highlighted_midi_idx == &Some(idx);
+                    let raw_name = std::path::Path::new(&entry.path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&entry.path);
+                    // 截断显示，避免撑开面板
+                    let display = truncate_str(raw_name, 24);
+                    let text = if is_highlighted {
+                        format!("▶ {}", display)
+                    } else {
+                        format!("  {}", display)
+                    };
                     ui.horizontal(|ui| {
-                        let name = std::path::Path::new(&entry.path)
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or(&entry.path);
-                        let label = if is_highlighted {
-                            egui::RichText::new(format!("▶ {}", name)).strong()
-                        } else {
-                            egui::RichText::new(format!("  {}", name))
-                        };
-                        if ui.selectable_label(is_highlighted, label).clicked() {
+                        let response = ui
+                            .add(
+                                egui::Label::new(text)
+                                    .selectable(false)
+                                    .sense(egui::Sense::click()),
+                            )
+                            .on_hover_text(raw_name);
+                        if response.clicked() {
                             *state.highlighted_midi_idx = Some(idx);
                         }
                         if ui.button("🗑").clicked() {
@@ -81,25 +98,17 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
         }
         SidebarTab::Project => {
             ui.label("渲染设置");
-            ui.add_space(4.0);
 
-            let mut width = *state.render_width;
-            let mut height = *state.render_height;
             ui.horizontal(|ui| {
                 ui.label("分辨率:");
                 ui.add(
-                    egui::DragValue::new(&mut width).speed(1.0).range(1..=7680),
+                    egui::DragValue::new(state.render_width).speed(1.0).range(1..=7680),
                 );
                 ui.label("x");
                 ui.add(
-                    egui::DragValue::new(&mut height).speed(1.0).range(1..=4320),
+                    egui::DragValue::new(state.render_height).speed(1.0).range(1..=4320),
                 );
             });
-            if width != *state.render_width || height != *state.render_height {
-                *state.render_width = width;
-                *state.render_height = height;
-                action = Some(ConfigAction::Resize { width, height });
-            }
 
             ui.horizontal(|ui| {
                 ui.label("帧率:");
