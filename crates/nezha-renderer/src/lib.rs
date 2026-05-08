@@ -62,6 +62,8 @@ pub struct RenderStyle {
     pub palette: [[f32; 3]; 128],
     /// 背景色 RGBA (0.0~1.0)，透出纯色图层
     pub background: [f64; 4],
+    /// 是否等宽钢琴键（false = 白键比黑键宽，黑键在白键上方）
+    pub equal_key_width: bool,
 }
 
 impl Default for RenderStyle {
@@ -73,6 +75,7 @@ impl Default for RenderStyle {
             track_index: 0,
             palette: random_palette(),
             background: [0.0, 0.0, 0.0, 1.0],
+            equal_key_width: true,
         }
     }
 }
@@ -376,11 +379,7 @@ impl Renderer {
         style: &RenderStyle,
     ) -> Vec<NoteInstance> {
         let pps = 200.0f64 * speed.max(0.01) as f64;
-        let key_count = 128u8;
-        let key_width = width as f64 / key_count as f64;
-
         let screen_top = height as f64 + time * pps;
-
         let visible_future = height as f64 / pps + 1.0;
         let visible_past = 1.0f64;
         let time_top = time + visible_future;
@@ -391,23 +390,39 @@ impl Renderer {
         }
         state.last_time = time;
 
-        let mut instances = Vec::new();
-
+        // 1. 更新所有 key 的 scan_indices
         for key in 0..128u8 {
             let notes = midi.key_notes(key);
             if notes.is_empty() {
                 continue;
             }
-
             let mut scan = state.scan_indices[key as usize];
             while scan < notes.len() && notes[scan].end < time_bottom {
                 scan += 1;
             }
             state.scan_indices[key as usize] = scan;
+        }
 
-            let x = (key as f64 * key_width).round() as f32;
-            let next_x = ((key as f64 + 1.0) * key_width).round() as f32;
-            let w = (next_x - x).max(1.0);
+        // 2. 计算 key 布局
+        let layouts = Self::compute_key_layouts(width, style.equal_key_width);
+
+        // 3. 渲染
+        let mut instances = Vec::new();
+        let keys_iter: Box<dyn Iterator<Item = u8>> = if style.equal_key_width {
+            Box::new(0..128u8)
+        } else {
+            // 先白键后黑键：黑键覆盖在白键上方
+            Box::new((0..128u8).filter(|k| !Self::is_black_key(*k))
+                .chain((0..128u8).filter(|k| Self::is_black_key(*k))))
+        };
+
+        for key in keys_iter {
+            let notes = midi.key_notes(key);
+            if notes.is_empty() {
+                continue;
+            }
+            let scan = state.scan_indices[key as usize];
+            let (x, w) = layouts[key as usize];
 
             for i in scan..notes.len() {
                 let note = &notes[i];
@@ -422,19 +437,12 @@ impl Renderer {
 
                 let trk = note.track as usize % 128;
                 let [cr, cg, cb] = style.palette[trk];
-
                 let border_px = style.border_width * w / 2.0;
                 let rounding_radius = style.rounding * f32::min(w, h);
 
                 instances.push(NoteInstance {
-                    x,
-                    y,
-                    w,
-                    h,
-                    r: cr,
-                    g: cg,
-                    b: cb,
-                    a: 1.0,
+                    x, y, w, h,
+                    r: cr, g: cg, b: cb, a: 1.0,
                     corner_radius: rounding_radius,
                     border_width: border_px,
                 });
@@ -456,56 +464,57 @@ impl Renderer {
     ) -> Vec<NoteInstance> {
         let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
         let eff_speed = speed.max(0.01) as f64;
-
-        // 像素/每 tick：speed 只控制视觉下落速度
         let ppt = 100.0 / ticks_per_beat * eff_speed;
-
-        // 当前播放位置对应的 tick（由 MIDI tempo 事件自动决定）
         let scroll_tick = midi.tick_at_time(time).unwrap_or(time * ticks_per_beat * 2.0);
-
-        // 屏幕上可见的 tick 范围
         let visible_ticks = height as f64 / ppt;
-        let tick_at_bottom = scroll_tick;                          // 屏幕最底对应的 tick
-        let tick_at_top = scroll_tick + visible_ticks;             // 屏幕最顶对应的 tick
+        let tick_at_bottom = scroll_tick;
+        let tick_at_top = scroll_tick + visible_ticks;
 
-        // seek 检测
         if scroll_tick < state.last_scroll_tick {
             state.scan_indices = [0; 128];
         }
         state.last_scroll_tick = scroll_tick;
 
-        let key_count = 128u8;
-        let key_width = width as f64 / key_count as f64;
-        // screen_bottom = 屏幕 Y 坐标中 tick=0 的位置
-        let screen_bottom = height as f64 + scroll_tick * ppt;
-
-        let mut instances = Vec::new();
-
+        // 1. 更新所有 key 的 scan_indices
         for key in 0..128u8 {
             let notes = midi.key_notes(key);
             if notes.is_empty() {
                 continue;
             }
-
             let mut scan = state.scan_indices[key as usize];
-            // 跳过已完全滚出屏幕底部的音符 (end_tick < tick_at_bottom)
             while scan < notes.len() && (notes[scan].end_tick as f64) < tick_at_bottom {
                 scan += 1;
             }
             state.scan_indices[key as usize] = scan;
+        }
 
-            let x = (key as f64 * key_width).round() as f32;
-            let next_x = ((key as f64 + 1.0) * key_width).round() as f32;
-            let w = (next_x - x).max(1.0);
+        // 2. 计算 key 布局
+        let layouts = Self::compute_key_layouts(width, style.equal_key_width);
+        let screen_bottom = height as f64 + scroll_tick * ppt;
+
+        // 3. 渲染
+        let mut instances = Vec::new();
+        let keys_iter: Box<dyn Iterator<Item = u8>> = if style.equal_key_width {
+            Box::new(0..128u8)
+        } else {
+            Box::new((0..128u8).filter(|k| !Self::is_black_key(*k))
+                .chain((0..128u8).filter(|k| Self::is_black_key(*k))))
+        };
+
+        for key in keys_iter {
+            let notes = midi.key_notes(key);
+            if notes.is_empty() {
+                continue;
+            }
+            let scan = state.scan_indices[key as usize];
+            let (x, w) = layouts[key as usize];
 
             for i in scan..notes.len() {
                 let note = &notes[i];
-                // 音符完全在屏幕上方，停止扫描
                 if (note.start_tick as f64) > tick_at_top + 1.0 {
                     break;
                 }
 
-                // 上边 = end_tick（较晚的 tick = 屏幕上方），下边 = start_tick
                 let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
                 let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
                 let y = note_top;
@@ -513,19 +522,12 @@ impl Renderer {
 
                 let trk = note.track as usize % 128;
                 let [cr, cg, cb] = style.palette[trk];
-
                 let border_px = style.border_width * w / 2.0;
                 let rounding_radius = style.rounding * f32::min(w, h);
 
                 instances.push(NoteInstance {
-                    x,
-                    y,
-                    w,
-                    h,
-                    r: cr,
-                    g: cg,
-                    b: cb,
-                    a: 1.0,
+                    x, y, w, h,
+                    r: cr, g: cg, b: cb, a: 1.0,
                     corner_radius: rounding_radius,
                     border_width: border_px,
                 });
@@ -533,5 +535,46 @@ impl Renderer {
         }
 
         instances
+    }
+
+    /// 判断 MIDI key 是否为黑键
+    fn is_black_key(key: u8) -> bool {
+        match key % 12 {
+            1 | 3 | 6 | 8 | 10 => true,
+            _ => false,
+        }
+    }
+
+    /// 计算 128 个键的 (x, w) 布局
+    fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f32)> {
+        let mut layouts = Vec::with_capacity(128);
+        if equal_width {
+            let key_w = width as f64 / 128.0;
+            for key in 0..128 {
+                let x = (key as f64 * key_w).round() as f32;
+                let next_x = ((key as f64 + 1.0) * key_w).round() as f32;
+                let w = (next_x - x).max(1.0);
+                layouts.push((x, w));
+            }
+        } else {
+            // 钢琴键盘布局：75 白键 + 53 黑键
+            let white_width = width as f64 / 75.0;
+            let black_width = white_width * 0.65;
+            let mut white_count = 0usize;
+            for key in 0..128u8 {
+                if Self::is_black_key(key) {
+                    let x = (white_count as f64 * white_width - black_width * 0.5).round() as f32;
+                    let w = black_width.round() as f32;
+                    layouts.push((x, w.max(1.0)));
+                } else {
+                    let x = (white_count as f64 * white_width).round() as f32;
+                    let next_x = ((white_count + 1) as f64 * white_width).round() as f32;
+                    let w = (next_x - x).max(1.0);
+                    layouts.push((x, w));
+                    white_count += 1;
+                }
+            }
+        }
+        layouts
     }
 }

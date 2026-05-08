@@ -52,6 +52,14 @@ pub fn show(ui: &mut egui::Ui, timeline_state: &mut TimelineState, zoom: f32) {
 
                             ui.add_space(4.0);
 
+                            ui.label("钢琴键宽度");
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(&mut clip.equal_key_width, true, "等宽");
+                                ui.selectable_value(&mut clip.equal_key_width, false, "真实比例");
+                            });
+
+                            ui.add_space(4.0);
+
                             ui.label("流速");
                             ui.horizontal(|ui| {
                                 ui.add(

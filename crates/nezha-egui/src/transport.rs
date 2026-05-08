@@ -24,6 +24,8 @@ pub struct TrackClip {
     pub border_width: f32,
     pub rounding: f32,
     pub render_mode: nezha_renderer::RenderMode,
+    /// 是否等宽钢琴键（false = 白键比黑键宽，黑键在白键上方）
+    pub equal_key_width: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +108,7 @@ impl Default for TimelineData {
             border_width: 0.1,
             rounding: 0.0,
             render_mode: nezha_renderer::RenderMode::TimeBased,
+            equal_key_width: true,
         });
         tracks.push(video_track);
         Self { tracks }

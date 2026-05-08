@@ -153,6 +153,7 @@ impl eframe::App for App {
                         border_width: 0.1,
                         rounding: 0.0,
                         render_mode: nezha_renderer::RenderMode::TimeBased,
+                        equal_key_width: true,
                     });
                     ts.data.tracks.insert(0, new_track);
                 }
@@ -175,6 +176,7 @@ impl eframe::App for App {
                         border_width: 0.0,
                         rounding: 0.0,
                         render_mode: nezha_renderer::RenderMode::TimeBased,
+                        equal_key_width: true,
                     });
                     ts.data.tracks.insert(0, new_track);
                 }
@@ -227,7 +229,7 @@ impl eframe::App for App {
                     })
                     .unwrap_or(1.0);
 
-                let (selected_border, selected_rounding, selected_track, selected_render_mode) = self
+                let (selected_border, selected_rounding, selected_track, selected_render_mode, selected_equal_key) = self
                     .project
                     .timeline_state
                     .selected_clip_id
@@ -239,9 +241,9 @@ impl eframe::App for App {
                             .iter()
                             .flat_map(|t| t.clips.iter())
                             .find(|c| c.id == id)
-                            .map(|c| (c.border_width, c.rounding, c.id, c.render_mode))
+                            .map(|c| (c.border_width, c.rounding, c.id, c.render_mode, c.equal_key_width))
                     })
-                    .unwrap_or((0.1, 0.0, 0, nezha_renderer::RenderMode::TimeBased));
+                    .unwrap_or((0.1, 0.0, 0, nezha_renderer::RenderMode::TimeBased, true));
 
                 let bg_color = self
                     .project
@@ -270,6 +272,7 @@ impl eframe::App for App {
                     track_index: selected_track,
                     palette: nezha_renderer::random_palette(),
                     background: bg_color,
+                    equal_key_width: selected_equal_key,
                 };
 
                 self.render_ctx.render(
