@@ -378,7 +378,7 @@ impl Renderer {
         };
         // 琴键绘制在音符上方（覆盖瀑布流底部）
         if style.keyboard_height > 0.0 {
-            let mut keys = self.build_keyboard_instances(width, height, time, midi, style);
+            let mut keys = self.build_keyboard_instances(width, height, time, midi, style, state);
             instances.append(&mut keys);
         }
         instances
@@ -636,20 +636,29 @@ impl Renderer {
         time: f64,
         midi: &dyn NoteSource,
         style: &RenderStyle,
+        state: &MidiRenderState,
     ) -> Vec<NoteInstance> {
         let kh = style.keyboard_height.max(1.0);
         let key_top = height as f32 - kh;
         let layouts = Self::compute_key_layouts(width, style.equal_key_width);
 
-        // 找出当前激活的键位
+        // 找出当前激活的键位（利用 scan_indices 避免全量扫描）
         let mut active_keys = [false; 128];
         let mut active_colors = [[0.0f32; 3]; 128];
         for key in 0..128u8 {
             let notes = midi.key_notes(key);
-            if let Some(note) = notes.iter().find(|n| n.start <= time && time < n.end) {
-                active_keys[key as usize] = true;
-                let trk = note.track as usize % 128;
-                active_colors[key as usize] = style.palette[trk];
+            // 从 scan_indices 开始（已结束的音符已被跳过），只检查到 note.start > time 为止
+            let scan = state.scan_indices[key as usize];
+            for note in notes[scan..].iter() {
+                if note.start > time {
+                    break; // 后面的音符 start 更大，不可能激活
+                }
+                if time < note.end {
+                    active_keys[key as usize] = true;
+                    let trk = note.track as usize % 128;
+                    active_colors[key as usize] = style.palette[trk];
+                    break; // 找到激活音符，无需继续
+                }
             }
         }
 
