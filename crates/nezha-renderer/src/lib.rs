@@ -400,23 +400,23 @@ impl Renderer {
         // "now" 线位于琴键上方（瀑布流底部）
         let screen_top = effective_h + time * pps;
         let visible_future = effective_h / pps + 1.0;
-        let visible_past = 1.0f64;
         let time_top = time + visible_future;
-        let time_bottom = time - visible_past;
+        // 琴键下方的已结束音符无需渲染，直接跳过
+        let time_bottom = time;
 
         if time < state.last_time {
             state.scan_indices = [0; 128];
         }
         state.last_time = time;
 
-        // 1. 更新所有 key 的 scan_indices
+        // 1. 更新所有 key 的 scan_indices（跳过已结束的音符）
         for key in 0..128u8 {
             let notes = midi.key_notes(key);
             if notes.is_empty() {
                 continue;
             }
             let mut scan = state.scan_indices[key as usize];
-            while scan < notes.len() && notes[scan].end < time_bottom {
+            while scan < notes.len() && notes[scan].end <= time_bottom {
                 scan += 1;
             }
             state.scan_indices[key as usize] = scan;
@@ -450,6 +450,10 @@ impl Renderer {
                 let note = &notes[i];
                 if note.start > time_top {
                     break;
+                }
+                // 已结束的音符在琴键下方，无需渲染
+                if note.end <= time {
+                    continue;
                 }
 
                 let note_bottom = (screen_top - note.start * pps) as f32;
@@ -507,14 +511,14 @@ impl Renderer {
         }
         state.last_scroll_tick = scroll_tick;
 
-        // 1. 更新所有 key 的 scan_indices
+        // 1. 更新所有 key 的 scan_indices（跳过已结束的音符）
         for key in 0..128u8 {
             let notes = midi.key_notes(key);
             if notes.is_empty() {
                 continue;
             }
             let mut scan = state.scan_indices[key as usize];
-            while scan < notes.len() && (notes[scan].end_tick as f64) < tick_at_bottom {
+            while scan < notes.len() && (notes[scan].end_tick as f64) <= tick_at_bottom {
                 scan += 1;
             }
             state.scan_indices[key as usize] = scan;
@@ -549,6 +553,10 @@ impl Renderer {
                 let note = &notes[i];
                 if (note.start_tick as f64) > tick_at_top + 1.0 {
                     break;
+                }
+                // 已结束的音符在琴键下方，无需渲染
+                if (note.end_tick as f64) <= scroll_tick {
+                    continue;
                 }
 
                 let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
