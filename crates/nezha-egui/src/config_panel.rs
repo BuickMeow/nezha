@@ -3,7 +3,7 @@ use crate::sidebar::SidebarTab;
 use crate::app::ThemeMode;
 use crate::app::project_state::MidiEntry;
 
-fn truncate_str(s: &str, max_chars: usize) -> String {
+pub(crate) fn truncate_str(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         s.to_string()
     } else {

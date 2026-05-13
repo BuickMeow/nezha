@@ -76,30 +76,6 @@ pub fn draw_tracks(
         }
     }
 
-    if has_audio {
-        y += 4.0;
-        painter.rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(timeline_rect.min.x, y),
-                egui::vec2(timeline_rect.width(), label_height),
-            ),
-            0.0,
-            c.audio_label_bg,
-        );
-        painter.text(
-            egui::pos2(timeline_rect.min.x + 8.0, y + label_height / 2.0),
-            egui::Align2::LEFT_CENTER,
-            "音频",
-            font(11.0),
-            c.dim_text,
-        );
-        y += label_height;
-
-        for (ti, track) in state.data.tracks.iter_mut().enumerate().filter(|(_, t)| t.kind == TrackKind::Audio) {
-            y = draw_track_row(ui, painter, c, timeline_rect, view, selected_id, track, visible_start, visible_end, y, state.fps, &mut pending_moves, ti);
-        }
-    }
-
     // 处理跨轨道移动
     for (clip_id, target_ti) in pending_moves.drain(..) {
         let mut clip_opt: Option<TrackClip> = None;
@@ -222,7 +198,7 @@ fn draw_track_row(
             egui::pos2(x1.max(track_rect.min.x + view.header_width), track_rect.min.y + 3.0),
             egui::pos2(x2.min(track_rect.max.x), track_rect.max.y - 3.0),
         );
-        if clip_rect.width() > 1.0 {
+        if clip_rect.width() > 0.0 {
             let is_selected = *selected_id == Some(clip_id);
 
             if is_selected && clip_rect.width() > edge_width * 3.0 {

@@ -10,6 +10,8 @@ pub struct MidiEntry {
     pub file: MidiFile,
 }
 
+const MAX_MIDI_FILES: usize = 16;
+
 pub struct ProjectState {
     pub is_playing: bool,
     pub current_time: f64,
@@ -64,6 +66,27 @@ impl ProjectState {
     pub fn load_midi(&mut self, path: String, render_ctx: &mut RenderContext) {
         match MidiFile::load(&path) {
             Ok(midi) => {
+                // 限制最大 MIDI 文件数，防止内存无限增长
+                if self.midi_files.len() >= MAX_MIDI_FILES {
+                    self.midi_files.remove(0);
+                    // 更新高亮索引和 clip 引用
+                    if let Some(ref mut h) = self.highlighted_midi_idx {
+                        if *h == 0 {
+                            *h = self.midi_files.len().saturating_sub(1);
+                        } else {
+                            *h -= 1;
+                        }
+                    }
+                    for track in &mut self.timeline_state.data.tracks {
+                        for clip in &mut track.clips {
+                            match clip.midi_idx {
+                                Some(0) => clip.midi_idx = None,
+                                Some(i) => clip.midi_idx = Some(i - 1),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 let idx = self.midi_files.len();
                 self.midi_files.push(MidiEntry { path, file: midi });
                 self.highlighted_midi_idx = Some(idx);
@@ -103,7 +126,27 @@ impl ProjectState {
             Some(h) if h > idx => Some(h - 1),
             other => other,
         };
+        // 更新所有 clip 中引用的 midi_idx：idx 以上的减 1，命中 idx 的置 None
+        for track in &mut self.timeline_state.data.tracks {
+            for clip in &mut track.clips {
+                match clip.midi_idx {
+                    Some(i) if i == idx => clip.midi_idx = None,
+                    Some(i) if i > idx => clip.midi_idx = Some(i - 1),
+                    _ => {}
+                }
+            }
+        }
         let dur = self.duration();
         self.timeline_state.update_duration(dur as f32);
+    }
+
+    pub fn clear_all_midi(&mut self) {
+        self.midi_files.clear();
+        self.highlighted_midi_idx = None;
+        for track in &mut self.timeline_state.data.tracks {
+            for clip in &mut track.clips {
+                clip.midi_idx = None;
+            }
+        }
     }
 }

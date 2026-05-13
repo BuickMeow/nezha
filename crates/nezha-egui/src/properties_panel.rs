@@ -1,16 +1,8 @@
 use eframe::egui;
 use crate::transport::{TimelineState, ClipKind};
 use crate::app::project_state::MidiEntry;
+use crate::config_panel::truncate_str;
 use nezha_renderer::RenderMode;
-
-/// 截断字符串，超过 max_chars 个字符时末尾加 "…"
-fn truncate_str(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        s.chars().take(max_chars - 1).collect::<String>() + "…"
-    }
-}
 
 pub fn show(
     ui: &mut egui::Ui,

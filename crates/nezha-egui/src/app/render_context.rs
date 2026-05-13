@@ -66,8 +66,9 @@ impl RenderContext {
         let format = self.wgpu_state.target_format;
         let device = &self.wgpu_state.device;
         let mut egui_renderer = self.wgpu_state.renderer.write();
-        egui_renderer.free_texture(&self.preview_texture_id);
         let (tex, view, id) = Self::create_preview(device, &mut egui_renderer, format, width, height);
+        // 先创建新纹理再释放旧纹理，避免 GPU 仍在引用旧纹理时提前释放
+        egui_renderer.free_texture(&self.preview_texture_id);
         self._preview_texture = tex;
         self.preview_view = view;
         self.preview_texture_id = id;

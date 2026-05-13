@@ -99,7 +99,7 @@ pub fn draw_ruler(
                 + state.view.header_width
                 + (ft - state.view.scroll_offset) * state.view.zoom;
             if x >= timeline_rect.min.x + state.view.header_width {
-                let is_major = (ft / major_interval).round() * major_interval == ft;
+                let is_major = ((ft / major_interval).round() * major_interval - ft).abs() < 0.001;
                 if !is_major {
                     painter.line_segment(
                         [

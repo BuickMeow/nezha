@@ -292,6 +292,11 @@ impl Renderer {
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let batches: Vec<&[NoteInstance]> = instances.chunks(MAX_INSTANCE_COUNT).collect();
 
+        // 清理切换文件后不再需要的多余 buffer，避免只增不减
+        while self.instance_buffers.len() > batches.len() {
+            self.instance_buffers.pop();
+        }
+
         // 按需创建 buffer（每个固定上限，避免超过 wgpu max_buffer_size）
         while self.instance_buffers.len() < batches.len() {
             let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
