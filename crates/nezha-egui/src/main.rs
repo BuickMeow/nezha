@@ -1,9 +1,9 @@
-mod sidebar;
+mod app;
 mod config_panel;
 mod piano_view;
-mod transport;
 mod properties_panel;
-mod app;
+mod sidebar;
+mod transport;
 
 fn main() {
     let options = eframe::NativeOptions {

@@ -1,5 +1,5 @@
-use wgpu::*;
 use nezha_core::MidiFile;
+use wgpu::*;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -32,9 +32,13 @@ pub trait NoteSource {
     /// 总时长（秒）
     fn duration(&self) -> f64;
     /// PPQ (ticks per beat)，返回 None 表示无 tick 信息，降级为秒计算
-    fn ticks_per_beat(&self) -> Option<u32> { None }
+    fn ticks_per_beat(&self) -> Option<u32> {
+        None
+    }
     /// 将秒时间转换为 tick（Tick 模式下由 tempo 决定）
-    fn tick_at_time(&self, _time: f64) -> Option<f64> { None }
+    fn tick_at_time(&self, _time: f64) -> Option<f64> {
+        None
+    }
 }
 
 /// 渲染模式
@@ -64,6 +68,8 @@ pub struct RenderStyle {
     pub background: [f64; 4],
     /// 是否等宽钢琴键（false = 白键比黑键宽，黑键在白键上方）
     pub equal_key_width: bool,
+    /// 琴键区高度（像素），0 = 不显示琴键
+    pub keyboard_height: f32,
 }
 
 impl Default for RenderStyle {
@@ -76,6 +82,7 @@ impl Default for RenderStyle {
             palette: random_palette(),
             background: [0.0, 0.0, 0.0, 1.0],
             equal_key_width: true,
+            keyboard_height: 0.0,
         }
     }
 }
@@ -91,7 +98,6 @@ pub fn random_palette() -> [[f32; 3]; 128] {
     }
     palette
 }
-
 
 fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let c = v * s;
@@ -278,12 +284,14 @@ impl Renderer {
             height: height as f32,
             _pad: 0.0,
         };
-        self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let mut encoder = self.device.create_command_encoder(
-&wgpu::CommandEncoderDescriptor {
-            label: Some("render_encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("render_encoder"),
+            });
 
         let instances = midi_file
             .map(|midi| self.build_instances(width, height, time, speed, midi, render_state, style))
@@ -310,11 +318,8 @@ impl Renderer {
 
         // render pass 前先把所有 batch 数据写入对应 buffer
         for (i, batch) in batches.iter().enumerate() {
-            self.queue.write_buffer(
-                &self.instance_buffers[i],
-                0,
-                bytemuck::cast_slice(batch),
-            );
+            self.queue
+                .write_buffer(&self.instance_buffers[i], 0, bytemuck::cast_slice(batch));
         }
 
         {
@@ -363,14 +368,20 @@ impl Renderer {
         state: &mut MidiRenderState,
         style: &RenderStyle,
     ) -> Vec<NoteInstance> {
-        match style.render_mode {
+        let mut instances = match style.render_mode {
             RenderMode::TimeBased => {
                 self.build_instances_time(width, height, time, speed, midi, state, style)
             }
             RenderMode::TickBased => {
                 self.build_instances_tick(width, height, time, speed, midi, state, style)
             }
+        };
+        // 琴键绘制在音符上方（覆盖瀑布流底部）
+        if style.keyboard_height > 0.0 {
+            let mut keys = self.build_keyboard_instances(width, height, time, midi, style);
+            instances.append(&mut keys);
         }
+        instances
     }
 
     fn build_instances_time(
@@ -383,9 +394,12 @@ impl Renderer {
         state: &mut MidiRenderState,
         style: &RenderStyle,
     ) -> Vec<NoteInstance> {
+        let kh = (style.keyboard_height as f64).max(0.0);
+        let effective_h = (height as f64 - kh).max(1.0);
         let pps = 200.0f64 * speed.max(0.01) as f64;
-        let screen_top = height as f64 + time * pps;
-        let visible_future = height as f64 / pps + 1.0;
+        // "now" 线位于琴键上方（瀑布流底部）
+        let screen_top = effective_h + time * pps;
+        let visible_future = effective_h / pps + 1.0;
         let visible_past = 1.0f64;
         let time_top = time + visible_future;
         let time_bottom = time - visible_past;
@@ -417,8 +431,11 @@ impl Renderer {
             Box::new(0..128u8)
         } else {
             // 先白键后黑键：黑键覆盖在白键上方
-            Box::new((0..128u8).filter(|k| !Self::is_black_key(*k))
-                .chain((0..128u8).filter(|k| Self::is_black_key(*k))))
+            Box::new(
+                (0..128u8)
+                    .filter(|k| !Self::is_black_key(*k))
+                    .chain((0..128u8).filter(|k| Self::is_black_key(*k))),
+            )
         };
 
         for key in keys_iter {
@@ -446,8 +463,14 @@ impl Renderer {
                 let rounding_radius = style.rounding * f32::min(w, h);
 
                 instances.push(NoteInstance {
-                    x, y, w, h,
-                    r: cr, g: cg, b: cb, a: 1.0,
+                    x,
+                    y,
+                    w,
+                    h,
+                    r: cr,
+                    g: cg,
+                    b: cb,
+                    a: 1.0,
                     corner_radius: rounding_radius,
                     border_width: border_px,
                 });
@@ -467,11 +490,15 @@ impl Renderer {
         state: &mut MidiRenderState,
         style: &RenderStyle,
     ) -> Vec<NoteInstance> {
+        let kh = (style.keyboard_height as f64).max(0.0);
+        let effective_h = (height as f64 - kh).max(1.0);
         let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
         let eff_speed = speed.max(0.01) as f64;
         let ppt = 100.0 / ticks_per_beat * eff_speed;
-        let scroll_tick = midi.tick_at_time(time).unwrap_or(time * ticks_per_beat * 2.0);
-        let visible_ticks = height as f64 / ppt;
+        let scroll_tick = midi
+            .tick_at_time(time)
+            .unwrap_or(time * ticks_per_beat * 2.0);
+        let visible_ticks = effective_h / ppt;
         let tick_at_bottom = scroll_tick;
         let tick_at_top = scroll_tick + visible_ticks;
 
@@ -495,15 +522,19 @@ impl Renderer {
 
         // 2. 计算 key 布局
         let layouts = Self::compute_key_layouts(width, style.equal_key_width);
-        let screen_bottom = height as f64 + scroll_tick * ppt;
+        // "now" 线位于琴键上方
+        let screen_bottom = effective_h + scroll_tick * ppt;
 
         // 3. 渲染
         let mut instances = Vec::new();
         let keys_iter: Box<dyn Iterator<Item = u8>> = if style.equal_key_width {
             Box::new(0..128u8)
         } else {
-            Box::new((0..128u8).filter(|k| !Self::is_black_key(*k))
-                .chain((0..128u8).filter(|k| Self::is_black_key(*k))))
+            Box::new(
+                (0..128u8)
+                    .filter(|k| !Self::is_black_key(*k))
+                    .chain((0..128u8).filter(|k| Self::is_black_key(*k))),
+            )
         };
 
         for key in keys_iter {
@@ -531,8 +562,14 @@ impl Renderer {
                 let rounding_radius = style.rounding * f32::min(w, h);
 
                 instances.push(NoteInstance {
-                    x, y, w, h,
-                    r: cr, g: cg, b: cb, a: 1.0,
+                    x,
+                    y,
+                    w,
+                    h,
+                    r: cr,
+                    g: cg,
+                    b: cb,
+                    a: 1.0,
                     corner_radius: rounding_radius,
                     border_width: border_px,
                 });
@@ -581,5 +618,94 @@ impl Renderer {
             }
         }
         layouts
+    }
+
+    /// 生成琴键实例（绘制在纹理底部）
+    fn build_keyboard_instances(
+        &self,
+        width: u32,
+        height: u32,
+        time: f64,
+        midi: &dyn NoteSource,
+        style: &RenderStyle,
+    ) -> Vec<NoteInstance> {
+        let kh = style.keyboard_height.max(1.0);
+        let key_top = height as f32 - kh;
+        let layouts = Self::compute_key_layouts(width, style.equal_key_width);
+
+        // 找出当前激活的键位
+        let mut active_keys = [false; 128];
+        let mut active_colors = [[0.0f32; 3]; 128];
+        for key in 0..128u8 {
+            let notes = midi.key_notes(key);
+            if let Some(note) = notes.iter().find(|n| n.start <= time && time < n.end) {
+                active_keys[key as usize] = true;
+                let trk = note.track as usize % 128;
+                active_colors[key as usize] = style.palette[trk];
+            }
+        }
+
+        let mut instances = Vec::with_capacity(256);
+        let black_h = kh * 0.6;
+
+        // 先画白键
+        for key in 0..128u8 {
+            if Self::is_black_key(key) {
+                continue;
+            }
+            let (x, w) = layouts[key as usize];
+            if w <= 0.0 {
+                continue;
+            }
+            let (r, g, b) = if active_keys[key as usize] {
+                let [cr, cg, cb] = active_colors[key as usize];
+                (cr, cg, cb)
+            } else {
+                (0.94, 0.94, 0.94) // 白键默认色
+            };
+            instances.push(NoteInstance {
+                x,
+                y: key_top,
+                w,
+                h: kh,
+                r,
+                g,
+                b,
+                a: 1.0,
+                corner_radius: 2.0,
+                border_width: 0.5,
+            });
+        }
+
+        // 再画黑键（覆盖在白键上方）
+        for key in 0..128u8 {
+            if !Self::is_black_key(key) {
+                continue;
+            }
+            let (x, w) = layouts[key as usize];
+            if w <= 0.0 {
+                continue;
+            }
+            let (r, g, b) = if active_keys[key as usize] {
+                let [cr, cg, cb] = active_colors[key as usize];
+                (cr, cg, cb)
+            } else {
+                (0.16, 0.16, 0.17) // 黑键默认色
+            };
+            instances.push(NoteInstance {
+                x,
+                y: key_top,
+                w,
+                h: black_h,
+                r,
+                g,
+                b,
+                a: 1.0,
+                corner_radius: 1.5,
+                border_width: 0.5,
+            });
+        }
+
+        instances
     }
 }

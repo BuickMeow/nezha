@@ -1,18 +1,18 @@
-use std::time::Instant;
-use eframe::egui;
-use crate::sidebar;
 use crate::config_panel;
-use crate::properties_panel;
 use crate::piano_view;
+use crate::properties_panel;
+use crate::sidebar;
 use crate::transport;
+use eframe::egui;
+use std::time::Instant;
 
-mod render_context;
 pub mod project_state;
+mod render_context;
 mod ui_state;
 
-pub use render_context::RenderContext;
 pub use project_state::ProjectState;
-pub use ui_state::{UiState, ThemeMode};
+pub use render_context::RenderContext;
+pub use ui_state::{ThemeMode, UiState};
 
 pub struct App {
     pub render_ctx: RenderContext,
@@ -25,7 +25,8 @@ impl App {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "MiSans".to_owned(),
-            egui::FontData::from_static(include_bytes!("../../../assets/MiSans-Regular.otf")).into(),
+            egui::FontData::from_static(include_bytes!("../../../assets/MiSans-Regular.otf"))
+                .into(),
         );
         fonts
             .families
@@ -49,7 +50,8 @@ impl App {
             .add_filter("MIDI", &["mid", "midi"])
             .pick_file()
         {
-            self.project.load_midi(path.to_string_lossy().to_string(), &mut self.render_ctx);
+            self.project
+                .load_midi(path.to_string_lossy().to_string(), &mut self.render_ctx);
         }
     }
 }
@@ -70,8 +72,8 @@ impl eframe::App for App {
                 self.project.playback_start = None;
             }
             if ui.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
-                self.project.current_time = (self.project.current_time + frame_duration)
-                    .min(self.project.duration());
+                self.project.current_time =
+                    (self.project.current_time + frame_duration).min(self.project.duration());
                 self.project.playback_start = None;
             }
         }
@@ -143,9 +145,8 @@ impl eframe::App for App {
                     let id = ts.next_clip_id;
                     ts.next_clip_id += 1;
                     let track_len = ts.data.tracks.len();
-                    let mut new_track = crate::transport::Track::new_video(
-                        &format!("视频 {}", track_len + 1)
-                    );
+                    let mut new_track =
+                        crate::transport::Track::new_video(&format!("视频 {}", track_len + 1));
                     new_track.clips.push(crate::transport::TrackClip {
                         id,
                         name: format!("默认瀑布流 {}", id),
@@ -159,6 +160,7 @@ impl eframe::App for App {
                         render_mode: nezha_renderer::RenderMode::TimeBased,
                         equal_key_width: true,
                         midi_idx,
+                        keyboard_height_percent: 0.15,
                     });
                     ts.data.tracks.insert(0, new_track);
                 }
@@ -168,9 +170,8 @@ impl eframe::App for App {
                     let id = ts.next_clip_id;
                     ts.next_clip_id += 1;
                     let track_len = ts.data.tracks.len();
-                    let mut new_track = crate::transport::Track::new_video(
-                        &format!("视频 {}", track_len + 1)
-                    );
+                    let mut new_track =
+                        crate::transport::Track::new_video(&format!("视频 {}", track_len + 1));
                     new_track.clips.push(crate::transport::TrackClip {
                         id,
                         name: format!("纯色 {}", id),
@@ -184,6 +185,7 @@ impl eframe::App for App {
                         render_mode: nezha_renderer::RenderMode::TimeBased,
                         equal_key_width: true,
                         midi_idx: None,
+                        keyboard_height_percent: 0.0,
                     });
                     ts.data.tracks.insert(0, new_track);
                 }
@@ -211,9 +213,13 @@ impl eframe::App for App {
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 if self.project.is_playing {
                     let now = Instant::now();
-                    let (start_instant, start_time) = self.project.playback_start.get_or_insert_with(|| (now, self.project.current_time));
+                    let (start_instant, start_time) = self
+                        .project
+                        .playback_start
+                        .get_or_insert_with(|| (now, self.project.current_time));
                     let elapsed = now.duration_since(*start_instant).as_secs_f64();
-                    self.project.current_time = (*start_time + elapsed).min(self.project.duration());
+                    self.project.current_time =
+                        (*start_time + elapsed).min(self.project.duration());
                     if self.project.current_time >= self.project.duration() {
                         self.project.current_time = 0.0;
                         self.project.is_playing = false;
@@ -245,7 +251,14 @@ impl eframe::App for App {
                     })
                     .unwrap_or(1.0);
 
-                let (selected_border, selected_rounding, selected_track, selected_render_mode, selected_equal_key) = self
+                let (
+                    selected_border,
+                    selected_rounding,
+                    selected_track,
+                    selected_render_mode,
+                    selected_equal_key,
+                    selected_keyboard_percent,
+                ) = self
                     .project
                     .timeline_state
                     .selected_clip_id
@@ -257,9 +270,25 @@ impl eframe::App for App {
                             .iter()
                             .flat_map(|t| t.clips.iter())
                             .find(|c| c.id == id)
-                            .map(|c| (c.border_width, c.rounding, c.id, c.render_mode, c.equal_key_width))
+                            .map(|c| {
+                                (
+                                    c.border_width,
+                                    c.rounding,
+                                    c.id,
+                                    c.render_mode,
+                                    c.equal_key_width,
+                                    c.keyboard_height_percent,
+                                )
+                            })
                     })
-                    .unwrap_or((0.1, 0.0, 0, nezha_renderer::RenderMode::TimeBased, true));
+                    .unwrap_or((
+                        0.1,
+                        0.0,
+                        0,
+                        nezha_renderer::RenderMode::TimeBased,
+                        true,
+                        0.15,
+                    ));
 
                 let bg_color = self
                     .project
@@ -268,9 +297,11 @@ impl eframe::App for App {
                     .tracks
                     .iter()
                     .flat_map(|t| t.clips.iter())
-                    .find(|c| c.kind == crate::transport::ClipKind::SolidColor
-                        && (render_time as f32) >= c.start
-                        && (render_time as f32) < c.end)
+                    .find(|c| {
+                        c.kind == crate::transport::ClipKind::SolidColor
+                            && (render_time as f32) >= c.start
+                            && (render_time as f32) < c.end
+                    })
                     .map(|c| {
                         [
                             c.color.r() as f64 / 255.0,
@@ -281,14 +312,19 @@ impl eframe::App for App {
                     })
                     .unwrap_or([0.0, 0.0, 0.0, 1.0]);
 
+                let palette = nezha_renderer::random_palette();
+                let keyboard_height_px =
+                    self.project.render_height as f32 * selected_keyboard_percent;
+
                 let style = nezha_renderer::RenderStyle {
                     render_mode: selected_render_mode,
                     border_width: selected_border,
                     rounding: selected_rounding,
                     track_index: selected_track,
-                    palette: nezha_renderer::random_palette(),
+                    palette,
                     background: bg_color,
                     equal_key_width: selected_equal_key,
+                    keyboard_height: keyboard_height_px,
                 };
 
                 // 瀑布流直接用自己绑定的 midi_idx，不回退到高亮

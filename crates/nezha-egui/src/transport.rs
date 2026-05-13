@@ -28,6 +28,8 @@ pub struct TrackClip {
     pub equal_key_width: bool,
     /// 关联的 MIDI 索引（None = 使用当前高亮 MIDI）
     pub midi_idx: Option<usize>,
+    /// 钢琴键盘高度占渲染高度的比例 (0.0 ~ 0.5)
+    pub keyboard_height_percent: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -112,6 +114,7 @@ impl Default for TimelineData {
             render_mode: nezha_renderer::RenderMode::TimeBased,
             equal_key_width: true,
             midi_idx: None,
+            keyboard_height_percent: 0.15,
         });
         tracks.push(video_track);
         Self { tracks }
@@ -169,23 +172,23 @@ impl TimelineState {
 
 // ── 子模块 ──
 
-mod theme;
-mod timecode;
+mod controls;
 mod input;
+mod playhead;
 mod ruler;
 mod scrollbar;
+mod theme;
+mod timecode;
 mod tracks;
-mod playhead;
-mod controls;
 
 pub use theme::ThemeColors;
 
+use controls::draw_controls;
 use input::handle_input;
+use playhead::draw_playhead;
 use ruler::draw_ruler;
 use scrollbar::draw_scrollbar;
 use tracks::draw_tracks;
-use playhead::draw_playhead;
-use controls::draw_controls;
 
 pub fn show(
     ui: &mut egui::Ui,
@@ -218,20 +221,48 @@ pub fn show(
 
     // ── 标尺 ──
     draw_ruler(
-        ui, &painter, &c, &timeline_rect, state, visible_start, visible_end, ruler_height,
-        &response, current_time, duration, fps,
+        ui,
+        &painter,
+        &c,
+        &timeline_rect,
+        state,
+        visible_start,
+        visible_end,
+        ruler_height,
+        &response,
+        current_time,
+        duration,
+        fps,
     );
 
     // ── 滚动条 ──
     draw_scrollbar(
-        ui, &painter, &c, &timeline_rect, &mut state.view, &mut state.interaction,
-        duration, content_width, scrollbar_height, controls_height, &response, fps,
+        ui,
+        &painter,
+        &c,
+        &timeline_rect,
+        &mut state.view,
+        &mut state.interaction,
+        duration,
+        content_width,
+        scrollbar_height,
+        controls_height,
+        &response,
+        fps,
     );
 
     // ── 轨道 ──
     let y = draw_tracks(
-        ui, &painter, &c, &timeline_rect, state, visible_start, visible_end,
-        ruler_height, scrollbar_height, controls_height,
+        ui,
+        &painter,
+        &c,
+        &timeline_rect,
+        state,
+        visible_start,
+        visible_end,
+        ruler_height,
+        scrollbar_height,
+        controls_height,
     );
 
     // 底部填充
@@ -249,13 +280,30 @@ pub fn show(
 
     // ── 播放头 ──
     draw_playhead(
-        ui, &painter, &c, &timeline_rect, &response, state, current_time, duration,
-        ruler_height, controls_height, scrollbar_height, fps,
+        ui,
+        &painter,
+        &c,
+        &timeline_rect,
+        &response,
+        state,
+        current_time,
+        duration,
+        ruler_height,
+        controls_height,
+        scrollbar_height,
+        fps,
     );
 
     // ── 底部控制栏 ──
     draw_controls(
-        ui, &painter, &c, &timeline_rect, is_playing, current_time, duration, state,
+        ui,
+        &painter,
+        &c,
+        &timeline_rect,
+        is_playing,
+        current_time,
+        duration,
+        state,
         controls_height,
     );
 }

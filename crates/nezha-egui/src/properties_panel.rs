@@ -1,7 +1,7 @@
-use eframe::egui;
-use crate::transport::{TimelineState, ClipKind};
 use crate::app::project_state::MidiEntry;
 use crate::config_panel::truncate_str;
+use crate::transport::{ClipKind, TimelineState};
+use eframe::egui;
 use nezha_renderer::RenderMode;
 
 pub fn show(
@@ -47,7 +47,8 @@ pub fn show(
                             ui.label("MIDI 来源");
 
                             let clip_id = clip.id;
-                            let current_name = clip.midi_idx
+                            let current_name = clip
+                                .midi_idx
                                 .and_then(|idx| midi_files.get(idx))
                                 .and_then(|e| {
                                     std::path::Path::new(&e.path)
@@ -96,6 +97,25 @@ pub fn show(
                                 ui.selectable_value(&mut clip.equal_key_width, true, "等宽");
                                 ui.selectable_value(&mut clip.equal_key_width, false, "真实比例");
                             });
+
+                            ui.add_space(4.0);
+
+                            ui.label("琴键区高度");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::Slider::new(&mut clip.keyboard_height_percent, 0.0..=0.5)
+                                        .step_by(0.01)
+                                        .text(""),
+                                );
+                            });
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{:.0}%（设为 0 则隐藏键盘）",
+                                    clip.keyboard_height_percent * 100.0
+                                ))
+                                .size(11.0)
+                                .color(ui.visuals().weak_text_color()),
+                            );
 
                             ui.add_space(4.0);
 
@@ -159,7 +179,9 @@ pub fn show(
                     break;
                 }
             }
-            if found { break; }
+            if found {
+                break;
+            }
         }
     } else {
         ui.label("未选中任何图层");

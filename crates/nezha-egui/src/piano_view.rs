@@ -1,5 +1,6 @@
 use eframe::egui;
 
+/// 显示瀑布流预览纹理（琴键已由渲染器绘制在纹理内部）
 pub fn show(
     ui: &mut egui::Ui,
     texture_id: egui::TextureId,
@@ -16,8 +17,7 @@ pub fn show(
         egui::Vec2::new(available.x, available.x / aspect)
     };
 
-    let (_rect, response) =
-        ui.allocate_exact_size(available, egui::Sense::click_and_drag());
+    let (_rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
 
     let pointer_pos = ui.input(|i| i.pointer.hover_pos());
 
@@ -51,10 +51,7 @@ pub fn show(
     let scaled_size = base_size * *zoom;
 
     let excess = scaled_size - available;
-    let max_pan = egui::Vec2::new(
-        (excess.x / 2.0).max(0.0),
-        (excess.y / 2.0).max(0.0),
-    );
+    let max_pan = egui::Vec2::new((excess.x / 2.0).max(0.0), (excess.y / 2.0).max(0.0));
 
     if response.dragged() {
         *pan_offset += response.drag_delta();
@@ -71,10 +68,7 @@ pub fn show(
     let center = available / 2.0;
     let top_left = center - scaled_size / 2.0 + *pan_offset;
 
-    let image_rect = egui::Rect::from_min_size(
-        response.rect.min + top_left,
-        scaled_size,
-    );
+    let image_rect = egui::Rect::from_min_size(response.rect.min + top_left, scaled_size);
 
     ui.put(
         image_rect,
