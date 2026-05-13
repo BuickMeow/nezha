@@ -32,6 +32,56 @@ pub struct TrackClip {
     pub keyboard_height_percent: f32,
 }
 
+impl TrackClip {
+    pub fn new_waterfall(id: usize, midi_idx: Option<usize>) -> Self {
+        Self {
+            id,
+            name: format!("默认瀑布流 {}", id),
+            kind: ClipKind::Waterfall,
+            start: 0.0,
+            end: 0.0,
+            color: egui::Color32::from_rgb(80, 150, 220),
+            speed: 1.0,
+            border_width: 0.1,
+            rounding: 0.0,
+            render_mode: nezha_renderer::RenderMode::TimeBased,
+            equal_key_width: true,
+            midi_idx,
+            keyboard_height_percent: 0.15,
+        }
+    }
+
+    pub fn new_solid_color(id: usize, color: egui::Color32) -> Self {
+        Self {
+            id,
+            name: format!("纯色 {}", id),
+            kind: ClipKind::SolidColor,
+            start: 0.0,
+            end: 0.0,
+            color,
+            speed: 1.0,
+            border_width: 0.0,
+            rounding: 0.0,
+            render_mode: nezha_renderer::RenderMode::TimeBased,
+            equal_key_width: true,
+            midi_idx: None,
+            keyboard_height_percent: 0.0,
+        }
+    }
+
+    /// 默认渲染参数：(border_width, rounding, track_index, render_mode, equal_key, keyboard%)
+    pub fn default_render_params() -> (f32, f32, usize, nezha_renderer::RenderMode, bool, f32) {
+        (
+            0.1,
+            0.0,
+            0,
+            nezha_renderer::RenderMode::TimeBased,
+            true,
+            0.15,
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Track {
     pub name: String,
@@ -101,21 +151,7 @@ impl Default for TimelineData {
     fn default() -> Self {
         let mut tracks = Vec::new();
         let mut video_track = Track::new_video("视频 1");
-        video_track.clips.push(TrackClip {
-            id: 0,
-            name: "默认瀑布流".to_string(),
-            kind: ClipKind::Waterfall,
-            start: 0.0,
-            end: 0.0,
-            color: egui::Color32::from_rgb(80, 120, 200),
-            speed: 1.0,
-            border_width: 0.1,
-            rounding: 0.0,
-            render_mode: nezha_renderer::RenderMode::TimeBased,
-            equal_key_width: true,
-            midi_idx: None,
-            keyboard_height_percent: 0.15,
-        });
+        video_track.clips.push(TrackClip::new_waterfall(0, None));
         tracks.push(video_track);
         Self { tracks }
     }
@@ -167,6 +203,49 @@ impl TimelineState {
 
     pub fn add_audio_track(&mut self, name: &str) {
         self.data.tracks.push(Track::new_audio(name));
+    }
+
+    /// 查找当前选中的 clip
+    pub fn selected_clip(&self) -> Option<&TrackClip> {
+        let id = self.selected_clip_id?;
+        self.data
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .find(|c| c.id == id)
+    }
+
+    /// 查找当前时间点的纯色图层（用于背景色）
+    pub fn solid_color_at(&self, time_secs: f32) -> Option<&TrackClip> {
+        self.data
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .find(|c| c.kind == ClipKind::SolidColor && time_secs >= c.start && time_secs < c.end)
+    }
+
+    /// 添加瀑布流 clip（自动分配 id、新建 track、插入到时间轴顶部）
+    pub fn push_waterfall_clip(&mut self, midi_idx: Option<usize>, duration: f32) {
+        let id = self.next_clip_id;
+        self.next_clip_id += 1;
+        let track_len = self.data.tracks.len();
+        let mut track = Track::new_video(&format!("视频 {}", track_len + 1));
+        let mut clip = TrackClip::new_waterfall(id, midi_idx);
+        clip.end = duration.max(1.0);
+        track.clips.push(clip);
+        self.data.tracks.insert(0, track);
+    }
+
+    /// 添加纯色 clip（自动分配 id、新建 track、插入到时间轴顶部）
+    pub fn push_solid_color_clip(&mut self, color: egui::Color32, duration: f32) {
+        let id = self.next_clip_id;
+        self.next_clip_id += 1;
+        let track_len = self.data.tracks.len();
+        let mut track = Track::new_video(&format!("视频 {}", track_len + 1));
+        let mut clip = TrackClip::new_solid_color(id, color);
+        clip.end = duration.max(1.0);
+        track.clips.push(clip);
+        self.data.tracks.insert(0, track);
     }
 }
 

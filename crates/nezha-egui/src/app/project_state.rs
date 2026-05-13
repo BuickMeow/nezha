@@ -1,4 +1,3 @@
-use crate::app::RenderContext;
 use crate::transport::TimelineState;
 use nezha_core::MidiFile;
 use std::time::Instant;
@@ -59,12 +58,18 @@ impl ProjectState {
             .map(|e| e.path.as_str())
     }
 
+    /// 通过索引获取 MIDI 条目
+    pub fn midi_entry(&self, idx: usize) -> Option<&MidiEntry> {
+        self.midi_files.get(idx)
+    }
+
     /// 当前总时长（由高亮 MIDI 决定，如果没有则默认 120s）
     pub fn duration(&self) -> f64 {
         self.highlighted_midi().map(|m| m.duration).unwrap_or(120.0)
     }
 
-    pub fn load_midi(&mut self, path: String, render_ctx: &mut RenderContext) {
+    /// 返回 Ok(idx) 表示加载成功及新 MIDI 的索引
+    pub fn load_midi(&mut self, path: String) -> Result<usize, String> {
         match MidiFile::load(&path) {
             Ok(midi) => {
                 // 限制最大 MIDI 文件数，防止内存无限增长
@@ -105,12 +110,14 @@ impl ProjectState {
                 self.timeline_state.update_duration(dur as f32);
                 self.current_time = 0.0;
                 self.playback_start = None;
-                render_ctx.reset_midi_state();
+                let idx = self.midi_files.len() - 1;
+                Ok(idx)
             }
             Err(e) => {
                 let msg = format!("MIDI 加载失败: {}", e);
                 eprintln!("{}", msg);
-                self.last_error = Some(msg);
+                self.last_error = Some(msg.clone());
+                Err(msg)
             }
         }
     }
@@ -123,7 +130,6 @@ impl ProjectState {
         // 调整高亮索引
         self.highlighted_midi_idx = match self.highlighted_midi_idx {
             Some(h) if h == idx => {
-                // 删掉了高亮的，选前一个或保持 None
                 if idx > 0 {
                     Some(idx - 1)
                 } else {
@@ -133,7 +139,7 @@ impl ProjectState {
             Some(h) if h > idx => Some(h - 1),
             other => other,
         };
-        // 更新所有 clip 中引用的 midi_idx：idx 以上的减 1，命中 idx 的置 None
+        // 更新所有 clip 中引用的 midi_idx
         for track in &mut self.timeline_state.data.tracks {
             for clip in &mut track.clips {
                 match clip.midi_idx {
