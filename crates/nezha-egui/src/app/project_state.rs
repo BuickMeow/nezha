@@ -1,7 +1,7 @@
-use std::time::Instant;
-use nezha_core::MidiFile;
 use crate::app::RenderContext;
 use crate::transport::TimelineState;
+use nezha_core::MidiFile;
+use std::time::Instant;
 
 /// 一个已加载的 MIDI 条目
 #[derive(Clone, Debug)]
@@ -23,6 +23,8 @@ pub struct ProjectState {
     pub fps: u32,
     pub timeline_state: TimelineState,
     pub playback_start: Option<(Instant, f64)>,
+    /// 最近一次错误信息（用于 UI 提示）
+    pub last_error: Option<String>,
 }
 
 impl ProjectState {
@@ -33,6 +35,7 @@ impl ProjectState {
             is_playing: false,
             current_time: 0.0,
             midi_files: Vec::new(),
+            last_error: None,
             highlighted_midi_idx: None,
             render_width: 1920,
             render_height: 1080,
@@ -58,9 +61,7 @@ impl ProjectState {
 
     /// 当前总时长（由高亮 MIDI 决定，如果没有则默认 120s）
     pub fn duration(&self) -> f64 {
-        self.highlighted_midi()
-            .map(|m| m.duration)
-            .unwrap_or(120.0)
+        self.highlighted_midi().map(|m| m.duration).unwrap_or(120.0)
     }
 
     pub fn load_midi(&mut self, path: String, render_ctx: &mut RenderContext) {
@@ -107,7 +108,9 @@ impl ProjectState {
                 render_ctx.reset_midi_state();
             }
             Err(e) => {
-                eprintln!("Failed to load MIDI: {}", e);
+                let msg = format!("MIDI 加载失败: {}", e);
+                eprintln!("{}", msg);
+                self.last_error = Some(msg);
             }
         }
     }
@@ -121,7 +124,11 @@ impl ProjectState {
         self.highlighted_midi_idx = match self.highlighted_midi_idx {
             Some(h) if h == idx => {
                 // 删掉了高亮的，选前一个或保持 None
-                if idx > 0 { Some(idx - 1) } else { self.midi_files.first().map(|_| 0) }
+                if idx > 0 {
+                    Some(idx - 1)
+                } else {
+                    self.midi_files.first().map(|_| 0)
+                }
             }
             Some(h) if h > idx => Some(h - 1),
             other => other,

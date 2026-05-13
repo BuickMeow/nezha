@@ -1,7 +1,7 @@
-use eframe::egui;
-use crate::sidebar::SidebarTab;
 use crate::app::ThemeMode;
 use crate::app::project_state::MidiEntry;
+use crate::sidebar::SidebarTab;
+use eframe::egui;
 
 pub(crate) fn truncate_str(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
@@ -41,19 +41,6 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
 
     match state.active_tab {
         SidebarTab::Style => {
-            ui.label("添加图层到时间轴");
-            ui.add_space(4.0);
-
-            if ui.button("🌊 默认瀑布流").clicked() {
-                action = Some(ConfigAction::AddWaterfall);
-            }
-            ui.add_space(4.0);
-            if ui.button("🎨 纯色图层").clicked() {
-                action = Some(ConfigAction::AddSolidColor);
-            }
-
-            ui.add_space(12.0);
-            ui.separator();
             ui.label("MIDI 文件");
             ui.add_space(4.0);
 
@@ -95,6 +82,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
             if ui.button("➕ 选择 MIDI 文件").clicked() {
                 action = Some(ConfigAction::SelectMidi);
             }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.label("添加图层到时间轴");
+            ui.add_space(4.0);
+
+            if ui.button("🌊 默认瀑布流").clicked() {
+                action = Some(ConfigAction::AddWaterfall);
+            }
+            ui.add_space(4.0);
+            if ui.button("🎨 纯色图层").clicked() {
+                action = Some(ConfigAction::AddSolidColor);
+            }
         }
         SidebarTab::Project => {
             ui.label("渲染设置");
@@ -102,11 +102,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
             ui.horizontal(|ui| {
                 ui.label("分辨率:");
                 ui.add(
-                    egui::DragValue::new(state.render_width).speed(1.0).range(1..=7680),
+                    egui::DragValue::new(state.render_width)
+                        .speed(1.0)
+                        .range(1..=7680),
                 );
                 ui.label("x");
                 ui.add(
-                    egui::DragValue::new(state.render_height).speed(1.0).range(1..=4320),
+                    egui::DragValue::new(state.render_height)
+                        .speed(1.0)
+                        .range(1..=4320),
                 );
             });
 
@@ -137,7 +141,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                     .selected_text(state.encoder.as_str())
                     .show_ui(ui, |ui| {
                         ui.selectable_value(state.encoder, "H.264".to_string(), "H.264");
-                        ui.selectable_value(state.encoder, "H.265 / HEVC".to_string(), "H.265 / HEVC");
+                        ui.selectable_value(
+                            state.encoder,
+                            "H.265 / HEVC".to_string(),
+                            "H.265 / HEVC",
+                        );
                         ui.selectable_value(state.encoder, "ProRes".to_string(), "ProRes");
                         ui.selectable_value(state.encoder, "VP9".to_string(), "VP9");
                         ui.selectable_value(state.encoder, "AV1".to_string(), "AV1");
@@ -166,13 +174,22 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
         SidebarTab::Settings => {
             ui.label("主题");
             ui.horizontal(|ui| {
-                if ui.selectable_label(*state.theme_mode == ThemeMode::Light, "☀️ 浅色").clicked() {
+                if ui
+                    .selectable_label(*state.theme_mode == ThemeMode::Light, "☀️ 浅色")
+                    .clicked()
+                {
                     *state.theme_mode = ThemeMode::Light;
                 }
-                if ui.selectable_label(*state.theme_mode == ThemeMode::Dark, "🌙 深色").clicked() {
+                if ui
+                    .selectable_label(*state.theme_mode == ThemeMode::Dark, "🌙 深色")
+                    .clicked()
+                {
                     *state.theme_mode = ThemeMode::Dark;
                 }
-                if ui.selectable_label(*state.theme_mode == ThemeMode::System, "💻 跟随系统").clicked() {
+                if ui
+                    .selectable_label(*state.theme_mode == ThemeMode::System, "💻 跟随系统")
+                    .clicked()
+                {
                     *state.theme_mode = ThemeMode::System;
                 }
             });

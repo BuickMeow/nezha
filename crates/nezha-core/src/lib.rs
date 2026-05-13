@@ -47,14 +47,14 @@ impl Default for RenderConfig {
 
 #[derive(Clone, Debug)]
 pub struct Note {
-    pub key: u8,              // 0-127 MIDI note number
-    pub start: f64,           // seconds
-    pub end: f64,             // seconds
-    pub start_tick: u32,      // absolute MIDI tick
-    pub end_tick: u32,        // absolute MIDI tick
-    pub velocity: u8,         // 0-127
+    pub key: u8,         // 0-127 MIDI note number
+    pub start: f64,      // seconds
+    pub end: f64,        // seconds
+    pub start_tick: u32, // absolute MIDI tick
+    pub end_tick: u32,   // absolute MIDI tick
+    pub velocity: u8,    // 0-127
     pub channel: u8,
-    pub track: u16,           // MIDI track index (0-based)
+    pub track: u16, // MIDI track index (0-based)
 }
 
 #[derive(Clone, Debug)]
@@ -99,12 +99,23 @@ impl MidiFile {
         let mut global_duration = 0.0f64;
 
         for (track_idx, track) in smf.tracks.iter().enumerate() {
-            Self::parse_track(track, &tempo_segments, ticks_per_beat, track_idx as u16, &mut key_notes, &mut global_duration);
+            Self::parse_track(
+                track,
+                &tempo_segments,
+                ticks_per_beat,
+                track_idx as u16,
+                &mut key_notes,
+                &mut global_duration,
+            );
         }
 
         // 每个 key 内按 start 排序
         for notes in &mut key_notes {
-            notes.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+            notes.sort_by(|a, b| {
+                a.start
+                    .partial_cmp(&b.start)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         Ok(MidiFile {
@@ -151,8 +162,8 @@ impl MidiFile {
         for ev in events {
             let dtick = ev.tick - last_tick;
             if dtick > 0 {
-                last_time += (dtick as u64 * last_mpq) as f64
-                    / (ticks_per_beat as f64 * 1_000_000.0);
+                last_time +=
+                    (dtick as u64 * last_mpq) as f64 / (ticks_per_beat as f64 * 1_000_000.0);
             }
             segments.push(TempoSegment {
                 start_tick: ev.tick,
@@ -186,9 +197,7 @@ impl MidiFile {
                 let mut tick_cursor = current_tick;
                 let mut sec_cursor = current_seconds;
 
-                while seg_idx + 1 < segments.len()
-                    && segments[seg_idx + 1].start_tick <= new_tick
-                {
+                while seg_idx + 1 < segments.len() && segments[seg_idx + 1].start_tick <= new_tick {
                     let boundary = segments[seg_idx + 1].start_tick;
                     let d = boundary - tick_cursor;
                     sec_cursor += (d as u64 * segments[seg_idx].micros_per_quarter) as f64
@@ -213,15 +222,40 @@ impl MidiFile {
                         let k = key.as_int();
                         let ch = channel.as_int();
                         if vel.as_int() > 0 {
-                            active_notes.push((k, current_seconds, vel.as_int(), ch, current_tick, track_idx));
+                            active_notes.push((
+                                k,
+                                current_seconds,
+                                vel.as_int(),
+                                ch,
+                                current_tick,
+                                track_idx,
+                            ));
                         } else {
-                            Self::resolve_note_off(k, ch, current_seconds, current_tick, track_idx, &mut active_notes, key_notes, global_duration);
+                            Self::resolve_note_off(
+                                k,
+                                ch,
+                                current_seconds,
+                                current_tick,
+                                track_idx,
+                                &mut active_notes,
+                                key_notes,
+                                global_duration,
+                            );
                         }
                     }
                     midly::MidiMessage::NoteOff { key, .. } => {
                         let k = key.as_int();
                         let ch = channel.as_int();
-                        Self::resolve_note_off(k, ch, current_seconds, current_tick, track_idx, &mut active_notes, key_notes, global_duration);
+                        Self::resolve_note_off(
+                            k,
+                            ch,
+                            current_seconds,
+                            current_tick,
+                            track_idx,
+                            &mut active_notes,
+                            key_notes,
+                            global_duration,
+                        );
                     }
                     _ => {}
                 }
@@ -236,13 +270,16 @@ impl MidiFile {
         }
 
         // 找到包含该时间的 segment
-        let seg_idx = self.tempo_segments.iter()
+        let seg_idx = self
+            .tempo_segments
+            .iter()
             .rposition(|s| s.start_time <= time)
             .unwrap_or(0);
         let seg = &self.tempo_segments[seg_idx];
 
         let dt = time - seg.start_time;
-        seg.start_tick as f64 + dt * self.ticks_per_beat as f64 * 1_000_000.0 / seg.micros_per_quarter as f64
+        seg.start_tick as f64
+            + dt * self.ticks_per_beat as f64 * 1_000_000.0 / seg.micros_per_quarter as f64
     }
 
     /// 获取指定时间的 BPM
@@ -250,7 +287,9 @@ impl MidiFile {
         if self.tempo_segments.is_empty() {
             return 120.0;
         }
-        let seg_idx = self.tempo_segments.iter()
+        let seg_idx = self
+            .tempo_segments
+            .iter()
             .rposition(|s| s.start_time <= time)
             .unwrap_or(0);
         let mpq = self.tempo_segments[seg_idx].micros_per_quarter;

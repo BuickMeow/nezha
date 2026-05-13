@@ -367,5 +367,32 @@ impl eframe::App for App {
 
             ui.ctx().request_repaint();
         });
+
+        // 显示错误提示（浮层，点击关闭）
+        if let Some(err) = self.project.last_error.clone() {
+            let mut dismissed = false;
+            let screen_rect = ui.ctx().content_rect();
+            egui::Area::new("error_toast".into())
+                .fixed_pos(egui::pos2(screen_rect.center().x, 32.0))
+                .anchor(egui::Align2::CENTER_TOP, egui::Vec2::ZERO)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style())
+                        .fill(egui::Color32::from_rgb(60, 30, 30))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(&err)
+                                        .color(egui::Color32::from_rgb(255, 180, 100)),
+                                );
+                                if ui.button("✕").clicked() {
+                                    dismissed = true;
+                                }
+                            });
+                        });
+                });
+            if dismissed {
+                self.project.last_error = None;
+            }
+        }
     }
 }
