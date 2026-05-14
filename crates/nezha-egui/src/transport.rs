@@ -151,7 +151,7 @@ impl Default for TimelineData {
     fn default() -> Self {
         let mut tracks = Vec::new();
         let mut video_track = Track::new_video("视频 1");
-        video_track.clips.push(TrackClip::new_waterfall(0, None));
+        video_track.clips.push(TrackClip::new_waterfall(1, None));
         tracks.push(video_track);
         Self { tracks }
     }
@@ -181,7 +181,7 @@ impl Default for TimelineState {
             interaction: TimelineInteraction::default(),
             fps: 60,
             selected_clip_id: None,
-            next_clip_id: 1,
+            next_clip_id: 2, // 从 2 开始，因为默认瀑布流已占用 id=1
         }
     }
 }
@@ -246,6 +246,19 @@ impl TimelineState {
         clip.end = duration.max(1.0);
         track.clips.push(clip);
         self.data.tracks.insert(0, track);
+    }
+
+    /// 删除当前选中的 clip，若轨道变空则同时删除轨道
+    pub fn remove_selected_clip(&mut self) {
+        let Some(id) = self.selected_clip_id else {
+            return;
+        };
+        // 从轨道中删除对应 clip，若轨道变空则整体移除
+        self.data.tracks.retain_mut(|track| {
+            track.clips.retain(|c| c.id != id);
+            !track.clips.is_empty()
+        });
+        self.selected_clip_id = None;
     }
 }
 

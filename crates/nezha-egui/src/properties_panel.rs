@@ -37,6 +37,19 @@ pub fn show(
                     });
 
                     ui.add_space(8.0);
+
+                    // 删除按钮
+                    if ui
+                        .button(
+                            egui::RichText::new("🗑 删除此图层")
+                                .color(egui::Color32::from_rgb(255, 120, 100)),
+                        )
+                        .clicked()
+                    {
+                        timeline_state.remove_selected_clip();
+                        return;
+                    }
+
                     ui.separator();
 
                     match clip.kind {

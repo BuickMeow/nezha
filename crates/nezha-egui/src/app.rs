@@ -181,6 +181,13 @@ impl eframe::App for App {
             }
         }
 
+        // Delete / Backspace 删除选中图层
+        let delete_pressed =
+            ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
+        if delete_pressed {
+            self.project.timeline_state.remove_selected_clip();
+        }
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             let mut config_action: Option<config_panel::ConfigAction> = None;
 
