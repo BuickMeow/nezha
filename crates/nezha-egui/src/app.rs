@@ -2,7 +2,7 @@ use crate::config_panel;
 use crate::piano_view;
 use crate::properties_panel;
 use crate::sidebar;
-use crate::transport::{self, TrackClip};
+use crate::transport::{self, ClipKind, TrackClip};
 use eframe::egui;
 use std::time::Instant;
 
@@ -18,6 +18,20 @@ pub struct App {
     pub render_ctx: RenderContext,
     pub project: ProjectState,
     pub ui: UiState,
+}
+
+/// 图层渲染所需数据（复制自 TrackClip，避免持有 self 的引用）
+#[derive(Clone)]
+struct LayerData {
+    kind: ClipKind,
+    midi_idx: Option<usize>,
+    speed: f32,
+    border_width: f32,
+    rounding: f32,
+    render_mode: nezha_renderer::RenderMode,
+    equal_key_width: bool,
+    clip_start: f32,
+    color: egui::Color32,
 }
 
 impl App {
@@ -60,12 +74,32 @@ impl App {
         }
     }
 
-    /// 根据当前选中 clip 构建 RenderStyle + speed + midi_idx
-    fn build_render_style(&self) -> (nezha_renderer::RenderStyle, f32, Option<usize>) {
+    /// 收集当前时间点所有可见图层数据（Premiere 顺序：底→顶）
+    fn collect_visible_layers(&self, time: f32) -> Vec<LayerData> {
+        let mut layers: Vec<LayerData> = Vec::new();
+        for track in self.project.timeline_state.data.tracks.iter().rev() {
+            for clip in &track.clips {
+                if time >= clip.start && time < clip.end {
+                    layers.push(LayerData {
+                        kind: clip.kind,
+                        midi_idx: clip.midi_idx,
+                        speed: clip.speed,
+                        border_width: clip.border_width,
+                        rounding: clip.rounding,
+                        render_mode: clip.render_mode,
+                        equal_key_width: clip.equal_key_width,
+                        clip_start: clip.start,
+                        color: clip.color,
+                    });
+                }
+            }
+        }
+        layers
+    }
+
+    fn default_style(&self) -> nezha_renderer::RenderStyle {
         let ts = &self.project.timeline_state;
         let clip = ts.selected_clip();
-
-        let speed = clip.map(|c| c.speed).unwrap_or(1.0);
         let (border_width, rounding, track_index, render_mode, equal_key_width, keyboard_percent) =
             clip.map(|c| {
                 (
@@ -79,39 +113,20 @@ impl App {
             })
             .unwrap_or(TrackClip::default_render_params());
 
-        let render_time = self.project.current_time as f32;
-        let bg_color = ts
-            .solid_color_at(render_time)
-            .map(|c| {
-                [
-                    c.color.r() as f64 / 255.0,
-                    c.color.g() as f64 / 255.0,
-                    c.color.b() as f64 / 255.0,
-                    1.0,
-                ]
-            })
-            .unwrap_or([0.0, 0.0, 0.0, 1.0]);
-
-        let palette = nezha_renderer::random_palette();
         let keyboard_height_px = self.project.render_height as f32 * keyboard_percent;
 
-        let style = nezha_renderer::RenderStyle {
+        nezha_renderer::RenderStyle {
             render_mode,
             border_width,
             rounding,
             track_index,
-            palette,
-            background: bg_color,
+            palette: nezha_renderer::random_palette(),
+            background: [0.0, 0.0, 0.0, 1.0],
             equal_key_width,
             keyboard_height: keyboard_height_px,
-        };
-
-        let midi_idx = clip.and_then(|c| c.midi_idx);
-
-        (style, speed, midi_idx)
+        }
     }
 
-    /// 处理 ConfigAction
     fn handle_config_action(&mut self, action: config_panel::ConfigAction) {
         match action {
             config_panel::ConfigAction::SelectMidi => self.pick_midi_file(),
@@ -138,7 +153,6 @@ impl App {
         }
     }
 
-    /// 更新播放时间（播放模式下）
     fn update_playback(&mut self) {
         if self.project.is_playing {
             let now = Instant::now();
@@ -181,7 +195,6 @@ impl eframe::App for App {
             }
         }
 
-        // Delete / Backspace 删除选中图层
         let delete_pressed =
             ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
         if delete_pressed {
@@ -220,7 +233,7 @@ impl eframe::App for App {
                     self.project.current_time = transport_time as f64;
                 });
 
-            // 3. 左侧面板 — 配置
+            // 3. 配置面板
             egui::Panel::left("config_panel")
                 .default_size(260.0)
                 .min_size(180.0)
@@ -247,7 +260,7 @@ impl eframe::App for App {
                 self.handle_config_action(action);
             }
 
-            // 4. 右侧面板 — 属性
+            // 4. 属性面板
             egui::Panel::right("properties_panel")
                 .default_size(220.0)
                 .min_size(160.0)
@@ -261,24 +274,78 @@ impl eframe::App for App {
                     );
                 });
 
-            // 5. 中央预览区
+            // 5. 中央预览区 — 多图层叠加渲染
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 self.update_playback();
 
                 let available = ui.available_size();
                 let rw = self.project.render_width as f32;
                 let rh = self.project.render_height as f32;
-                let render_time = self.project.current_time;
+                let current_time = self.project.current_time as f32;
                 let render_w = self.project.render_width;
                 let render_h = self.project.render_height;
 
-                let (style, speed, midi_idx) = self.build_render_style();
-                let midi_source: Option<&dyn nezha_renderer::NoteSource> = midi_idx
-                    .and_then(|idx| self.project.midi_files.get(idx))
-                    .map(|e| &e.file as &dyn nezha_renderer::NoteSource);
+                // 收集当前时间点所有可见图层（数据副本，不持有引用）
+                let layers = self.collect_visible_layers(current_time);
+                let default_style = self.default_style();
+
+                // 纯色背景
+                let bg = layers.iter().find(|c| c.kind == ClipKind::SolidColor);
+                let bg_style = if let Some(bg) = bg {
+                    nezha_renderer::RenderStyle {
+                        background: [
+                            bg.color.r() as f64 / 255.0,
+                            bg.color.g() as f64 / 255.0,
+                            bg.color.b() as f64 / 255.0,
+                            1.0,
+                        ],
+                        ..default_style.clone()
+                    }
+                } else {
+                    default_style.clone()
+                };
 
                 self.render_ctx
-                    .render(render_w, render_h, render_time, speed, midi_source, &style);
+                    .render_background(render_w, render_h, &bg_style);
+
+                // 瀑布流图层，从底到顶叠加
+                let mut is_first_waterfall = true;
+                for clip in &layers {
+                    if clip.kind != ClipKind::Waterfall {
+                        continue;
+                    }
+                    let Some(midi_idx) = clip.midi_idx else {
+                        continue;
+                    };
+                    let Some(entry) = self.project.midi_files.get(midi_idx) else {
+                        continue;
+                    };
+
+                    let clip_time = (current_time - clip.clip_start).max(0.0) as f64;
+
+                    let clip_style = nezha_renderer::RenderStyle {
+                        render_mode: clip.render_mode,
+                        border_width: clip.border_width,
+                        rounding: clip.rounding,
+                        track_index: 0,
+                        palette: default_style.palette,
+                        background: default_style.background,
+                        equal_key_width: clip.equal_key_width,
+                        keyboard_height: default_style.keyboard_height,
+                    };
+
+                    self.render_ctx.render_layer(
+                        render_w,
+                        render_h,
+                        clip_time,
+                        clip.speed,
+                        midi_idx,
+                        &entry.file,
+                        &clip_style,
+                        is_first_waterfall && bg.is_none(),
+                    );
+                    is_first_waterfall = false;
+                }
 
                 let aspect = rw / rh;
                 self.ui.zoom = piano_view::show(
@@ -294,7 +361,7 @@ impl eframe::App for App {
             ui.ctx().request_repaint();
         });
 
-        // 显示错误提示（浮层，点击关闭）
+        // 错误提示
         if let Some(err) = self.project.last_error.clone() {
             let mut dismissed = false;
             let screen_rect = ui.ctx().content_rect();

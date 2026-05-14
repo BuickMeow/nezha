@@ -123,21 +123,17 @@ impl NoteSource for MidiFile {
     fn key_notes(&self, key: u8) -> &[nezha_core::Note] {
         &self.key_notes[key as usize]
     }
-
     fn duration(&self) -> f64 {
         self.duration
     }
-
     fn ticks_per_beat(&self) -> Option<u32> {
         Some(self.ticks_per_beat)
     }
-
     fn tick_at_time(&self, time: f64) -> Option<f64> {
         Some(self.tick_at_time(time))
     }
 }
 
-/// MIDI 渲染业务状态（与 GPU 资源分离）
 pub struct MidiRenderState {
     scan_indices: [usize; 128],
     last_time: f64,
@@ -267,6 +263,8 @@ impl Renderer {
         }
     }
 
+    /// 渲染一帧
+    /// - `clear_background`: 是否清除背景（多层叠加时只有底层需要清除）
     pub fn render(
         &mut self,
         target: &wgpu::TextureView,
@@ -277,6 +275,7 @@ impl Renderer {
         midi_file: Option<&dyn NoteSource>,
         render_state: &mut MidiRenderState,
         style: &RenderStyle,
+        clear_background: bool,
     ) {
         let uniforms = Uniforms {
             time: time as f32,
@@ -300,12 +299,10 @@ impl Renderer {
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let batches: Vec<&[NoteInstance]> = instances.chunks(MAX_INSTANCE_COUNT).collect();
 
-        // 清理切换文件后不再需要的多余 buffer，避免只增不减
         while self.instance_buffers.len() > batches.len() {
             self.instance_buffers.pop();
         }
 
-        // 按需创建 buffer（每个固定上限，避免超过 wgpu max_buffer_size）
         while self.instance_buffers.len() < batches.len() {
             let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("instance_buffer"),
@@ -316,11 +313,21 @@ impl Renderer {
             self.instance_buffers.push(buf);
         }
 
-        // render pass 前先把所有 batch 数据写入对应 buffer
         for (i, batch) in batches.iter().enumerate() {
             self.queue
                 .write_buffer(&self.instance_buffers[i], 0, bytemuck::cast_slice(batch));
         }
+
+        let load_op = if clear_background {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: style.background[0],
+                g: style.background[1],
+                b: style.background[2],
+                a: style.background[3],
+            })
+        } else {
+            wgpu::LoadOp::Load
+        };
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -330,12 +337,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: style.background[0],
-                            g: style.background[1],
-                            b: style.background[2],
-                            a: style.background[3],
-                        }),
+                        load: load_op,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -376,7 +378,6 @@ impl Renderer {
                 self.build_instances_tick(width, height, time, speed, midi, state, style)
             }
         };
-        // 琴键绘制在音符上方（覆盖瀑布流底部）
         if style.keyboard_height > 0.0 {
             let mut keys = self.build_keyboard_instances(width, height, time, midi, style, state);
             instances.append(&mut keys);
@@ -397,11 +398,9 @@ impl Renderer {
         let kh = (style.keyboard_height as f64).max(0.0);
         let effective_h = (height as f64 - kh).max(1.0);
         let pps = 200.0f64 * speed.max(0.01) as f64;
-        // "now" 线位于琴键上方（瀑布流底部）
         let screen_top = effective_h + time * pps;
         let visible_future = effective_h / pps + 1.0;
         let time_top = time + visible_future;
-        // 琴键下方的已结束音符无需渲染，直接跳过
         let time_bottom = time;
 
         if time < state.last_time {
@@ -409,7 +408,6 @@ impl Renderer {
         }
         state.last_time = time;
 
-        // 1. 更新所有 key 的 scan_indices（跳过已结束的音符）
         for key in 0..128u8 {
             let notes = midi.key_notes(key);
             if notes.is_empty() {
@@ -422,15 +420,12 @@ impl Renderer {
             state.scan_indices[key as usize] = scan;
         }
 
-        // 2. 计算 key 布局
         let layouts = Self::compute_key_layouts(width, style.equal_key_width);
 
-        // 3. 渲染
         let mut instances = Vec::new();
         let keys_iter: Box<dyn Iterator<Item = u8>> = if style.equal_key_width {
             Box::new(0..128u8)
         } else {
-            // 先白键后黑键：黑键覆盖在白键上方
             Box::new(
                 (0..128u8)
                     .filter(|k| !Self::is_black_key(*k))
@@ -451,7 +446,6 @@ impl Renderer {
                 if note.start > time_top {
                     break;
                 }
-                // 已结束的音符在琴键下方，无需渲染
                 if note.end <= time {
                     continue;
                 }
@@ -511,7 +505,6 @@ impl Renderer {
         }
         state.last_scroll_tick = scroll_tick;
 
-        // 1. 更新所有 key 的 scan_indices（跳过已结束的音符）
         for key in 0..128u8 {
             let notes = midi.key_notes(key);
             if notes.is_empty() {
@@ -524,12 +517,9 @@ impl Renderer {
             state.scan_indices[key as usize] = scan;
         }
 
-        // 2. 计算 key 布局
         let layouts = Self::compute_key_layouts(width, style.equal_key_width);
-        // "now" 线位于琴键上方
         let screen_bottom = effective_h + scroll_tick * ppt;
 
-        // 3. 渲染
         let mut instances = Vec::new();
         let keys_iter: Box<dyn Iterator<Item = u8>> = if style.equal_key_width {
             Box::new(0..128u8)
@@ -554,7 +544,6 @@ impl Renderer {
                 if (note.start_tick as f64) > tick_at_top + 1.0 {
                     break;
                 }
-                // 已结束的音符在琴键下方，无需渲染
                 if (note.end_tick as f64) <= scroll_tick {
                     continue;
                 }
@@ -587,7 +576,6 @@ impl Renderer {
         instances
     }
 
-    /// 判断 MIDI key 是否为黑键
     fn is_black_key(key: u8) -> bool {
         match key % 12 {
             1 | 3 | 6 | 8 | 10 => true,
@@ -595,7 +583,6 @@ impl Renderer {
         }
     }
 
-    /// 计算 128 个键的 (x, w) 布局
     fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f32)> {
         let mut layouts = Vec::with_capacity(128);
         if equal_width {
@@ -607,7 +594,6 @@ impl Renderer {
                 layouts.push((x, w));
             }
         } else {
-            // 钢琴键盘布局：75 白键 + 53 黑键
             let white_width = width as f64 / 75.0;
             let black_width = white_width * 0.65;
             let mut white_count = 0usize;
@@ -628,7 +614,6 @@ impl Renderer {
         layouts
     }
 
-    /// 生成琴键实例（绘制在纹理底部）
     fn build_keyboard_instances(
         &self,
         width: u32,
@@ -642,22 +627,20 @@ impl Renderer {
         let key_top = height as f32 - kh;
         let layouts = Self::compute_key_layouts(width, style.equal_key_width);
 
-        // 找出当前激活的键位（利用 scan_indices 避免全量扫描）
         let mut active_keys = [false; 128];
         let mut active_colors = [[0.0f32; 3]; 128];
         for key in 0..128u8 {
             let notes = midi.key_notes(key);
-            // 从 scan_indices 开始（已结束的音符已被跳过），只检查到 note.start > time 为止
             let scan = state.scan_indices[key as usize];
             for note in notes[scan..].iter() {
                 if note.start > time {
-                    break; // 后面的音符 start 更大，不可能激活
+                    break;
                 }
                 if time < note.end {
                     active_keys[key as usize] = true;
                     let trk = note.track as usize % 128;
                     active_colors[key as usize] = style.palette[trk];
-                    break; // 找到激活音符，无需继续
+                    break;
                 }
             }
         }
@@ -665,7 +648,6 @@ impl Renderer {
         let mut instances = Vec::with_capacity(256);
         let black_h = kh * 0.6;
 
-        // 先画白键
         for key in 0..128u8 {
             if Self::is_black_key(key) {
                 continue;
@@ -678,7 +660,7 @@ impl Renderer {
                 let [cr, cg, cb] = active_colors[key as usize];
                 (cr, cg, cb)
             } else {
-                (0.94, 0.94, 0.94) // 白键默认色
+                (0.94, 0.94, 0.94)
             };
             instances.push(NoteInstance {
                 x,
@@ -694,7 +676,6 @@ impl Renderer {
             });
         }
 
-        // 再画黑键（覆盖在白键上方）
         for key in 0..128u8 {
             if !Self::is_black_key(key) {
                 continue;
@@ -707,7 +688,7 @@ impl Renderer {
                 let [cr, cg, cb] = active_colors[key as usize];
                 (cr, cg, cb)
             } else {
-                (0.16, 0.16, 0.17) // 黑键默认色
+                (0.16, 0.16, 0.17)
             };
             instances.push(NoteInstance {
                 x,

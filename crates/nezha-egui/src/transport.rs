@@ -1,12 +1,12 @@
 use eframe::egui;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TrackKind {
     Video,
     Audio,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ClipKind {
     Waterfall,
     SolidColor,
@@ -116,7 +116,7 @@ impl Track {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ScrollbarDrag {
     Pan { anchor_time: f32 },
     LeftEdge,
