@@ -94,4 +94,5 @@ pub struct Renderer {
     pub(crate) note_bundles: HashMap<usize, GpuNoteBundle>,
     pub(crate) current_width: u32,
     pub(crate) current_equal_key_width: bool,
+    pub(crate) cached_palette: [[f32; 3]; 128],
 }

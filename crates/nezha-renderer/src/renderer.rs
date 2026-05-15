@@ -291,6 +291,7 @@ impl Renderer {
             note_bundles: HashMap::new(),
             current_width: 0,
             current_equal_key_width: false,
+            cached_palette: [[0.0; 3]; 128],
         }
     }
 
@@ -565,14 +566,17 @@ impl Renderer {
             }
         }
 
-        // Update palette
-        let palette_flat: Vec<f32> = style
-            .palette
-            .iter()
-            .flat_map(|c| [c[0], c[1], c[2], 0.0f32])
-            .collect();
-        self.queue
-            .write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(&palette_flat));
+        // Update palette (only when changed)
+        if style.palette != self.cached_palette {
+            let palette_flat: Vec<f32> = style
+                .palette
+                .iter()
+                .flat_map(|c| [c[0], c[1], c[2], 0.0f32])
+                .collect();
+            self.queue
+                .write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(&palette_flat));
+            self.cached_palette = style.palette;
+        }
 
         // Update keyboard scans (used for both CPU keyboard and GPU compute scan skipping)
         if let Some(midi) = midi {
@@ -622,7 +626,8 @@ impl Renderer {
                     cpass.set_pipeline(&self.compute_pipeline);
                     for chunk in &bundle.chunks {
                         cpass.set_bind_group(0, &chunk.bind_group, &[]);
-                        cpass.dispatch_workgroups(chunk.key_count, 1, 1);
+                        // workgroup_size(64): ceil(key_count / 64) workgroups
+                        cpass.dispatch_workgroups((chunk.key_count + 63) / 64, 1, 1);
                     }
                 }
                 // Copy counter → indirect draw instance_count (offset 4)

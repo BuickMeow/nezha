@@ -42,106 +42,104 @@ struct NoteInstance {
 const MAX_INSTANCES: u32 = 2700000u;
 
 @compute
-@workgroup_size(1)
-fn compute_notes(@builtin(workgroup_id) wg_id: vec3<u32>) {
-    if wg_id.x >= u.key_count {
+@workgroup_size(64)
+fn compute_notes(
+    @builtin(workgroup_id) wg_id: vec3<u32>,
+    @builtin(local_invocation_index) lid: u32,
+) {
+    // One key per thread, distributed across workgroups:
+    //   key_index = wg_id * 64 + lid
+    // Each thread processes all notes of its assigned key sequentially.
+    let k = wg_id.x * 64u + lid;
+    if k >= u.key_count {
         return;
     }
-    let key = u.key_offset + wg_id.x;
+    let key = u.key_offset + k;
 
     let count = key_counts[key];
-    if count == 0u {
-        return;
-    }
+        if count == 0u {
+            return;
+        }
 
-    let offset = key_offsets[key];
-    let kl = key_layouts[key];
-    let x = kl.x;
-    let w = kl.y;
-    if w <= 0.0 {
-        return;
-    }
+        let offset = key_offsets[key];
+        let kl = key_layouts[key];
+        let x = kl.x;
+        let w = kl.y;
+        if w <= 0.0 {
+            return;
+        }
 
-    let kh = max(u.keyboard_height, 0.0);
-    let effective_h = max(u.height - kh, 1.0);
+        let kh = max(u.keyboard_height, 0.0);
+        let effective_h = max(u.height - kh, 1.0);
+        let scan_start = key_scans[key];
 
-    let scan_start = key_scans[key];
+        if u.mode == 0u {
+            let pps = 200.0 * max(u.speed, 0.01);
+            let screen_top = effective_h + u.time * pps;
+            let visible_future = effective_h / pps + 1.0;
+            let time_top = u.time + visible_future;
+            let time_bottom = u.time;
 
-    if u.mode == 0u {
-        let pps = 200.0 * max(u.speed, 0.01);
-        let screen_top = effective_h + u.time * pps;
-        let visible_future = effective_h / pps + 1.0;
-        let time_top = u.time + visible_future;
-        let time_bottom = u.time;
+            for (var i = scan_start; i < count; i++) {
+                let note = notes[offset + i];
 
-        for (var i = scan_start; i < count; i++) {
-            let note = notes[offset + i];
+                if note.start > time_top { break; }
+                if note.end <= time_bottom { continue; }
 
-            if note.start > time_top {
-                break;
+                let note_bottom = screen_top - note.start * pps;
+                let note_top_val = screen_top - note.end * pps;
+                let y = note_top_val;
+                let h = max(note_bottom - note_top_val, 1.0);
+
+                let trk = note.track % 128u;
+                let border_px = u.border_width * w / 2.0;
+                let rounding_radius = u.rounding * min(w, h);
+
+                let idx = atomicAdd(&instance_count, 1u);
+                if idx < MAX_INSTANCES {
+                    instances[idx] = NoteInstance(
+                        vec4<f32>(x, y, w, h),
+                        vec4<f32>(palette[trk].r, palette[trk].g, palette[trk].b, 1.0),
+                        vec2<f32>(rounding_radius, border_px),
+                        vec2<f32>(0.0, 0.0),
+                    );
+                }
             }
-            if note.end <= time_bottom {
-                continue;
-            }
+        } else {
+            let eff_speed = max(u.speed, 0.01);
+            let ppt = 100.0 / u.ticks_per_beat * eff_speed;
+            let visible_ticks = effective_h / ppt;
+            let tick_at_bottom = u.scroll_tick;
+            let tick_at_top = u.scroll_tick + visible_ticks;
+            let screen_bottom = effective_h + u.scroll_tick * ppt;
 
-            let note_bottom = screen_top - note.start * pps;
-            let note_top_val = screen_top - note.end * pps;
-            let y = note_top_val;
-            let h = max(note_bottom - note_top_val, 1.0);
+            for (var i = scan_start; i < count; i++) {
+                let note = notes[offset + i];
 
-            let trk = note.track % 128u;
-            let border_px = u.border_width * w / 2.0;
-            let rounding_radius = u.rounding * min(w, h);
+                let start_tick = f32(note.start_tick);
+                let end_tick = f32(note.end_tick);
 
-            let idx = atomicAdd(&instance_count, 1u);
-            if idx < MAX_INSTANCES {
-                instances[idx] = NoteInstance(
-                    vec4<f32>(x, y, w, h),
-                    vec4<f32>(palette[trk].r, palette[trk].g, palette[trk].b, 1.0),
-                    vec2<f32>(rounding_radius, border_px),
-                    vec2<f32>(0.0, 0.0),
-                );
+                if start_tick > tick_at_top + 1.0 { break; }
+                if end_tick <= tick_at_bottom { continue; }
+
+                let note_top_val = screen_bottom - end_tick * ppt;
+                let note_bottom = screen_bottom - start_tick * ppt;
+                let y = note_top_val;
+                let h = max(note_bottom - note_top_val, 1.0);
+
+                let trk = note.track % 128u;
+                let border_px = u.border_width * w / 2.0;
+                let rounding_radius = u.rounding * min(w, h);
+
+                let idx = atomicAdd(&instance_count, 1u);
+                if idx < MAX_INSTANCES {
+                    instances[idx] = NoteInstance(
+                        vec4<f32>(x, y, w, h),
+                        vec4<f32>(palette[trk].r, palette[trk].g, palette[trk].b, 1.0),
+                        vec2<f32>(rounding_radius, border_px),
+                        vec2<f32>(0.0, 0.0),
+                    );
+                }
             }
         }
-    } else {
-        let eff_speed = max(u.speed, 0.01);
-        let ppt = 100.0 / u.ticks_per_beat * eff_speed;
-        let visible_ticks = effective_h / ppt;
-        let tick_at_bottom = u.scroll_tick;
-        let tick_at_top = u.scroll_tick + visible_ticks;
-        let screen_bottom = effective_h + u.scroll_tick * ppt;
-
-        for (var i = scan_start; i < count; i++) {
-            let note = notes[offset + i];
-
-            let start_tick = f32(note.start_tick);
-            let end_tick = f32(note.end_tick);
-
-            if start_tick > tick_at_top + 1.0 {
-                break;
-            }
-            if end_tick <= tick_at_bottom {
-                continue;
-            }
-
-            let note_top_val = screen_bottom - end_tick * ppt;
-            let note_bottom = screen_bottom - start_tick * ppt;
-            let y = note_top_val;
-            let h = max(note_bottom - note_top_val, 1.0);
-
-            let trk = note.track % 128u;
-            let border_px = u.border_width * w / 2.0;
-            let rounding_radius = u.rounding * min(w, h);
-
-            let idx = atomicAdd(&instance_count, 1u);
-            if idx < MAX_INSTANCES {
-                instances[idx] = NoteInstance(
-                    vec4<f32>(x, y, w, h),
-                    vec4<f32>(palette[trk].r, palette[trk].g, palette[trk].b, 1.0),
-                    vec2<f32>(rounding_radius, border_px),
-                    vec2<f32>(0.0, 0.0),
-                );
-            }
-        }
-    }
 }
