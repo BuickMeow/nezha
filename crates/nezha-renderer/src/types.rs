@@ -54,14 +54,20 @@ pub(crate) struct ComputeUniforms {
     pub(crate) key_count: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct KeyInfo {
+    pub(crate) offset: u32,
+    pub(crate) count: u32,
+    pub(crate) slot: u32,
+}
+
 /// 134MB / 48bytes ≈ 2.79M，取整 2.7M 留余量兼容 128MB 限制
 pub(crate) const MAX_INSTANCE_COUNT: usize = 2_700_000;
 
 pub(crate) struct GpuNoteChunk {
     #[allow(dead_code)]
-    pub(crate) key_offsets_buf: Buffer,
-    #[allow(dead_code)]
-    pub(crate) key_counts_buf: Buffer,
+    pub(crate) key_info_buf: Buffer,
     #[allow(dead_code)]
     pub(crate) notes_buf: Buffer,
     pub(crate) uniform_buf: Buffer,

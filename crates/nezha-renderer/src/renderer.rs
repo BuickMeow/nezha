@@ -4,8 +4,8 @@ use wgpu::*;
 use crate::keyboard;
 use crate::style::{MidiRenderState, NoteSource, RenderMode, RenderStyle};
 use crate::types::{
-    ComputeUniforms, GpuNote, GpuNoteBundle, GpuNoteChunk, MAX_INSTANCE_COUNT, NoteInstance,
-    Renderer, Uniforms,
+    ComputeUniforms, GpuNote, GpuNoteBundle, GpuNoteChunk, KeyInfo, MAX_INSTANCE_COUNT,
+    NoteInstance, Renderer, Uniforms,
 };
 
 impl Renderer {
@@ -103,6 +103,7 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        // key_meta: [KeyInfo; 128] = 128 × 8 = 1024 bytes
         let scan_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("scans"),
             size: (128 * 4) as u64,
@@ -127,8 +128,8 @@ impl Renderer {
 
         let keyboard_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("keyboard_instances"),
-            size: 256 * instance_size,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            size: 128 * instance_size,
+            usage: BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -178,7 +179,7 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // 2: key_offsets
+                // 2: key_info (offset + count)
                 BindGroupLayoutEntry {
                     binding: 2,
                     visibility: ShaderStages::COMPUTE,
@@ -189,7 +190,7 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // 3: key_counts
+                // 3: notes
                 BindGroupLayoutEntry {
                     binding: 3,
                     visibility: ShaderStages::COMPUTE,
@@ -200,7 +201,7 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // 4: notes
+                // 4: palette
                 BindGroupLayoutEntry {
                     binding: 4,
                     visibility: ShaderStages::COMPUTE,
@@ -211,20 +212,9 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // 5: palette
+                // 5: instances (output)
                 BindGroupLayoutEntry {
                     binding: 5,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 6: instances (output)
-                BindGroupLayoutEntry {
-                    binding: 6,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: false },
@@ -233,9 +223,9 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // 7: instance_count (atomic)
+                // 6: instance_count (atomic)
                 BindGroupLayoutEntry {
-                    binding: 7,
+                    binding: 6,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: false },
@@ -244,12 +234,23 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // 8: key_scans (shared, updated per frame)
+                // 7: key_scans
+                BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 8: keyboard_instances (output)
                 BindGroupLayoutEntry {
                     binding: 8,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
+                        ty: BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -354,14 +355,31 @@ impl Renderer {
             }
 
             let key_count = chunk_end - chunk_start;
-            let mut chunk_offsets = [0u32; 128];
-            let mut chunk_counts = [0u32; 128];
+            let mut chunk_info = [KeyInfo {
+                offset: 0,
+                count: 0,
+                slot: 0,
+            }; 128];
             let mut note_offset: u32 = 0;
+            let mut white_idx = 0u32;
+            let mut black_idx = 75u32;
 
             for key in chunk_start..chunk_end {
-                chunk_offsets[key as usize] = note_offset;
                 let n = key_notes[key as usize].len() as u32;
-                chunk_counts[key as usize] = n;
+                let slot = if keyboard::is_black_key(key as u8) {
+                    let s = black_idx;
+                    black_idx += 1;
+                    s
+                } else {
+                    let s = white_idx;
+                    white_idx += 1;
+                    s
+                };
+                chunk_info[key as usize] = KeyInfo {
+                    offset: note_offset,
+                    count: n,
+                    slot,
+                };
                 note_offset += n;
             }
 
@@ -372,23 +390,14 @@ impl Renderer {
                 mapped_at_creation: false,
             });
 
-            let key_offsets_buf = self.device.create_buffer(&BufferDescriptor {
-                label: Some("key_offsets"),
-                size: (128 * 4) as u64,
+            let key_info_buf = self.device.create_buffer(&BufferDescriptor {
+                label: Some("key_info"),
+                size: (128 * std::mem::size_of::<KeyInfo>()) as u64,
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             self.queue
-                .write_buffer(&key_offsets_buf, 0, bytemuck::bytes_of(&chunk_offsets));
-
-            let key_counts_buf = self.device.create_buffer(&BufferDescriptor {
-                label: Some("key_counts"),
-                size: (128 * 4) as u64,
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.queue
-                .write_buffer(&key_counts_buf, 0, bytemuck::bytes_of(&chunk_counts));
+                .write_buffer(&key_info_buf, 0, bytemuck::bytes_of(&chunk_info));
 
             let notes_buf = self.device.create_buffer(&BufferDescriptor {
                 label: Some("notes"),
@@ -413,38 +422,37 @@ impl Renderer {
                     },
                     BindGroupEntry {
                         binding: 2,
-                        resource: key_offsets_buf.as_entire_binding(),
+                        resource: key_info_buf.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 3,
-                        resource: key_counts_buf.as_entire_binding(),
-                    },
-                    BindGroupEntry {
-                        binding: 4,
                         resource: notes_buf.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 5,
+                        binding: 4,
                         resource: self.palette_buffer.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 6,
+                        binding: 5,
                         resource: self.instance_buffer.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 7,
+                        binding: 6,
                         resource: self.counter_buffer.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 8,
+                        binding: 7,
                         resource: self.scan_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 8,
+                        resource: self.keyboard_buffer.as_entire_binding(),
                     },
                 ],
             });
 
             chunks.push(GpuNoteChunk {
-                key_offsets_buf,
-                key_counts_buf,
+                key_info_buf,
                 notes_buf,
                 uniform_buf,
                 bind_group,
@@ -641,16 +649,8 @@ impl Renderer {
             }
         }
 
-        // Keyboard instances (CPU)
-        let keyboard = if style.keyboard_height > 0.0 {
-            if let Some(midi) = midi {
-                keyboard::build_keyboard_instances(width, height, time, midi, style, render_state)
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
+        // Keyboard instances (GPU: compute shader writes to keyboard_buffer)
+        let draw_keyboard = style.keyboard_height > 0.0 && midi.is_some();
 
         let load_op = if clear_background {
             LoadOp::Clear(Color {
@@ -688,14 +688,12 @@ impl Renderer {
                 pass.draw_indirect(&self.indirect_draw_buffer, 0);
             }
 
-            if !keyboard.is_empty() {
-                self.queue
-                    .write_buffer(&self.keyboard_buffer, 0, bytemuck::cast_slice(&keyboard));
-
+            if draw_keyboard {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.render_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.keyboard_buffer.slice(..));
-                pass.draw(0..6, 0..keyboard.len() as u32);
+                pass.draw(0..6, 0..75);      // white keys (slots 0-74)
+                pass.draw(0..6, 75..128);    // black keys (slots 75-127)
             }
         }
 
