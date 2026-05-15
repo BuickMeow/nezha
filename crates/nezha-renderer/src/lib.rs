@@ -728,6 +728,7 @@ impl Renderer {
 
     pub fn render(
         &mut self,
+        encoder: &mut CommandEncoder,
         target: &TextureView,
         width: u32,
         height: u32,
@@ -813,12 +814,6 @@ impl Renderer {
         };
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("render_encoder"),
-            });
 
         // Reset counter before compute
         encoder.clear_buffer(&self.counter_buffer, 0, Some(4));
@@ -910,7 +905,7 @@ impl Renderer {
             }
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        // (encoder is submitted by caller — no queue.submit here)
     }
 
     fn is_black_key(key: u8) -> bool {

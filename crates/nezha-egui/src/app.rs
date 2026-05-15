@@ -305,6 +305,7 @@ impl eframe::App for App {
                     default_style.clone()
                 };
 
+                self.render_ctx.begin_pass();
                 self.render_ctx
                     .render_background(render_w, render_h, &bg_style);
 
@@ -346,6 +347,7 @@ impl eframe::App for App {
                     );
                     is_first_waterfall = false;
                 }
+                self.render_ctx.end_pass();
 
                 let aspect = rw / rh;
                 self.ui.zoom = piano_view::show(

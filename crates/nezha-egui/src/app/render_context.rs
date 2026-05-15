@@ -10,6 +10,7 @@ pub struct RenderContext {
     pub preview_texture_id: egui::TextureId,
     midi_states: HashMap<usize, nezha_renderer::MidiRenderState>,
     uploaded_midi_ids: HashSet<usize>,
+    current_encoder: Option<wgpu::CommandEncoder>,
 }
 
 impl RenderContext {
@@ -36,6 +37,7 @@ impl RenderContext {
             preview_texture_id,
             midi_states: HashMap::new(),
             uploaded_midi_ids: HashSet::new(),
+            current_encoder: None,
         }
     }
 
@@ -79,6 +81,22 @@ impl RenderContext {
         self.preview_texture_id = id;
     }
 
+    pub fn begin_pass(&mut self) {
+        self.current_encoder = Some(
+            self.wgpu_state
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("render_encoder"),
+                }),
+        );
+    }
+
+    pub fn end_pass(&mut self) {
+        if let Some(encoder) = self.current_encoder.take() {
+            self.wgpu_state.queue.submit(std::iter::once(encoder.finish()));
+        }
+    }
+
     /// 渲染单个图层
     pub fn render_layer(
         &mut self,
@@ -91,16 +109,20 @@ impl RenderContext {
         style: &nezha_renderer::RenderStyle,
         clear_background: bool,
     ) {
-        let state = self.midi_states.entry(midi_idx).or_default();
-
         // Lazy GPU upload on first render
         if !self.uploaded_midi_ids.contains(&midi_idx) {
             self.renderer
                 .upload_note_data(midi_idx, midi, width, style.equal_key_width);
             self.uploaded_midi_ids.insert(midi_idx);
         }
+        // Ensure state entry exists
+        self.midi_states.entry(midi_idx).or_default();
 
+        // Split borrows: get encoder and state separately from renderer+preview
+        let encoder = self.current_encoder.as_mut().expect("begin_pass not called");
+        let state = self.midi_states.get_mut(&midi_idx).unwrap();
         self.renderer.render(
+            encoder,
             &self.preview_view,
             width,
             height,
@@ -114,7 +136,6 @@ impl RenderContext {
         );
     }
 
-    /// 渲染纯背景（无音符，仅清除/填充颜色）
     pub fn render_background(
         &mut self,
         width: u32,
@@ -122,7 +143,9 @@ impl RenderContext {
         style: &nezha_renderer::RenderStyle,
     ) {
         let mut dummy_state = nezha_renderer::MidiRenderState::default();
+        let encoder = self.current_encoder.as_mut().expect("begin_pass not called");
         self.renderer.render(
+            encoder,
             &self.preview_view,
             width,
             height,
