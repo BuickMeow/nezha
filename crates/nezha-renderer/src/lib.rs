@@ -1,4 +1,5 @@
 use nezha_core::MidiFile;
+use std::collections::HashMap;
 use wgpu::*;
 
 #[repr(C)]
@@ -23,52 +24,64 @@ pub struct NoteInstance {
     pub a: f32,
     pub corner_radius: f32,
     pub border_width: f32,
+    pub _pad: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuNote {
+    start: f32,
+    end: f32,
+    start_tick: u32,
+    end_tick: u32,
+    track: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ComputeUniforms {
+    time: f32,
+    scroll_tick: f32,
+    width: f32,
+    height: f32,
+    speed: f32,
+    keyboard_height: f32,
+    border_width: f32,
+    rounding: f32,
+    mode: u32,
+    ticks_per_beat: f32,
+    equal_key_width: u32,
+    key_offset: u32,
+    key_count: u32,
 }
 
 /// 音符数据源抽象，解耦 renderer 与具体 MIDI 格式
 pub trait NoteSource {
-    /// 返回该 key 的所有音符（已按 start 排序）
     fn key_notes(&self, key: u8) -> &[nezha_core::Note];
-    /// 总时长（秒）
     fn duration(&self) -> f64;
-    /// PPQ (ticks per beat)，返回 None 表示无 tick 信息，降级为秒计算
     fn ticks_per_beat(&self) -> Option<u32> {
         None
     }
-    /// 将秒时间转换为 tick（Tick 模式下由 tempo 决定）
     fn tick_at_time(&self, _time: f64) -> Option<f64> {
         None
     }
 }
 
-/// 渲染模式
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RenderMode {
-    /// 基于秒计算音符位置（原有逻辑）
     TimeBased,
-    /// 基于 MIDI tick 计算音符位置（整数 tick，无累积误差）
-    /// 音符高度由 tick 长度决定，BPM 变化自动影响下落速度
     TickBased,
 }
 
-/// 渲染风格配置
 #[derive(Clone)]
 pub struct RenderStyle {
-    /// 渲染模式
     pub render_mode: RenderMode,
-    /// 边框宽度比例 0.0~1.0（1.0 表示左边 50% + 右边 50% 都是边框）
     pub border_width: f32,
-    /// 圆角比例 0.0~1.0（1.0 表示底部是完全的半圆）
     pub rounding: f32,
-    /// 音轨索引，用于从调色板中偏移取色
     pub track_index: usize,
-    /// 16×8 调色板，128 色
     pub palette: [[f32; 3]; 128],
-    /// 背景色 RGBA (0.0~1.0)，透出纯色图层
     pub background: [f64; 4],
-    /// 是否等宽钢琴键（false = 白键比黑键宽，黑键在白键上方）
     pub equal_key_width: bool,
-    /// 琴键区高度（像素），0 = 不显示琴键
     pub keyboard_height: f32,
 }
 
@@ -87,7 +100,6 @@ impl Default for RenderStyle {
     }
 }
 
-/// 用 golden ratio 生成 Zenith 风格的 Random 调色板
 pub fn random_palette() -> [[f32; 3]; 128] {
     let mult = 0.12345f32;
     let mut palette = [[0.0f32; 3]; 128];
@@ -137,7 +149,6 @@ impl NoteSource for MidiFile {
 pub struct MidiRenderState {
     scan_indices: [usize; 128],
     last_time: f64,
-    /// Tick 模式下记录上次的 scroll_tick，用于检测 seek
     last_scroll_tick: f64,
 }
 
@@ -159,73 +170,108 @@ impl MidiRenderState {
     }
 }
 
-/// wgpu 默认 max buffer size 约 256MB；NoteInstance = 40 bytes
-const MAX_INSTANCE_COUNT: usize = 6_000_000; // ~228MB，留余量
+/// 134MB / 48bytes ≈ 2.79M，取整 2.7M 留余量兼容 128MB 限制
+const MAX_INSTANCE_COUNT: usize = 2_700_000;
 
-/// GPU 资源管理 + 渲染调度
-/// 支持无限音符：超出单 buffer 上限时拆分为多个 buffer，同一 render pass 内多批次 draw
+struct GpuNoteChunk {
+    #[allow(dead_code)]
+    key_offsets_buf: Buffer,
+    #[allow(dead_code)]
+    key_counts_buf: Buffer,
+    #[allow(dead_code)]
+    notes_buf: Buffer,
+    uniform_buf: Buffer,
+    bind_group: BindGroup,
+    key_offset: u32,
+    key_count: u32,
+}
+
+struct GpuNoteBundle {
+    chunks: Vec<GpuNoteChunk>,
+}
+
 pub struct Renderer {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pipeline: wgpu::RenderPipeline,
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    instance_buffers: Vec<wgpu::Buffer>,
+    device: Device,
+    queue: Queue,
+    pipeline: RenderPipeline,
+    uniform_buffer: Buffer,
+    render_bind_group: BindGroup,
+
+    compute_pipeline: ComputePipeline,
+    shared_key_layouts_buf: Buffer,
+    scan_buffer: Buffer,
+    compute_bgl: BindGroupLayout,
+    palette_buffer: Buffer,
+    instance_buffer: Buffer,
+    keyboard_buffer: Buffer,
+    counter_buffer: Buffer,
+    indirect_draw_buffer: Buffer,
+
+    note_bundles: HashMap<usize, GpuNoteBundle>,
+    current_width: u32,
+    current_equal_key_width: bool,
 }
 
 impl Renderer {
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    pub fn new(device: Device, queue: Queue, format: TextureFormat) -> Self {
+        let render_shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("waterfall_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let compute_shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("compute_notes"),
+            source: ShaderSource::Wgsl(include_str!("compute_notes.wgsl").into()),
+        });
+
+        // ---- Render pipeline ----
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("bind_group_layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let render_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("render_bind_group_layout"),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bind_group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
+        let render_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("render_bind_group"),
+            layout: &render_bind_group_layout,
+            entries: &[BindGroupEntry {
                 binding: 0,
                 resource: uniform_buffer.as_entire_binding(),
             }],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
+            bind_group_layouts: &[Some(&render_bind_group_layout)],
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("render_pipeline"),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
+            vertex: VertexState {
+                module: &render_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[VertexBufferLayout {
                     array_stride: std::mem::size_of::<NoteInstance>() as u64,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![
+                    step_mode: VertexStepMode::Instance,
+                    attributes: &vertex_attr_array![
                         0 => Float32x4,
                         1 => Float32x4,
                         2 => Float32x2,
@@ -233,23 +279,205 @@ impl Renderer {
                 }],
                 compilation_options: PipelineCompilationOptions::default(),
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
+            fragment: Some(FragmentState {
+                module: &render_shader,
                 entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
+                targets: &[Some(ColorTargetState {
                     format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
                 })],
                 compilation_options: PipelineCompilationOptions::default(),
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..wgpu::PrimitiveState::default()
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..PrimitiveState::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: MultisampleState::default(),
             multiview_mask: None,
+            cache: None,
+        });
+
+        // ---- Compute pipeline ----
+        let shared_key_layouts_buf = device.create_buffer(&BufferDescriptor {
+            label: Some("shared_key_layouts"),
+            size: (128 * 2 * 4) as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let scan_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("scans"),
+            size: (128 * 4) as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let palette_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("palette"),
+            size: (128 * 4 * 4) as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let instance_size = std::mem::size_of::<NoteInstance>() as u64;
+        let instance_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("instance_output"),
+            size: MAX_INSTANCE_COUNT as u64 * instance_size,
+            usage: BufferUsages::STORAGE
+                | BufferUsages::VERTEX
+                | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let keyboard_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("keyboard_instances"),
+            size: 256 * instance_size,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let counter_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("counter"),
+            size: 4,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let indirect_draw_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("indirect_draw"),
+            size: 16,
+            usage: BufferUsages::STORAGE
+                | BufferUsages::INDIRECT
+                | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        queue.write_buffer(
+            &indirect_draw_buffer,
+            0,
+            bytemuck::bytes_of(&[6u32, 0u32, 0u32, 0u32]),
+        );
+
+        // Compute bind group layout (shared across all note bundles)
+        let compute_bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("compute_bgl"),
+            entries: &[
+                // 0: ComputeUniforms
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 1: key_layouts
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 2: key_offsets
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 3: key_counts
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 4: notes
+                BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 5: palette
+                BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 6: instances (output)
+                BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 7: instance_count (atomic)
+                BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
+                    },
+                    count: None,
+                },
+                // 8: key_scans (shared, updated per frame)
+                BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let compute_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("compute_pipeline_layout"),
+            bind_group_layouts: &[Some(&compute_bgl)],
+            immediate_size: 0,
+        });
+
+        let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("compute_notes_pipeline"),
+            layout: Some(&compute_pipeline_layout),
+            module: &compute_shader,
+            entry_point: Some("compute_notes"),
+            compilation_options: PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -258,25 +486,325 @@ impl Renderer {
             queue,
             pipeline,
             uniform_buffer,
-            bind_group,
-            instance_buffers: Vec::new(),
+            render_bind_group,
+            compute_pipeline,
+            shared_key_layouts_buf,
+            scan_buffer,
+            compute_bgl,
+            palette_buffer,
+            instance_buffer,
+            keyboard_buffer,
+            counter_buffer,
+            indirect_draw_buffer,
+            note_bundles: HashMap::new(),
+            current_width: 0,
+            current_equal_key_width: false,
         }
     }
 
-    /// 渲染一帧
-    /// - `clear_background`: 是否清除背景（多层叠加时只有底层需要清除）
+    pub fn upload_note_data(
+        &mut self,
+        id: usize,
+        source: &dyn NoteSource,
+        width: u32,
+        equal_key_width: bool,
+    ) {
+        Self::update_shared_key_layouts(
+            &self.queue,
+            &self.shared_key_layouts_buf,
+            width,
+            equal_key_width,
+        );
+        self.current_width = width;
+        self.current_equal_key_width = equal_key_width;
+
+        // Flatten notes per key, compute total
+        let mut key_notes: [Vec<GpuNote>; 128] = std::array::from_fn(|_| Vec::new());
+        for key in 0..128u8 {
+            let notes = source.key_notes(key);
+            for note in notes {
+            key_notes[key as usize].push(GpuNote {
+                start: note.start as f32,
+                end: note.end as f32,
+                start_tick: note.start_tick,
+                end_tick: note.end_tick,
+                track: note.track as u32,
+            });
+        }
+    }
+
+        // Greedy chunking: add keys to a chunk until notes buffer nears limit
+        let max_note_bytes: u64 = 120 * 1024 * 1024;
+        let note_size = std::mem::size_of::<GpuNote>() as u64;
+
+        let mut chunks = Vec::new();
+        let mut chunk_start: u32 = 0;
+
+        while chunk_start < 128 {
+            let mut chunk_notes: Vec<GpuNote> = Vec::new();
+            let mut chunk_end = chunk_start;
+
+            // Accumulate keys until the next key would exceed the buffer limit
+            while chunk_end < 128 {
+                let next_len = key_notes[chunk_end as usize].len();
+                let projected = (chunk_notes.len() + next_len) as u64 * note_size;
+                if !chunk_notes.is_empty() && projected > max_note_bytes {
+                    break;
+                }
+                chunk_notes.extend_from_slice(&key_notes[chunk_end as usize]);
+                chunk_end += 1;
+            }
+            // Safety: if a single key's notes exceed the limit, we still include it
+            if chunk_end == chunk_start {
+                chunk_notes.extend_from_slice(&key_notes[chunk_end as usize]);
+                chunk_end += 1;
+            }
+
+            let key_count = chunk_end - chunk_start;
+            let mut chunk_offsets = [0u32; 128];
+            let mut chunk_counts = [0u32; 128];
+            let mut note_offset: u32 = 0;
+
+            for key in chunk_start..chunk_end {
+                chunk_offsets[key as usize] = note_offset;
+                let n = key_notes[key as usize].len() as u32;
+                chunk_counts[key as usize] = n;
+                note_offset += n;
+            }
+
+            let uniform_buf = self.device.create_buffer(&BufferDescriptor {
+                label: Some("chunk_uniforms"),
+                size: std::mem::size_of::<ComputeUniforms>() as u64,
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let key_offsets_buf = self.device.create_buffer(&BufferDescriptor {
+                label: Some("key_offsets"),
+                size: (128 * 4) as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue
+                .write_buffer(&key_offsets_buf, 0, bytemuck::bytes_of(&chunk_offsets));
+
+            let key_counts_buf = self.device.create_buffer(&BufferDescriptor {
+                label: Some("key_counts"),
+                size: (128 * 4) as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue
+                .write_buffer(&key_counts_buf, 0, bytemuck::bytes_of(&chunk_counts));
+
+            let notes_buf = self.device.create_buffer(&BufferDescriptor {
+                label: Some("notes"),
+                size: (chunk_notes.len() * std::mem::size_of::<GpuNote>()) as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue
+                .write_buffer(&notes_buf, 0, bytemuck::cast_slice(&chunk_notes));
+
+            let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+                label: Some("compute_bind_group"),
+                layout: &self.compute_bgl,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buf.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: self.shared_key_layouts_buf.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: key_offsets_buf.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: key_counts_buf.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: notes_buf.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 5,
+                        resource: self.palette_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 6,
+                        resource: self.instance_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 7,
+                        resource: self.counter_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 8,
+                        resource: self.scan_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+
+            chunks.push(GpuNoteChunk {
+                key_offsets_buf,
+                key_counts_buf,
+                notes_buf,
+                uniform_buf,
+                bind_group,
+                key_offset: chunk_start,
+                key_count,
+            });
+
+            chunk_start = chunk_end;
+        }
+
+        self.note_bundles
+            .insert(id, GpuNoteBundle { chunks });
+    }
+
+    pub fn remove_note_data(&mut self, id: usize) {
+        self.note_bundles.remove(&id);
+    }
+
+    fn update_shared_key_layouts(
+        queue: &Queue,
+        buf: &Buffer,
+        width: u32,
+        equal_key_width: bool,
+    ) {
+        let layouts = Self::compute_key_layouts(width, equal_key_width);
+        let layout_data: Vec<f32> = layouts.iter().flat_map(|(x, w)| [*x, *w]).collect();
+        queue.write_buffer(buf, 0, bytemuck::cast_slice(&layout_data));
+    }
+
+    fn update_keyboard_scans(
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
+        time: f64,
+        scroll_tick: f64,
+        mode: RenderMode,
+    ) {
+        match mode {
+            RenderMode::TimeBased => {
+                if time < state.last_time {
+                    state.scan_indices = [0; 128];
+                }
+                state.last_time = time;
+                for key in 0..128u8 {
+                    let notes = midi.key_notes(key);
+                    if notes.is_empty() {
+                        continue;
+                    }
+                    let mut scan = state.scan_indices[key as usize];
+                    while scan < notes.len() && notes[scan].end <= time {
+                        scan += 1;
+                    }
+                    state.scan_indices[key as usize] = scan;
+                }
+            }
+            RenderMode::TickBased => {
+                if scroll_tick < state.last_scroll_tick {
+                    state.scan_indices = [0; 128];
+                }
+                state.last_scroll_tick = scroll_tick;
+                for key in 0..128u8 {
+                    let notes = midi.key_notes(key);
+                    if notes.is_empty() {
+                        continue;
+                    }
+                    let mut scan = state.scan_indices[key as usize];
+                    while scan < notes.len() && (notes[scan].end_tick as f64) <= scroll_tick {
+                        scan += 1;
+                    }
+                    state.scan_indices[key as usize] = scan;
+                }
+            }
+        }
+    }
+
     pub fn render(
         &mut self,
-        target: &wgpu::TextureView,
+        target: &TextureView,
         width: u32,
         height: u32,
         time: f64,
         speed: f32,
-        midi_file: Option<&dyn NoteSource>,
+        midi: Option<&dyn NoteSource>,
         render_state: &mut MidiRenderState,
+        note_data_id: Option<usize>,
         style: &RenderStyle,
         clear_background: bool,
     ) {
+        let mode: u32 = match style.render_mode {
+            RenderMode::TimeBased => 0,
+            RenderMode::TickBased => 1,
+        };
+        let tpb = midi
+            .and_then(|m| m.ticks_per_beat())
+            .unwrap_or(480) as f32;
+        let scroll_tick = midi
+            .and_then(|m| m.tick_at_time(time))
+            .unwrap_or(time * tpb as f64 * 2.0) as f32;
+
+        let base_uniforms = ComputeUniforms {
+            time: time as f32,
+            scroll_tick,
+            width: width as f32,
+            height: height as f32,
+            speed,
+            keyboard_height: style.keyboard_height,
+            border_width: style.border_width,
+            rounding: style.rounding,
+            mode,
+            ticks_per_beat: tpb,
+            equal_key_width: if style.equal_key_width { 1 } else { 0 },
+            key_offset: 0,
+            key_count: 0,
+        };
+
+        // Write per-chunk uniforms BEFORE creating the encoder (safe ordering)
+        let bundle = note_data_id.and_then(|id| self.note_bundles.get(&id));
+        if let Some(bundle) = bundle {
+            for chunk in &bundle.chunks {
+                let u = ComputeUniforms {
+                    key_offset: chunk.key_offset,
+                    key_count: chunk.key_count,
+                    ..base_uniforms
+                };
+                self.queue
+                    .write_buffer(&chunk.uniform_buf, 0, bytemuck::bytes_of(&u));
+            }
+        }
+
+        // Update palette
+        let palette_flat: Vec<f32> = style
+            .palette
+            .iter()
+            .flat_map(|c| [c[0], c[1], c[2], 0.0f32])
+            .collect();
+        self.queue
+            .write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(&palette_flat));
+
+        // Update keyboard scans (used for both CPU keyboard and GPU compute scan skipping)
+        if let Some(midi) = midi {
+            Self::update_keyboard_scans(midi, render_state, time, scroll_tick as f64, style.render_mode);
+            let scans_u32: [u32; 128] = std::array::from_fn(|i| render_state.scan_indices[i] as u32);
+            self.queue.write_buffer(&self.scan_buffer, 0, bytemuck::bytes_of(&scans_u32));
+        }
+
+        // Update shared key layouts if needed
+        let eqw = style.equal_key_width;
+        if width != self.current_width || eqw != self.current_equal_key_width {
+            Self::update_shared_key_layouts(&self.queue, &self.shared_key_layouts_buf, width, eqw);
+            self.current_width = width;
+            self.current_equal_key_width = eqw;
+        }
+
+        // Existing render uniforms (for vertex/fragment shader)
         let uniforms = Uniforms {
             time: time as f32,
             width: width as f32,
@@ -288,57 +816,71 @@ impl Renderer {
 
         let mut encoder = self
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            .create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("render_encoder"),
             });
 
-        let instances = midi_file
-            .map(|midi| self.build_instances(width, height, time, speed, midi, render_state, style))
-            .unwrap_or_default();
+        // Reset counter before compute
+        encoder.clear_buffer(&self.counter_buffer, 0, Some(4));
 
-        let instance_size = std::mem::size_of::<NoteInstance>() as u64;
-        let batches: Vec<&[NoteInstance]> = instances.chunks(MAX_INSTANCE_COUNT).collect();
-
-        while self.instance_buffers.len() > batches.len() {
-            self.instance_buffers.pop();
+        let mut has_notes = false;
+        if let Some(bundle) = bundle {
+            if !bundle.chunks.is_empty() {
+                has_notes = true;
+                {
+                    let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                        label: Some("compute_notes_pass"),
+                        timestamp_writes: None,
+                    });
+                    cpass.set_pipeline(&self.compute_pipeline);
+                    for chunk in &bundle.chunks {
+                        cpass.set_bind_group(0, &chunk.bind_group, &[]);
+                        cpass.dispatch_workgroups(chunk.key_count, 1, 1);
+                    }
+                }
+                // Copy counter → indirect draw instance_count (offset 4)
+                encoder.copy_buffer_to_buffer(
+                    &self.counter_buffer,
+                    0,
+                    &self.indirect_draw_buffer,
+                    4,
+                    4,
+                );
+            }
         }
 
-        while self.instance_buffers.len() < batches.len() {
-            let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("instance_buffer"),
-                size: MAX_INSTANCE_COUNT as u64 * instance_size,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.instance_buffers.push(buf);
-        }
-
-        for (i, batch) in batches.iter().enumerate() {
-            self.queue
-                .write_buffer(&self.instance_buffers[i], 0, bytemuck::cast_slice(batch));
-        }
+        // Keyboard instances (CPU)
+        let keyboard = if style.keyboard_height > 0.0 {
+            if let Some(midi) = midi {
+                Self::build_keyboard_instances(width, height, time, midi, style, render_state)
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
 
         let load_op = if clear_background {
-            wgpu::LoadOp::Clear(wgpu::Color {
+            LoadOp::Clear(Color {
                 r: style.background[0],
                 g: style.background[1],
                 b: style.background[2],
                 a: style.background[3],
             })
         } else {
-            wgpu::LoadOp::Load
+            LoadOp::Load
         };
 
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                color_attachments: &[Some(RenderPassColorAttachment {
                     view: target,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations {
+                    ops: Operations {
                         load: load_op,
-                        store: wgpu::StoreOp::Store,
+                        store: StoreOp::Store,
                     },
                 })],
                 depth_stencil_attachment: None,
@@ -347,240 +889,32 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            if !instances.is_empty() {
+            if has_notes {
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                for (i, batch) in batches.iter().enumerate() {
-                    pass.set_vertex_buffer(0, self.instance_buffers[i].slice(..));
-                    pass.draw(0..6, 0..batch.len() as u32);
-                }
+                pass.set_bind_group(0, &self.render_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                pass.draw_indirect(&self.indirect_draw_buffer, 0);
+            }
+
+            if !keyboard.is_empty() {
+                self.queue.write_buffer(
+                    &self.keyboard_buffer,
+                    0,
+                    bytemuck::cast_slice(&keyboard),
+                );
+
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.render_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.keyboard_buffer.slice(..));
+                pass.draw(0..6, 0..keyboard.len() as u32);
             }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }
 
-    fn build_instances(
-        &self,
-        width: u32,
-        height: u32,
-        time: f64,
-        speed: f32,
-        midi: &dyn NoteSource,
-        state: &mut MidiRenderState,
-        style: &RenderStyle,
-    ) -> Vec<NoteInstance> {
-        let mut instances = match style.render_mode {
-            RenderMode::TimeBased => {
-                self.build_instances_time(width, height, time, speed, midi, state, style)
-            }
-            RenderMode::TickBased => {
-                self.build_instances_tick(width, height, time, speed, midi, state, style)
-            }
-        };
-        if style.keyboard_height > 0.0 {
-            let mut keys = self.build_keyboard_instances(width, height, time, midi, style, state);
-            instances.append(&mut keys);
-        }
-        instances
-    }
-
-    fn build_instances_time(
-        &self,
-        width: u32,
-        height: u32,
-        time: f64,
-        speed: f32,
-        midi: &dyn NoteSource,
-        state: &mut MidiRenderState,
-        style: &RenderStyle,
-    ) -> Vec<NoteInstance> {
-        let kh = (style.keyboard_height as f64).max(0.0);
-        let effective_h = (height as f64 - kh).max(1.0);
-        let pps = 200.0f64 * speed.max(0.01) as f64;
-        let screen_top = effective_h + time * pps;
-        let visible_future = effective_h / pps + 1.0;
-        let time_top = time + visible_future;
-        let time_bottom = time;
-
-        if time < state.last_time {
-            state.scan_indices = [0; 128];
-        }
-        state.last_time = time;
-
-        for key in 0..128u8 {
-            let notes = midi.key_notes(key);
-            if notes.is_empty() {
-                continue;
-            }
-            let mut scan = state.scan_indices[key as usize];
-            while scan < notes.len() && notes[scan].end <= time_bottom {
-                scan += 1;
-            }
-            state.scan_indices[key as usize] = scan;
-        }
-
-        let layouts = Self::compute_key_layouts(width, style.equal_key_width);
-
-        let mut instances = Vec::new();
-        let keys_iter: Box<dyn Iterator<Item = u8>> = if style.equal_key_width {
-            Box::new(0..128u8)
-        } else {
-            Box::new(
-                (0..128u8)
-                    .filter(|k| !Self::is_black_key(*k))
-                    .chain((0..128u8).filter(|k| Self::is_black_key(*k))),
-            )
-        };
-
-        for key in keys_iter {
-            let notes = midi.key_notes(key);
-            if notes.is_empty() {
-                continue;
-            }
-            let scan = state.scan_indices[key as usize];
-            let (x, w) = layouts[key as usize];
-
-            for i in scan..notes.len() {
-                let note = &notes[i];
-                if note.start > time_top {
-                    break;
-                }
-                if note.end <= time {
-                    continue;
-                }
-
-                let note_bottom = (screen_top - note.start * pps) as f32;
-                let note_top = (screen_top - note.end * pps) as f32;
-                let y = note_top;
-                let h = (note_bottom - note_top).max(1.0);
-
-                let trk = note.track as usize % 128;
-                let [cr, cg, cb] = style.palette[trk];
-                let border_px = style.border_width * w / 2.0;
-                let rounding_radius = style.rounding * f32::min(w, h);
-
-                instances.push(NoteInstance {
-                    x,
-                    y,
-                    w,
-                    h,
-                    r: cr,
-                    g: cg,
-                    b: cb,
-                    a: 1.0,
-                    corner_radius: rounding_radius,
-                    border_width: border_px,
-                });
-            }
-        }
-
-        instances
-    }
-
-    fn build_instances_tick(
-        &self,
-        width: u32,
-        height: u32,
-        time: f64,
-        speed: f32,
-        midi: &dyn NoteSource,
-        state: &mut MidiRenderState,
-        style: &RenderStyle,
-    ) -> Vec<NoteInstance> {
-        let kh = (style.keyboard_height as f64).max(0.0);
-        let effective_h = (height as f64 - kh).max(1.0);
-        let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
-        let eff_speed = speed.max(0.01) as f64;
-        let ppt = 100.0 / ticks_per_beat * eff_speed;
-        let scroll_tick = midi
-            .tick_at_time(time)
-            .unwrap_or(time * ticks_per_beat * 2.0);
-        let visible_ticks = effective_h / ppt;
-        let tick_at_bottom = scroll_tick;
-        let tick_at_top = scroll_tick + visible_ticks;
-
-        if scroll_tick < state.last_scroll_tick {
-            state.scan_indices = [0; 128];
-        }
-        state.last_scroll_tick = scroll_tick;
-
-        for key in 0..128u8 {
-            let notes = midi.key_notes(key);
-            if notes.is_empty() {
-                continue;
-            }
-            let mut scan = state.scan_indices[key as usize];
-            while scan < notes.len() && (notes[scan].end_tick as f64) <= tick_at_bottom {
-                scan += 1;
-            }
-            state.scan_indices[key as usize] = scan;
-        }
-
-        let layouts = Self::compute_key_layouts(width, style.equal_key_width);
-        let screen_bottom = effective_h + scroll_tick * ppt;
-
-        let mut instances = Vec::new();
-        let keys_iter: Box<dyn Iterator<Item = u8>> = if style.equal_key_width {
-            Box::new(0..128u8)
-        } else {
-            Box::new(
-                (0..128u8)
-                    .filter(|k| !Self::is_black_key(*k))
-                    .chain((0..128u8).filter(|k| Self::is_black_key(*k))),
-            )
-        };
-
-        for key in keys_iter {
-            let notes = midi.key_notes(key);
-            if notes.is_empty() {
-                continue;
-            }
-            let scan = state.scan_indices[key as usize];
-            let (x, w) = layouts[key as usize];
-
-            for i in scan..notes.len() {
-                let note = &notes[i];
-                if (note.start_tick as f64) > tick_at_top + 1.0 {
-                    break;
-                }
-                if (note.end_tick as f64) <= scroll_tick {
-                    continue;
-                }
-
-                let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
-                let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
-                let y = note_top;
-                let h = (note_bottom - note_top).max(1.0);
-
-                let trk = note.track as usize % 128;
-                let [cr, cg, cb] = style.palette[trk];
-                let border_px = style.border_width * w / 2.0;
-                let rounding_radius = style.rounding * f32::min(w, h);
-
-                instances.push(NoteInstance {
-                    x,
-                    y,
-                    w,
-                    h,
-                    r: cr,
-                    g: cg,
-                    b: cb,
-                    a: 1.0,
-                    corner_radius: rounding_radius,
-                    border_width: border_px,
-                });
-            }
-        }
-
-        instances
-    }
-
     fn is_black_key(key: u8) -> bool {
-        match key % 12 {
-            1 | 3 | 6 | 8 | 10 => true,
-            _ => false,
-        }
+        matches!(key % 12, 1 | 3 | 6 | 8 | 10)
     }
 
     fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f32)> {
@@ -599,7 +933,8 @@ impl Renderer {
             let mut white_count = 0usize;
             for key in 0..128u8 {
                 if Self::is_black_key(key) {
-                    let x = (white_count as f64 * white_width - black_width * 0.5).round() as f32;
+                    let x =
+                        (white_count as f64 * white_width - black_width * 0.5).round() as f32;
                     let w = black_width.round() as f32;
                     layouts.push((x, w.max(1.0)));
                 } else {
@@ -615,7 +950,6 @@ impl Renderer {
     }
 
     fn build_keyboard_instances(
-        &self,
         width: u32,
         height: u32,
         time: f64,
@@ -648,6 +982,7 @@ impl Renderer {
         let mut instances = Vec::with_capacity(256);
         let black_h = kh * 0.6;
 
+        // White keys first
         for key in 0..128u8 {
             if Self::is_black_key(key) {
                 continue;
@@ -673,9 +1008,11 @@ impl Renderer {
                 a: 1.0,
                 corner_radius: 2.0,
                 border_width: 0.5,
+                _pad: [0.0, 0.0],
             });
         }
 
+        // Black keys on top
         for key in 0..128u8 {
             if !Self::is_black_key(key) {
                 continue;
@@ -701,6 +1038,7 @@ impl Renderer {
                 a: 1.0,
                 corner_radius: 1.5,
                 border_width: 0.5,
+                _pad: [0.0, 0.0],
             });
         }
 

@@ -1,5 +1,5 @@
 use eframe::egui;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub struct RenderContext {
@@ -8,8 +8,8 @@ pub struct RenderContext {
     _preview_texture: wgpu::Texture,
     pub preview_view: wgpu::TextureView,
     pub preview_texture_id: egui::TextureId,
-    /// 每个 MIDI 文件索引独立的渲染状态（用于多图层叠加）
     midi_states: HashMap<usize, nezha_renderer::MidiRenderState>,
+    uploaded_midi_ids: HashSet<usize>,
 }
 
 impl RenderContext {
@@ -35,6 +35,7 @@ impl RenderContext {
             preview_view,
             preview_texture_id,
             midi_states: HashMap::new(),
+            uploaded_midi_ids: HashSet::new(),
         }
     }
 
@@ -91,6 +92,14 @@ impl RenderContext {
         clear_background: bool,
     ) {
         let state = self.midi_states.entry(midi_idx).or_default();
+
+        // Lazy GPU upload on first render
+        if !self.uploaded_midi_ids.contains(&midi_idx) {
+            self.renderer
+                .upload_note_data(midi_idx, midi, width, style.equal_key_width);
+            self.uploaded_midi_ids.insert(midi_idx);
+        }
+
         self.renderer.render(
             &self.preview_view,
             width,
@@ -99,6 +108,7 @@ impl RenderContext {
             speed,
             Some(midi),
             state,
+            Some(midi_idx),
             style,
             clear_background,
         );
@@ -111,7 +121,6 @@ impl RenderContext {
         height: u32,
         style: &nezha_renderer::RenderStyle,
     ) {
-        // 用一个虚拟的空状态来清除背景
         let mut dummy_state = nezha_renderer::MidiRenderState::default();
         self.renderer.render(
             &self.preview_view,
@@ -121,6 +130,7 @@ impl RenderContext {
             1.0,
             None,
             &mut dummy_state,
+            None,
             style,
             true,
         );
@@ -128,5 +138,6 @@ impl RenderContext {
 
     pub fn reset_midi_state(&mut self) {
         self.midi_states.clear();
+        self.uploaded_midi_ids.clear();
     }
 }
