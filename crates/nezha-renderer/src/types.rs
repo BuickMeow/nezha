@@ -101,4 +101,9 @@ pub struct Renderer {
     pub(crate) current_width: u32,
     pub(crate) current_equal_key_width: bool,
     pub(crate) cached_palette: [[f32; 3]; 128],
+    /// Keyboard dirty flag — skips CPU recomputation when time/style hasn't changed
+    pub(crate) keyboard_dirty: bool,
+    pub(crate) cached_keyboard_time: f64,
+    pub(crate) cached_scroll_tick: f64,
+    pub(crate) cached_keyboard_height: f32,
 }

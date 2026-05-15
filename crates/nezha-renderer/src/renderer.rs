@@ -129,7 +129,7 @@ impl Renderer {
         let keyboard_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("keyboard_instances"),
             size: 128 * instance_size,
-            usage: BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -245,17 +245,6 @@ impl Renderer {
                     },
                     count: None,
                 },
-                // 8: keyboard_instances (output)
-                BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
             ],
         });
 
@@ -293,6 +282,10 @@ impl Renderer {
             current_width: 0,
             current_equal_key_width: false,
             cached_palette: [[0.0; 3]; 128],
+            keyboard_dirty: true,
+            cached_keyboard_time: f64::NEG_INFINITY,
+            cached_scroll_tick: f64::NEG_INFINITY,
+            cached_keyboard_height: -1.0,
         }
     }
 
@@ -443,10 +436,6 @@ impl Renderer {
                     BindGroupEntry {
                         binding: 7,
                         resource: self.scan_buffer.as_entire_binding(),
-                    },
-                    BindGroupEntry {
-                        binding: 8,
-                        resource: self.keyboard_buffer.as_entire_binding(),
                     },
                 ],
             });
@@ -649,8 +638,34 @@ impl Renderer {
             }
         }
 
-        // Keyboard instances (GPU: compute shader writes to keyboard_buffer)
+        // ---- CPU keyboard computation (avoids GPU compute→render pipeline barrier) ----
         let draw_keyboard = style.keyboard_height > 0.0 && midi.is_some();
+        if draw_keyboard {
+            let current_scroll_tick = scroll_tick as f64;
+            let keyboard_changed = self.keyboard_dirty
+                || (time - self.cached_keyboard_time).abs() > f64::EPSILON
+                || (current_scroll_tick - self.cached_scroll_tick).abs() > f64::EPSILON
+                || (style.keyboard_height - self.cached_keyboard_height).abs() > f32::EPSILON
+                || width != self.current_width
+                || style.equal_key_width != self.current_equal_key_width;
+
+            if keyboard_changed {
+                let instances = keyboard::build_keyboard_instances(
+                    width,
+                    height,
+                    time,
+                    midi.unwrap(),
+                    style,
+                    render_state,
+                );
+                self.queue
+                    .write_buffer(&self.keyboard_buffer, 0, bytemuck::cast_slice(&instances));
+                self.keyboard_dirty = false;
+                self.cached_keyboard_time = time;
+                self.cached_scroll_tick = current_scroll_tick;
+                self.cached_keyboard_height = style.keyboard_height;
+            }
+        }
 
         let load_op = if clear_background {
             LoadOp::Clear(Color {
@@ -692,8 +707,8 @@ impl Renderer {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.render_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.keyboard_buffer.slice(..));
-                pass.draw(0..6, 0..75);      // white keys (slots 0-74)
-                pass.draw(0..6, 75..128);    // black keys (slots 75-127)
+                pass.draw(0..6, 0..75); // white keys (slots 0-74)
+                pass.draw(0..6, 75..128); // black keys (slots 75-127)
             }
         }
 
