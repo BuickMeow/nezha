@@ -274,6 +274,33 @@ impl Renderer {
             cache: None,
         });
 
+        // ── GPU timestamp queries (optional, requires TIMESTAMP_QUERY feature) ──
+        let gpu_timing_supported = device.features().contains(Features::TIMESTAMP_QUERY);
+        let (timestamp_query_set, timestamp_resolve_buffer, timestamp_readback_buffer) =
+            if gpu_timing_supported {
+                let qs = device.create_query_set(&QuerySetDescriptor {
+                    label: Some("timestamps"),
+                    ty: QueryType::Timestamp,
+                    count: 4,
+                });
+                let resolve_buf = device.create_buffer(&BufferDescriptor {
+                    label: Some("timestamp_resolve"),
+                    size: 4 * std::mem::size_of::<u64>() as u64,
+                    usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                let readback_buf = device.create_buffer(&BufferDescriptor {
+                    label: Some("timestamp_readback"),
+                    size: 4 * std::mem::size_of::<u64>() as u64,
+                    usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                (Some(qs), Some(resolve_buf), Some(readback_buf))
+            } else {
+                (None, None, None)
+            };
+        let timestamp_period = queue.get_timestamp_period();
+
         Self {
             device,
             queue,
@@ -297,6 +324,11 @@ impl Renderer {
             cached_keyboard_time: f64::NEG_INFINITY,
             cached_scroll_tick: f64::NEG_INFINITY,
             cached_keyboard_height: -1.0,
+            gpu_timing_supported,
+            timestamp_query_set,
+            timestamp_resolve_buffer,
+            timestamp_readback_buffer,
+            timestamp_period,
         }
     }
 
@@ -633,7 +665,13 @@ impl Renderer {
                     profile_scope!("compute_pass");
                     let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor {
                         label: Some("compute_notes_pass"),
-                        timestamp_writes: None,
+                        timestamp_writes: self.timestamp_query_set.as_ref().map(|qs| {
+                            ComputePassTimestampWrites {
+                                query_set: qs,
+                                beginning_of_pass_write_index: Some(0),
+                                end_of_pass_write_index: Some(1),
+                            }
+                        }),
                     });
                     cpass.set_pipeline(&self.compute_pipeline);
                     for chunk in &bundle.chunks {
@@ -698,6 +736,13 @@ impl Renderer {
             profile_scope!("render_pass");
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("render_pass"),
+                timestamp_writes: self.timestamp_query_set.as_ref().map(|qs| {
+                    RenderPassTimestampWrites {
+                        query_set: qs,
+                        beginning_of_pass_write_index: Some(2),
+                        end_of_pass_write_index: Some(3),
+                    }
+                }),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: target,
                     depth_slice: None,
@@ -708,7 +753,6 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -730,5 +774,84 @@ impl Renderer {
         }
 
         // (encoder is submitted by caller — no queue.submit here)
+
+        // ── Resolve GPU timestamps ──────────────────────────────────────────
+        if let (Some(qs), Some(resolve_buf), Some(readback_buf)) = (
+            &self.timestamp_query_set,
+            &self.timestamp_resolve_buffer,
+            &self.timestamp_readback_buffer,
+        ) {
+            encoder.resolve_query_set(qs, 0..4, resolve_buf, 0);
+            encoder.copy_buffer_to_buffer(
+                resolve_buf,
+                0,
+                readback_buf,
+                0,
+                4 * std::mem::size_of::<u64>() as u64,
+            );
+        }
+    }
+
+    /// Whether GPU timestamp queries are supported on this device.
+    pub fn gpu_timing_available(&self) -> bool {
+        self.gpu_timing_supported
+    }
+
+    /// Read back GPU timestamps from the previous frame.
+    /// Returns `(compute_ms, render_ms)` or `None` if unsupported or timed out.
+    pub fn read_gpu_timings(&self) -> Option<(f64, f64)> {
+        let readback_buf = self.timestamp_readback_buffer.as_ref()?;
+        let slice = readback_buf.slice(..);
+
+        // Map the buffer for reading
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        // Poll in a loop with timeout — Metal backend doesn't always
+        // drive the mapping callback via PollType::Wait alone.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut done = false;
+        while std::time::Instant::now() < deadline && !done {
+            let _ = self.device.poll(PollType::Poll);
+            done = rx.try_recv().is_ok();
+            if !done {
+                std::thread::yield_now();
+            }
+        }
+        if !done {
+            // Timed out — map may still be pending; ignore this frame
+            return None;
+        }
+
+        let data = slice.get_mapped_range();
+        let timestamps: &[u64] = bytemuck::cast_slice(&data);
+
+        if timestamps.len() < 4 {
+            return None;
+        }
+
+        // Convert timestamp deltas to milliseconds
+        let period = self.timestamp_period as f64;
+        let ns_to_ms = 1_000_000.0;
+
+        // Guard against timestamp wrapping/ordering issues
+        let compute_ns = if timestamps[1] > timestamps[0] {
+            (timestamps[1] - timestamps[0]) as f64 * period
+        } else {
+            0.0
+        };
+        let render_ns = if timestamps[3] > timestamps[2] {
+            (timestamps[3] - timestamps[2]) as f64 * period
+        } else {
+            0.0
+        };
+
+        // Drop the mapped range so buffer can be used again next frame
+        drop(data);
+        readback_buf.unmap();
+
+        Some((compute_ns / ns_to_ms, render_ns / ns_to_ms))
     }
 }

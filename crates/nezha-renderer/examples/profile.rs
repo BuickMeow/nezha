@@ -70,8 +70,11 @@ fn setup_wgpu() -> (Instance, Adapter, Device, Queue) {
         force_fallback_adapter: false,
     }))
     .expect("no adapter");
-    let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor::default()))
-        .expect("no device");
+    let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
+        required_features: adapter.features() & Features::TIMESTAMP_QUERY,
+        ..Default::default()
+    }))
+    .expect("no device");
     (instance, adapter, device, queue)
 }
 
@@ -178,6 +181,36 @@ fn main() {
         elapsed.as_secs_f64(),
         frames as f64 / elapsed.as_secs_f64()
     );
+    // ── Quick GPU timing check ─────────────────────────────────────────────
+    if renderer.gpu_timing_available() {
+        // Do one more frame and read GPU timestamps
+        let mut encoder = renderer
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor { label: None });
+        renderer.render(
+            &mut encoder,
+            &target_view,
+            width,
+            height,
+            30.0,
+            0.1f32,
+            Some(&midi),
+            &mut state,
+            Some(0),
+            &style,
+            true,
+        );
+        renderer.queue.submit(std::iter::once(encoder.finish()));
+        let _ = renderer.device.poll(PollType::Poll);
+        println!("⏱️  Reading GPU timestamps...");
+        match renderer.read_gpu_timings() {
+            Some((c, r)) => println!("   GPU compute={:.2}ms  render={:.2}ms", c, r),
+            None => println!("   ⚠️  No GPU timing data"),
+        }
+    } else {
+        println!("⚠️  GPU timestamp queries not supported on this device");
+    }
+
     println!("🌐 Puffin bridge still running — press Ctrl+C to exit.");
     println!("   (keep it open while inspecting the flamegraph in puffin_viewer)");
     std::thread::park();

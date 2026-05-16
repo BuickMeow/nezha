@@ -106,4 +106,11 @@ pub struct Renderer {
     pub(crate) cached_keyboard_time: f64,
     pub(crate) cached_scroll_tick: f64,
     pub(crate) cached_keyboard_height: f32,
+
+    // ── GPU timestamp queries ──────────────────────────────────────────────
+    pub(crate) gpu_timing_supported: bool,
+    pub(crate) timestamp_query_set: Option<QuerySet>,
+    pub(crate) timestamp_resolve_buffer: Option<Buffer>,
+    pub(crate) timestamp_readback_buffer: Option<Buffer>,
+    pub(crate) timestamp_period: f32,
 }

@@ -4,6 +4,7 @@
 //!   cargo bench -p nezha-renderer
 //!   cargo bench -p nezha-renderer -- "speed=0.1"   # heaviest only
 //!   cargo bench -p nezha-renderer -- upload         # upload only
+//!   cargo bench -p nezha-renderer -- gpu_timing     # GPU timing only
 //!   cargo bench -p nezha-renderer -- --quick        # fast smoke test
 //!
 //! Stress parameters:
@@ -125,8 +126,11 @@ fn setup_wgpu() -> (Instance, Adapter, Device, Queue) {
         force_fallback_adapter: false,
     }))
     .expect("no adapter");
-    let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor::default()))
-        .expect("no device");
+    let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
+        required_features: adapter.features() & Features::TIMESTAMP_QUERY,
+        ..Default::default()
+    }))
+    .expect("no device");
     (instance, adapter, device, queue)
 }
 
@@ -248,12 +252,10 @@ fn bench_upload(c: &mut Criterion) {
     let total_notes: usize = midi.key_notes.iter().map(|v| v.len()).sum();
 
     let mut group = c.benchmark_group("upload");
-    // Low sample count: each iteration allocates GPU buffers (~130MB+)
     group.sample_size(10);
     group.measurement_time(std::time::Duration::from_secs(10));
     group.throughput(Throughput::Elements(total_notes as u64));
 
-    // Use a fresh data_id each iteration to avoid overwrite conflicts
     let mut next_id = 0usize;
     group.bench_function("256th_1M_notes", |b| {
         b.iter(|| {
@@ -266,5 +268,103 @@ fn bench_upload(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_render_frame, bench_upload);
+/// GPU timing via wgpu timestamp queries — measures actual GPU execution time.
+fn bench_gpu_timing(_c: &mut Criterion) {
+    let (_instance, _adapter, device, queue) = setup_wgpu();
+    let mut renderer = Renderer::new(device, queue, TextureFormat::Bgra8Unorm);
+
+    if !renderer.gpu_timing_available() {
+        println!("⚠️  TIMESTAMP_QUERY not supported — skipping GPU timing");
+        return;
+    }
+
+    let width = 1920u32;
+    let height = 1080u32;
+    let (_target_tex, target_view) = create_target(&renderer.device, width, height);
+
+    let style = RenderStyle {
+        render_mode: RenderMode::TimeBased,
+        border_width: 0.1,
+        rounding: 0.0,
+        track_index: 0,
+        palette: nezha_renderer::random_palette(),
+        background: [0.0, 0.0, 0.0, 1.0],
+        equal_key_width: true,
+        keyboard_height: 100.0,
+    };
+
+    let midi = generate_stress_256th();
+    renderer.upload_note_data(0, &midi, width, true);
+
+    // Quick header
+    println!();
+    println!("╔══════════════════════════════════════════╗");
+    println!("║  GPU Timing (compute / render in ms)      ║");
+    println!("╠══════════════════════════════════════════╣");
+
+    for (speed, time_pos) in [(0.1f32, 0.0f64), (0.1, 30.0), (1.0, 0.0), (10.0, 59.0)] {
+        let mut state = MidiRenderState::default();
+
+        // Warmup
+        for _ in 0..3 {
+            let mut encoder = renderer
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor { label: None });
+            renderer.render(
+                &mut encoder,
+                &target_view,
+                width,
+                height,
+                time_pos,
+                speed,
+                Some(&midi),
+                &mut state,
+                Some(0),
+                &style,
+                true,
+            );
+            renderer.queue.submit(std::iter::once(encoder.finish()));
+            let _ = renderer.device.poll(PollType::Poll);
+        }
+
+        // Measure
+        let mut total_compute = 0.0f64;
+        let mut total_render = 0.0f64;
+        let n = 10u32;
+        for _ in 0..n {
+            let mut encoder = renderer
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor { label: None });
+            renderer.render(
+                &mut encoder,
+                &target_view,
+                width,
+                height,
+                time_pos,
+                speed,
+                Some(&midi),
+                &mut state,
+                Some(0),
+                &style,
+                true,
+            );
+            renderer.queue.submit(std::iter::once(encoder.finish()));
+            let _ = renderer.device.poll(PollType::Poll);
+            if let Some((c, r)) = renderer.read_gpu_timings() {
+                total_compute += c;
+                total_render += r;
+            }
+        }
+        println!(
+            "║ speed={:.1} t={:.0}s │ compute={:6.2}ms  render={:6.2}ms ║",
+            speed,
+            time_pos,
+            total_compute / n as f64,
+            total_render / n as f64
+        );
+    }
+    println!("╚══════════════════════════════════════════╝");
+}
+
+criterion_group!(benches, bench_render_frame, bench_upload, bench_gpu_timing);
 criterion_main!(benches);
