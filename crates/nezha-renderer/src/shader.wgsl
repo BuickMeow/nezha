@@ -7,8 +7,7 @@ struct Uniforms {
 
 struct NoteInstance {
     @location(0) xywh: vec4<f32>,
-    @location(1) rgba: vec4<f32>,
-    @location(2) props: vec2<f32>,  // x = corner_radius, y = border_width
+    @location(1) packed: vec4<u32>,  // x=rgba(UNORM8), y=props(2×f16), z=velocity, w=flags
 }
 
 struct VertexOutput {
@@ -58,29 +57,67 @@ fn vs_main(
     let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
-    out.color = instance.rgba;
+
+    // ── Unpack RGBA from packed u32 (4×UNORM8) ──────────────────────────
+    let rgba = instance.packed.x;
+    out.color.r = f32((rgba >> 0u) & 0xFFu) / 255.0;
+    out.color.g = f32((rgba >> 8u) & 0xFFu) / 255.0;
+    out.color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
+    out.color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
+
+    // ── Unpack props from packed u32 (2×f16) ────────────────────────────
+    let props = instance.packed.y;
+    out.radius = unpack2x16float(props).x;
+    out.border_width = unpack2x16float(props).y;
+
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(w, h) * 0.5;
-    out.radius = instance.props.x;
-    out.border_width = instance.props.y;
     return out;
 }
+
+// ── SDF rounded box (only used when radius >= 0.5) ─────────────────────────
 
 fn sd_rounded_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
     let d = abs(p) - half + r;
     return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - r;
 }
 
+// ── Fragment ───────────────────────────────────────────────────────────────
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = (in.uv - 0.5) * in.half_size * 2.0;
 
-    // 外层 SDF：整颗音符边界（d>0 外侧, d<0 内侧）
+    // ── Fast path: no rounded corners → simple rectangle AA ──────────────
+    if in.radius < 0.5 {
+        // Outer edge
+        let d_outer = max(abs(p.x) - in.half_size.x, abs(p.y) - in.half_size.y);
+        let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
+
+        let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
+        var fill_a: f32 = 0.0;
+        var border_a: f32 = outer_a;
+
+        if inner_half.x > 0.0 && inner_half.y > 0.0 {
+            let d_inner = max(abs(p.x) - inner_half.x, abs(p.y) - inner_half.y);
+            let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
+            fill_a = inner_a;
+            border_a = outer_a - inner_a;
+        }
+
+        let total_a = fill_a + border_a;
+        let border_color = in.color.rgb * 0.4;
+        var rgb = border_color;
+        if fill_a > 0.0 {
+            rgb = (in.color.rgb * fill_a + border_color * border_a) / total_a;
+        }
+        return vec4(rgb, in.color.a * total_a);
+    }
+
+    // ── Slow path: SDF rounded rectangle ─────────────────────────────────
     let d_outer = sd_rounded_box(p, in.half_size, in.radius);
-    // 对称抗锯齿：过渡区跨边界两侧各 0.5px
     let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
 
-    // 内层 SDF：填充区域，向内缩进 border_width
     let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
     let inner_r = max(in.radius - in.border_width, 0.0);
 

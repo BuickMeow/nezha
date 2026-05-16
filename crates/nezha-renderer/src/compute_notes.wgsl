@@ -20,13 +20,12 @@ struct GpuNote {
     start_tick: u32,
     end_tick: u32,
     track: u32,
+    velocity: u32,
 }
 
 struct NoteInstance {
     xywh: vec4<f32>,
-    rgba: vec4<f32>,
-    props: vec2<f32>,
-    _pad: vec2<f32>,
+    packed: vec4<u32>,  // x=rgba(UNORM8), y=props(2×f16), z=velocity, w=flags
 }
 
 struct KeyInfo {
@@ -45,6 +44,37 @@ struct KeyInfo {
 @group(0) @binding(7) var<storage> key_scans: array<u32, 128>;
 
 const MAX_INSTANCES: u32 = 2700000u;
+
+// ── Packing helpers (match types.rs / shader.wgsl unpack) ────────────────────
+
+fn pack_rgba_vec4(c: vec4<f32>) -> u32 {
+    let r8 = u32(clamp(c.r, 0.0, 1.0) * 255.0 + 0.5) & 0xFFu;
+    let g8 = u32(clamp(c.g, 0.0, 1.0) * 255.0 + 0.5) & 0xFFu;
+    let b8 = u32(clamp(c.b, 0.0, 1.0) * 255.0 + 0.5) & 0xFFu;
+    let a8 = u32(clamp(c.a, 0.0, 1.0) * 255.0 + 0.5) & 0xFFu;
+    return r8 | (g8 << 8u) | (b8 << 16u) | (a8 << 24u);
+}
+
+fn pack_props(radius: f32, border: f32) -> u32 {
+    return pack2x16float(vec2<f32>(radius, border));
+}
+
+fn write_instance(idx: u32, x: f32, y: f32, w: f32, h: f32,
+                  trk: u32, radius: f32, border: f32, vel: u32) {
+    if idx < MAX_INSTANCES {
+        instances[idx] = NoteInstance(
+            vec4<f32>(x, y, w, h),
+            vec4<u32>(
+                pack_rgba_vec4(vec4<f32>(palette[trk].rgb, 1.0)),
+                pack_props(radius, border),
+                vel,
+                0u,  // flags reserved
+            ),
+        );
+    }
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 @compute
 @workgroup_size(64)
@@ -79,8 +109,7 @@ fn compute_notes(
     if u.mode == 0u {
         let pps = 200.0 * max(u.speed, 0.01);
         let screen_top = effective_h + u.time * pps;
-        let visible_future = effective_h / pps + 1.0;
-        let time_top = u.time + visible_future;
+        let time_top = u.time + effective_h / pps + 1.0;
         let time_bottom = u.time;
 
         for (var i = scan_start; i < count; i++) {
@@ -97,20 +126,13 @@ fn compute_notes(
             let trk = note.track % 128u;
             let border_px = u.border_width * w / 2.0;
             let rounding_radius = u.rounding * min(w, h);
+            let vel = note.velocity;
 
             let idx = atomicAdd(&instance_count, 1u);
-            if idx < MAX_INSTANCES {
-                instances[idx] = NoteInstance(
-                    vec4<f32>(x, y, w, h),
-                    vec4<f32>(palette[trk].r, palette[trk].g, palette[trk].b, 1.0),
-                    vec2<f32>(rounding_radius, border_px),
-                    vec2<f32>(0.0, 0.0),
-                );
-            }
+            write_instance(idx, x, y, w, h, trk, rounding_radius, border_px, vel);
         }
     } else {
-        let eff_speed = max(u.speed, 0.01);
-        let ppt = 100.0 / u.ticks_per_beat * eff_speed;
+        let ppt = 100.0 / u.ticks_per_beat * max(u.speed, 0.01);
         let visible_ticks = effective_h / ppt;
         let tick_at_bottom = u.scroll_tick;
         let tick_at_top = u.scroll_tick + visible_ticks;
@@ -132,16 +154,10 @@ fn compute_notes(
             let trk = note.track % 128u;
             let border_px = u.border_width * w / 2.0;
             let rounding_radius = u.rounding * min(w, h);
+            let vel = note.velocity;
 
             let idx = atomicAdd(&instance_count, 1u);
-            if idx < MAX_INSTANCES {
-                instances[idx] = NoteInstance(
-                    vec4<f32>(x, y, w, h),
-                    vec4<f32>(palette[trk].r, palette[trk].g, palette[trk].b, 1.0),
-                    vec2<f32>(rounding_radius, border_px),
-                    vec2<f32>(0.0, 0.0),
-                );
-            }
+            write_instance(idx, x, y, w, h, trk, rounding_radius, border_px, vel);
         }
     }
 }

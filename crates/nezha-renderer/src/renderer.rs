@@ -76,12 +76,11 @@ impl Renderer {
                 module: &render_shader,
                 entry_point: Some("vs_main"),
                 buffers: &[VertexBufferLayout {
-                    array_stride: std::mem::size_of::<NoteInstance>() as u64,
+                    array_stride: std::mem::size_of::<NoteInstance>() as u64, // 32
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
-                        0 => Float32x4,
-                        1 => Float32x4,
-                        2 => Float32x2,
+                        0 => Float32x4,   // xywh
+                        1 => Uint32x4,    // packed: rgba, props, velocity, flags
                     ],
                 }],
                 compilation_options: PipelineCompilationOptions::default(),
@@ -360,6 +359,7 @@ impl Renderer {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
                     track: note.track as u32,
+                    velocity: note.velocity as u32,
                 });
             }
         }

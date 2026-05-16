@@ -1,5 +1,5 @@
 use crate::style::{MidiRenderState, NoteSource, RenderStyle};
-use crate::types::NoteInstance;
+use crate::types::{NoteInstance, pack_props, pack_rgba};
 
 pub(crate) fn is_black_key(key: u8) -> bool {
     matches!(key % 12, 1 | 3 | 6 | 8 | 10)
@@ -89,13 +89,10 @@ pub(crate) fn build_keyboard_instances(
             y: key_top,
             w,
             h: kh,
-            r,
-            g,
-            b,
-            a: 1.0,
-            corner_radius: 2.0,
-            border_width: 0.5,
-            _pad: [0.0, 0.0],
+            rgba_packed: pack_rgba(r, g, b, 1.0),
+            props_packed: pack_props(2.0, 0.5),
+            velocity: 0,
+            flags: 0,
         });
     }
 
@@ -119,13 +116,10 @@ pub(crate) fn build_keyboard_instances(
             y: key_top,
             w,
             h: black_h,
-            r,
-            g,
-            b,
-            a: 1.0,
-            corner_radius: 1.5,
-            border_width: 0.5,
-            _pad: [0.0, 0.0],
+            rgba_packed: pack_rgba(r, g, b, 1.0),
+            props_packed: pack_props(1.5, 0.5),
+            velocity: 0,
+            flags: 0,
         });
     }
 

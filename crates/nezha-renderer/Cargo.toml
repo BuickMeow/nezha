@@ -11,6 +11,7 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 bytemuck = { workspace = true }
 nezha-core = { path = "../nezha-core" }
+half = "2"
 puffin = { workspace = true, optional = true }
 
 [dev-dependencies]
