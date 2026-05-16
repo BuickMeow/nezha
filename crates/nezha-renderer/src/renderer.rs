@@ -8,6 +8,17 @@ use crate::types::{
     NoteInstance, Renderer, Uniforms,
 };
 
+#[cfg(feature = "profiling")]
+macro_rules! profile_scope {
+    ($name:literal) => {
+        puffin::profile_scope!($name);
+    };
+}
+#[cfg(not(feature = "profiling"))]
+macro_rules! profile_scope {
+    ($name:literal) => {};
+}
+
 impl Renderer {
     pub fn new(device: Device, queue: Queue, format: TextureFormat) -> Self {
         let render_shader = device.create_shader_module(ShaderModuleDescriptor {
@@ -296,6 +307,7 @@ impl Renderer {
         width: u32,
         equal_key_width: bool,
     ) {
+        profile_scope!("upload_note_data");
         Self::update_shared_key_layouts(
             &self.queue,
             &self.shared_key_layouts_buf,
@@ -524,6 +536,7 @@ impl Renderer {
         style: &RenderStyle,
         clear_background: bool,
     ) {
+        profile_scope!("render");
         let mode: u32 = match style.render_mode {
             RenderMode::TimeBased => 0,
             RenderMode::TickBased => 1,
@@ -576,6 +589,7 @@ impl Renderer {
         }
 
         // Update keyboard scans (used for both CPU keyboard and GPU compute scan skipping)
+        profile_scope!("scans");
         if let Some(midi) = midi {
             Self::update_keyboard_scans(
                 midi,
@@ -616,6 +630,7 @@ impl Renderer {
             if !bundle.chunks.is_empty() {
                 has_notes = true;
                 {
+                    profile_scope!("compute_pass");
                     let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor {
                         label: Some("compute_notes_pass"),
                         timestamp_writes: None,
@@ -639,6 +654,7 @@ impl Renderer {
         }
 
         // ---- CPU keyboard computation (avoids GPU compute→render pipeline barrier) ----
+        profile_scope!("keyboard");
         let draw_keyboard = style.keyboard_height > 0.0 && midi.is_some();
         if draw_keyboard {
             let current_scroll_tick = scroll_tick as f64;
@@ -679,6 +695,7 @@ impl Renderer {
         };
 
         {
+            profile_scope!("render_pass");
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("render_pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {

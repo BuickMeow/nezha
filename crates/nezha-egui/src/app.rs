@@ -36,6 +36,16 @@ struct LayerData {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        #[cfg(feature = "profiling")]
+        {
+            puffin::set_scopes_on(true);
+            // Leak the server so it lives for the entire app lifetime
+            let _ = std::mem::ManuallyDrop::new(
+                puffin_http::Server::new("0.0.0.0:8585").expect("puffin_http"),
+            );
+            println!("🔥 Puffin bridge on :8585 → puffin_viewer --url 127.0.0.1:8585");
+        }
+
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "MiSans".to_owned(),
@@ -175,6 +185,9 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "profiling")]
+        puffin::GlobalProfiler::lock().new_frame();
+
         self.ui.theme_mode.apply(ui.ctx());
 
         if ui.input(|i| i.key_pressed(egui::Key::Space)) {

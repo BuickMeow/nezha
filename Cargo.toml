@@ -8,3 +8,4 @@ eframe = { version = "0.34.2", features = ["wgpu"] }
 egui = "0.34.2"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
+puffin = "0.20"

@@ -81,8 +81,8 @@ pub(crate) struct GpuNoteBundle {
 }
 
 pub struct Renderer {
-    pub(crate) device: Device,
-    pub(crate) queue: Queue,
+    pub device: Device,
+    pub queue: Queue,
     pub(crate) pipeline: RenderPipeline,
     pub(crate) uniform_buffer: Buffer,
     pub(crate) render_bind_group: BindGroup,

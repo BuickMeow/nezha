@@ -1,5 +1,5 @@
-use eframe::egui;
 use crate::sidebar::SidebarTab;
+use eframe::egui;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ThemeMode {

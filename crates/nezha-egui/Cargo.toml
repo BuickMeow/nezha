@@ -3,6 +3,9 @@ name = "nezha-egui"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+profiling = ["nezha-renderer/profiling", "puffin", "puffin_http"]
+
 [dependencies]
 eframe = { workspace = true }
 egui = { workspace = true }
@@ -11,3 +14,5 @@ nezha-core = { path = "../nezha-core" }
 nezha-renderer = { path = "../nezha-renderer" }
 pollster = { workspace = true }
 rfd = "0.15"
+puffin = { workspace = true, optional = true }
+puffin_http = { version = "0.17", optional = true }
