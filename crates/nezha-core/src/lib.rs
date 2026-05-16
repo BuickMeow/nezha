@@ -118,6 +118,31 @@ impl MidiFile {
             });
         }
 
+        // OR (Overlap Removal): 清理同一 key 内重叠的音符。
+        // 参考 C# 实现：相邻音符比较，处理部分重叠和同起点情况。
+        for notes in &mut key_notes {
+            if notes.len() < 2 {
+                continue;
+            }
+            for i in 0..notes.len() - 1 {
+                let (left, right) = notes.split_at_mut(i + 1);
+                let curr = &mut left[i];
+                let next = &right[0];
+                // Case 1: curr 先开始，尾部伸入 next 区间 → 截断 curr
+                if curr.start < next.start && curr.end > next.start && curr.end < next.end {
+                    curr.end = next.start;
+                    curr.end_tick = next.start_tick;
+                }
+                // Case 2: 同时开始，curr 结束不晚于 next → 移除 curr（设为零长）
+                else if curr.start == next.start && curr.end <= next.end {
+                    curr.end = curr.start;
+                    curr.end_tick = curr.start_tick;
+                }
+            }
+            // 过滤 OR 产生的零长度音符
+            notes.retain(|n| n.end > n.start);
+        }
+
         Ok(MidiFile {
             key_notes,
             duration: global_duration,
