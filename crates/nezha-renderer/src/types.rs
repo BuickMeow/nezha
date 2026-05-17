@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use wgpu::*;
 
 #[repr(C)]
@@ -98,39 +97,4 @@ pub(crate) struct GpuNoteChunk {
 
 pub(crate) struct GpuNoteBundle {
     pub(crate) chunks: Vec<GpuNoteChunk>,
-}
-
-pub struct Renderer {
-    pub device: Device,
-    pub queue: Queue,
-    pub(crate) pipeline: RenderPipeline,
-    pub(crate) uniform_buffer: Buffer,
-    pub(crate) render_bind_group: BindGroup,
-
-    pub(crate) compute_pipeline: ComputePipeline,
-    pub(crate) shared_key_layouts_buf: Buffer,
-    pub(crate) scan_buffer: Buffer,
-    pub(crate) compute_bgl: BindGroupLayout,
-    pub(crate) palette_buffer: Buffer,
-    pub(crate) instance_buffer: Buffer,
-    pub(crate) keyboard_buffer: Buffer,
-    pub(crate) counter_buffer: Buffer,
-    pub(crate) indirect_draw_buffer: Buffer,
-
-    pub(crate) note_bundles: HashMap<usize, GpuNoteBundle>,
-    pub(crate) current_width: u32,
-    pub(crate) current_equal_key_width: bool,
-    pub(crate) cached_palette: [[f32; 3]; 128],
-    /// Keyboard dirty flag — skips CPU recomputation when time/style hasn't changed
-    pub(crate) keyboard_dirty: bool,
-    pub(crate) cached_keyboard_time: f64,
-    pub(crate) cached_scroll_tick: f64,
-    pub(crate) cached_keyboard_height: f32,
-
-    // ── GPU timestamp queries ──────────────────────────────────────────────
-    pub(crate) gpu_timing_supported: bool,
-    pub(crate) timestamp_query_set: Option<QuerySet>,
-    pub(crate) timestamp_resolve_buffer: Option<Buffer>,
-    pub(crate) timestamp_readback_buffer: Option<Buffer>,
-    pub(crate) timestamp_period: f32,
 }

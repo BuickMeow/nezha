@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use wgpu::*;
 
+use crate::gpu_timer::GpuTimer;
 use crate::keyboard;
-use crate::style::{MidiRenderState, NoteSource, RenderMode, RenderStyle};
+use crate::pipeline::{ComputePipelineState, RenderPipelineState};
+use crate::state::MidiRenderState;
+use crate::style::{NoteSource, RenderMode, RenderStyle};
 use crate::types::{
     ComputeUniforms, GpuNote, GpuNoteBundle, GpuNoteChunk, KeyInfo, MAX_INSTANCE_COUNT,
-    NoteInstance, Renderer, Uniforms,
+    NoteInstance, Uniforms,
 };
 
 #[cfg(feature = "profiling")]
@@ -17,6 +20,27 @@ macro_rules! profile_scope {
 #[cfg(not(feature = "profiling"))]
 macro_rules! profile_scope {
     ($name:literal) => {};
+}
+
+/// Maximum GPU note buffer size per chunk (120 MiB).
+const MAX_NOTE_BUFFER_BYTES: u64 = 120 * 1024 * 1024;
+
+pub struct Renderer {
+    pub device: Device,
+    pub queue: Queue,
+    pub render: RenderPipelineState,
+    pub compute: ComputePipelineState,
+    pub timer: GpuTimer,
+
+    pub(crate) note_bundles: HashMap<usize, GpuNoteBundle>,
+    pub(crate) current_width: u32,
+    pub(crate) current_equal_key_width: bool,
+    pub(crate) cached_palette: [[f32; 3]; 128],
+    /// Keyboard dirty flag — skips CPU recomputation when time/style hasn't changed
+    pub(crate) keyboard_dirty: bool,
+    pub(crate) cached_keyboard_time: f64,
+    pub(crate) cached_scroll_tick: f64,
+    pub(crate) cached_keyboard_height: f32,
 }
 
 impl Renderer {
@@ -31,290 +55,25 @@ impl Renderer {
             source: ShaderSource::Wgsl(include_str!("compute_notes.wgsl").into()),
         });
 
-        // ---- Render pipeline ----
-        let uniform_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("uniforms"),
-            size: std::mem::size_of::<Uniforms>() as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let render_bind_group_layout =
-            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some("render_bind_group_layout"),
-                entries: &[BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let render_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("render_bind_group"),
-            layout: &render_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("pipeline_layout"),
-            bind_group_layouts: &[Some(&render_bind_group_layout)],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("render_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: VertexState {
-                module: &render_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[VertexBufferLayout {
-                    array_stride: std::mem::size_of::<NoteInstance>() as u64, // 32
-                    step_mode: VertexStepMode::Instance,
-                    attributes: &vertex_attr_array![
-                        0 => Float32x4,   // xywh
-                        1 => Uint32x4,    // packed: rgba, props, velocity, flags
-                    ],
-                }],
-                compilation_options: PipelineCompilationOptions::default(),
-            },
-            fragment: Some(FragmentState {
-                module: &render_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(ColorTargetState {
-                    format,
-                    blend: Some(BlendState::ALPHA_BLENDING),
-                    write_mask: ColorWrites::ALL,
-                })],
-                compilation_options: PipelineCompilationOptions::default(),
-            }),
-            primitive: PrimitiveState {
-                topology: PrimitiveTopology::TriangleList,
-                ..PrimitiveState::default()
-            },
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        // ---- Compute pipeline ----
-        let shared_key_layouts_buf = device.create_buffer(&BufferDescriptor {
-            label: Some("shared_key_layouts"),
-            size: (128 * 2 * 4) as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // key_meta: [KeyInfo; 128] = 128 × 8 = 1024 bytes
-        let scan_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("scans"),
-            size: (128 * 4) as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let palette_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("palette"),
-            size: (128 * 4 * 4) as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let render = RenderPipelineState::new(&device, format, &render_shader);
 
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
-        let instance_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("instance_output"),
-            size: MAX_INSTANCE_COUNT as u64 * instance_size,
-            usage: BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let keyboard_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("keyboard_instances"),
-            size: 128 * instance_size,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let counter_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("counter"),
-            size: 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let indirect_draw_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("indirect_draw"),
-            size: 16,
-            usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        queue.write_buffer(
-            &indirect_draw_buffer,
-            0,
-            bytemuck::bytes_of(&[6u32, 0u32, 0u32, 0u32]),
+        let compute = ComputePipelineState::new(
+            &device,
+            &queue,
+            &compute_shader,
+            MAX_INSTANCE_COUNT as u64 * instance_size,
+            128 * instance_size,
         );
 
-        // Compute bind group layout (shared across all note bundles)
-        let compute_bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("compute_bgl"),
-            entries: &[
-                // 0: ComputeUniforms
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 1: key_layouts
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 2: key_info (offset + count)
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 3: notes
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 4: palette
-                BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 5: instances (output)
-                BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 6: instance_count (atomic)
-                BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: Some(std::num::NonZeroU64::new(4).unwrap()),
-                    },
-                    count: None,
-                },
-                // 7: key_scans
-                BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let compute_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("compute_pipeline_layout"),
-            bind_group_layouts: &[Some(&compute_bgl)],
-            immediate_size: 0,
-        });
-
-        let compute_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("compute_notes_pipeline"),
-            layout: Some(&compute_pipeline_layout),
-            module: &compute_shader,
-            entry_point: Some("compute_notes"),
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
-
-        // ── GPU timestamp queries (optional, requires TIMESTAMP_QUERY feature) ──
-        let gpu_timing_supported = device.features().contains(Features::TIMESTAMP_QUERY);
-        let (timestamp_query_set, timestamp_resolve_buffer, timestamp_readback_buffer) =
-            if gpu_timing_supported {
-                let qs = device.create_query_set(&QuerySetDescriptor {
-                    label: Some("timestamps"),
-                    ty: QueryType::Timestamp,
-                    count: 4,
-                });
-                let resolve_buf = device.create_buffer(&BufferDescriptor {
-                    label: Some("timestamp_resolve"),
-                    size: 4 * std::mem::size_of::<u64>() as u64,
-                    usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                });
-                let readback_buf = device.create_buffer(&BufferDescriptor {
-                    label: Some("timestamp_readback"),
-                    size: 4 * std::mem::size_of::<u64>() as u64,
-                    usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                (Some(qs), Some(resolve_buf), Some(readback_buf))
-            } else {
-                (None, None, None)
-            };
-        let timestamp_period = queue.get_timestamp_period();
+        let timer = GpuTimer::new(&device, &queue);
 
         Self {
             device,
             queue,
-            pipeline,
-            uniform_buffer,
-            render_bind_group,
-            compute_pipeline,
-            shared_key_layouts_buf,
-            scan_buffer,
-            compute_bgl,
-            palette_buffer,
-            instance_buffer,
-            keyboard_buffer,
-            counter_buffer,
-            indirect_draw_buffer,
+            render,
+            compute,
+            timer,
             note_bundles: HashMap::new(),
             current_width: 0,
             current_equal_key_width: false,
@@ -323,11 +82,6 @@ impl Renderer {
             cached_keyboard_time: f64::NEG_INFINITY,
             cached_scroll_tick: f64::NEG_INFINITY,
             cached_keyboard_height: -1.0,
-            gpu_timing_supported,
-            timestamp_query_set,
-            timestamp_resolve_buffer,
-            timestamp_readback_buffer,
-            timestamp_period,
         }
     }
 
@@ -341,7 +95,7 @@ impl Renderer {
         profile_scope!("upload_note_data");
         Self::update_shared_key_layouts(
             &self.queue,
-            &self.shared_key_layouts_buf,
+            &self.compute.shared_key_layouts_buf,
             width,
             equal_key_width,
         );
@@ -364,10 +118,202 @@ impl Renderer {
             }
         }
 
-        // Greedy chunking: add keys to a chunk until notes buffer nears limit
-        let max_note_bytes: u64 = 120 * 1024 * 1024;
-        let note_size = std::mem::size_of::<GpuNote>() as u64;
+        let chunks = Self::chunk_notes(&self.device, &self.queue, &self.compute, &key_notes);
+        self.note_bundles.insert(id, GpuNoteBundle { chunks });
+    }
 
+    pub fn remove_note_data(&mut self, id: usize) {
+        self.note_bundles.remove(&id);
+    }
+
+    pub fn render(
+        &mut self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        width: u32,
+        height: u32,
+        time: f64,
+        speed: f32,
+        midi: Option<&dyn NoteSource>,
+        render_state: &mut MidiRenderState,
+        note_data_id: Option<usize>,
+        style: &RenderStyle,
+        clear_background: bool,
+    ) {
+        profile_scope!("render");
+        let mode: u32 = match style.render_mode {
+            RenderMode::TimeBased => 0,
+            RenderMode::TickBased => 1,
+        };
+        let tpb = midi.and_then(|m| m.ticks_per_beat()).unwrap_or(480) as f32;
+        let scroll_tick = midi
+            .and_then(|m| m.tick_at_time(time))
+            .unwrap_or(time * tpb as f64 * 2.0) as f32;
+
+        let base_uniforms = ComputeUniforms {
+            time: time as f32,
+            scroll_tick,
+            width: width as f32,
+            height: height as f32,
+            speed,
+            keyboard_height: style.keyboard_height,
+            border_width: style.border_width,
+            rounding: style.rounding,
+            mode,
+            ticks_per_beat: tpb,
+            equal_key_width: if style.equal_key_width { 1 } else { 0 },
+            key_offset: 0,
+            key_count: 0,
+        };
+
+        // Write per-chunk uniforms — scoped so the bundle borrow ends before
+        // we need &mut self for other updates.
+        {
+            let bundle = note_data_id.and_then(|id| self.note_bundles.get(&id));
+            if let Some(bundle) = bundle {
+                for chunk in &bundle.chunks {
+                    let u = ComputeUniforms {
+                        key_offset: chunk.key_offset,
+                        key_count: chunk.key_count,
+                        ..base_uniforms
+                    };
+                    self.queue
+                        .write_buffer(&chunk.uniform_buf, 0, bytemuck::bytes_of(&u));
+                }
+            }
+        }
+
+        self.update_palette(&style.palette);
+
+        if let Some(midi) = midi {
+            self.upload_scans(
+                midi,
+                render_state,
+                time,
+                scroll_tick as f64,
+                style.render_mode,
+            );
+        }
+
+        // Evaluate keyboard dirty state *before* update_key_layouts mutates current_width
+        let draw_keyboard = style.keyboard_height > 0.0 && midi.is_some();
+        let keyboard_changed = draw_keyboard
+            && (self.keyboard_dirty
+                || (time - self.cached_keyboard_time).abs() > f64::EPSILON
+                || ((scroll_tick as f64) - self.cached_scroll_tick).abs() > f64::EPSILON
+                || (style.keyboard_height - self.cached_keyboard_height).abs() > f32::EPSILON
+                || width != self.current_width
+                || style.equal_key_width != self.current_equal_key_width);
+
+        self.update_key_layouts(width, style.equal_key_width);
+        self.write_render_uniforms(time, width, height);
+
+        // Reset counter before compute
+        encoder.clear_buffer(&self.compute.counter_buffer, 0, Some(4));
+
+        // Dispatch compute — scoped so the bundle borrow ends before the
+        // keyboard block, which needs &mut self.
+        let has_notes = {
+            let bundle = note_data_id.and_then(|id| self.note_bundles.get(&id));
+            match bundle {
+                Some(b) if !b.chunks.is_empty() => {
+                    profile_scope!("compute_pass");
+                    let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                        label: Some("compute_notes_pass"),
+                        timestamp_writes: self.timer.query_set.as_ref().map(|qs| {
+                            ComputePassTimestampWrites {
+                                query_set: qs,
+                                beginning_of_pass_write_index: Some(0),
+                                end_of_pass_write_index: Some(1),
+                            }
+                        }),
+                    });
+                    cpass.set_pipeline(&self.compute.pipeline);
+                    for chunk in &b.chunks {
+                        cpass.set_bind_group(0, &chunk.bind_group, &[]);
+                        // workgroup_size(64): ceil(key_count / 64) workgroups
+                        cpass.dispatch_workgroups((chunk.key_count + 63) / 64, 1, 1);
+                    }
+                    drop(cpass);
+
+                    // Copy counter → indirect draw instance_count (offset 4)
+                    encoder.copy_buffer_to_buffer(
+                        &self.compute.counter_buffer,
+                        0,
+                        &self.compute.indirect_draw_buffer,
+                        4,
+                        4,
+                    );
+                    true
+                }
+                _ => false,
+            }
+        };
+
+        if keyboard_changed {
+            let instances = keyboard::build_keyboard_instances(
+                width,
+                height,
+                time,
+                midi.unwrap(),
+                style.keyboard_height,
+                style.equal_key_width,
+                &style.palette,
+                render_state,
+            );
+            self.queue.write_buffer(
+                &self.compute.keyboard_buffer,
+                0,
+                bytemuck::cast_slice(&instances),
+            );
+            self.keyboard_dirty = false;
+            self.cached_keyboard_time = time;
+            self.cached_scroll_tick = scroll_tick as f64;
+            self.cached_keyboard_height = style.keyboard_height;
+        }
+
+        self.execute_render_pass(
+            encoder,
+            target,
+            has_notes,
+            draw_keyboard,
+            style.background,
+            clear_background,
+        );
+
+        // (encoder is submitted by caller — no queue.submit here)
+
+        // ── Resolve GPU timestamps ──────────────────────────────────────────
+        self.timer.resolve(encoder);
+    }
+
+    /// Whether GPU timestamp queries are supported on this device.
+    pub fn gpu_timing_available(&self) -> bool {
+        self.timer.supported
+    }
+
+    /// Read back GPU timestamps from the previous frame.
+    /// Returns `(compute_ms, render_ms)` or `None` if unsupported or timed out.
+    pub fn read_gpu_timings(&self) -> Option<(f64, f64)> {
+        self.timer.read_timings(&self.device)
+    }
+
+    // ── Private helpers ────────────────────────────────────────────────────
+
+    fn update_shared_key_layouts(queue: &Queue, buf: &Buffer, width: u32, equal_key_width: bool) {
+        let layouts = keyboard::compute_key_layouts(width, equal_key_width);
+        let layout_data: Vec<f32> = layouts.iter().flat_map(|(x, w)| [*x, *w]).collect();
+        queue.write_buffer(buf, 0, bytemuck::cast_slice(&layout_data));
+    }
+
+    /// Greedy chunking: group contiguous keys until the note buffer nears limit.
+    fn chunk_notes(
+        device: &Device,
+        queue: &Queue,
+        compute: &ComputePipelineState,
+        key_notes: &[Vec<GpuNote>; 128],
+    ) -> Vec<GpuNoteChunk> {
+        let note_size = std::mem::size_of::<GpuNote>() as u64;
         let mut chunks = Vec::new();
         let mut chunk_start: u32 = 0;
 
@@ -379,7 +325,7 @@ impl Renderer {
             while chunk_end < 128 {
                 let next_len = key_notes[chunk_end as usize].len();
                 let projected = (chunk_notes.len() + next_len) as u64 * note_size;
-                if !chunk_notes.is_empty() && projected > max_note_bytes {
+                if !chunk_notes.is_empty() && projected > MAX_NOTE_BUFFER_BYTES {
                     break;
                 }
                 chunk_notes.extend_from_slice(&key_notes[chunk_end as usize]);
@@ -392,62 +338,34 @@ impl Renderer {
             }
 
             let key_count = chunk_end - chunk_start;
-            let mut chunk_info = [KeyInfo {
-                offset: 0,
-                count: 0,
-                slot: 0,
-            }; 128];
-            let mut note_offset: u32 = 0;
-            let mut white_idx = 0u32;
-            let mut black_idx = 75u32;
+            let chunk_info = Self::build_chunk_info(chunk_start, chunk_end, key_notes);
 
-            for key in chunk_start..chunk_end {
-                let n = key_notes[key as usize].len() as u32;
-                let slot = if keyboard::is_black_key(key as u8) {
-                    let s = black_idx;
-                    black_idx += 1;
-                    s
-                } else {
-                    let s = white_idx;
-                    white_idx += 1;
-                    s
-                };
-                chunk_info[key as usize] = KeyInfo {
-                    offset: note_offset,
-                    count: n,
-                    slot,
-                };
-                note_offset += n;
-            }
-
-            let uniform_buf = self.device.create_buffer(&BufferDescriptor {
+            let uniform_buf = device.create_buffer(&BufferDescriptor {
                 label: Some("chunk_uniforms"),
                 size: std::mem::size_of::<ComputeUniforms>() as u64,
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
 
-            let key_info_buf = self.device.create_buffer(&BufferDescriptor {
+            let key_info_buf = device.create_buffer(&BufferDescriptor {
                 label: Some("key_info"),
                 size: (128 * std::mem::size_of::<KeyInfo>()) as u64,
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.queue
-                .write_buffer(&key_info_buf, 0, bytemuck::bytes_of(&chunk_info));
+            queue.write_buffer(&key_info_buf, 0, bytemuck::bytes_of(&chunk_info));
 
-            let notes_buf = self.device.create_buffer(&BufferDescriptor {
+            let notes_buf = device.create_buffer(&BufferDescriptor {
                 label: Some("notes"),
                 size: (chunk_notes.len() * std::mem::size_of::<GpuNote>()) as u64,
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.queue
-                .write_buffer(&notes_buf, 0, bytemuck::cast_slice(&chunk_notes));
+            queue.write_buffer(&notes_buf, 0, bytemuck::cast_slice(&chunk_notes));
 
-            let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            let bind_group = device.create_bind_group(&BindGroupDescriptor {
                 label: Some("compute_bind_group"),
-                layout: &self.compute_bgl,
+                layout: &compute.bgl,
                 entries: &[
                     BindGroupEntry {
                         binding: 0,
@@ -455,7 +373,7 @@ impl Renderer {
                     },
                     BindGroupEntry {
                         binding: 1,
-                        resource: self.shared_key_layouts_buf.as_entire_binding(),
+                        resource: compute.shared_key_layouts_buf.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 2,
@@ -467,19 +385,19 @@ impl Renderer {
                     },
                     BindGroupEntry {
                         binding: 4,
-                        resource: self.palette_buffer.as_entire_binding(),
+                        resource: compute.palette_buffer.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 5,
-                        resource: self.instance_buffer.as_entire_binding(),
+                        resource: compute.instance_buffer.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 6,
-                        resource: self.counter_buffer.as_entire_binding(),
+                        resource: compute.counter_buffer.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 7,
-                        resource: self.scan_buffer.as_entire_binding(),
+                        resource: compute.scan_buffer.as_entire_binding(),
                     },
                 ],
             });
@@ -496,20 +414,76 @@ impl Renderer {
             chunk_start = chunk_end;
         }
 
-        self.note_bundles.insert(id, GpuNoteBundle { chunks });
+        chunks
     }
 
-    pub fn remove_note_data(&mut self, id: usize) {
-        self.note_bundles.remove(&id);
+    fn build_chunk_info(
+        chunk_start: u32,
+        chunk_end: u32,
+        key_notes: &[Vec<GpuNote>; 128],
+    ) -> [KeyInfo; 128] {
+        let mut info = [KeyInfo {
+            offset: 0,
+            count: 0,
+            slot: 0,
+        }; 128];
+        let mut note_offset: u32 = 0;
+        let mut white_idx = 0u32;
+        let mut black_idx = 75u32;
+
+        for key in chunk_start..chunk_end {
+            let n = key_notes[key as usize].len() as u32;
+            let slot = if keyboard::is_black_key(key as u8) {
+                let s = black_idx;
+                black_idx += 1;
+                s
+            } else {
+                let s = white_idx;
+                white_idx += 1;
+                s
+            };
+            info[key as usize] = KeyInfo {
+                offset: note_offset,
+                count: n,
+                slot,
+            };
+            note_offset += n;
+        }
+
+        info
     }
 
-    fn update_shared_key_layouts(queue: &Queue, buf: &Buffer, width: u32, equal_key_width: bool) {
-        let layouts = keyboard::compute_key_layouts(width, equal_key_width);
-        let layout_data: Vec<f32> = layouts.iter().flat_map(|(x, w)| [*x, *w]).collect();
-        queue.write_buffer(buf, 0, bytemuck::cast_slice(&layout_data));
+    fn update_palette(&mut self, palette: &[[f32; 3]; 128]) {
+        if *palette != self.cached_palette {
+            let palette_flat: Vec<f32> = palette
+                .iter()
+                .flat_map(|c| [c[0], c[1], c[2], 0.0f32])
+                .collect();
+            self.queue.write_buffer(
+                &self.compute.palette_buffer,
+                0,
+                bytemuck::cast_slice(&palette_flat),
+            );
+            self.cached_palette = *palette;
+        }
     }
 
-    fn update_keyboard_scans(
+    fn upload_scans(
+        &mut self,
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
+        time: f64,
+        scroll_tick: f64,
+        mode: RenderMode,
+    ) {
+        profile_scope!("scans");
+        Self::advance_scan_indices(midi, state, time, scroll_tick, mode);
+        let scans_u32: [u32; 128] = std::array::from_fn(|i| state.scan_indices[i] as u32);
+        self.queue
+            .write_buffer(&self.compute.scan_buffer, 0, bytemuck::bytes_of(&scans_u32));
+    }
+
+    fn advance_scan_indices(
         midi: &dyn NoteSource,
         state: &mut MidiRenderState,
         time: f64,
@@ -554,189 +528,59 @@ impl Renderer {
         }
     }
 
-    pub fn render(
-        &mut self,
-        encoder: &mut CommandEncoder,
-        target: &TextureView,
-        width: u32,
-        height: u32,
-        time: f64,
-        speed: f32,
-        midi: Option<&dyn NoteSource>,
-        render_state: &mut MidiRenderState,
-        note_data_id: Option<usize>,
-        style: &RenderStyle,
-        clear_background: bool,
-    ) {
-        profile_scope!("render");
-        let mode: u32 = match style.render_mode {
-            RenderMode::TimeBased => 0,
-            RenderMode::TickBased => 1,
-        };
-        let tpb = midi.and_then(|m| m.ticks_per_beat()).unwrap_or(480) as f32;
-        let scroll_tick = midi
-            .and_then(|m| m.tick_at_time(time))
-            .unwrap_or(time * tpb as f64 * 2.0) as f32;
-
-        let base_uniforms = ComputeUniforms {
-            time: time as f32,
-            scroll_tick,
-            width: width as f32,
-            height: height as f32,
-            speed,
-            keyboard_height: style.keyboard_height,
-            border_width: style.border_width,
-            rounding: style.rounding,
-            mode,
-            ticks_per_beat: tpb,
-            equal_key_width: if style.equal_key_width { 1 } else { 0 },
-            key_offset: 0,
-            key_count: 0,
-        };
-
-        // Write per-chunk uniforms BEFORE creating the encoder (safe ordering)
-        let bundle = note_data_id.and_then(|id| self.note_bundles.get(&id));
-        if let Some(bundle) = bundle {
-            for chunk in &bundle.chunks {
-                let u = ComputeUniforms {
-                    key_offset: chunk.key_offset,
-                    key_count: chunk.key_count,
-                    ..base_uniforms
-                };
-                self.queue
-                    .write_buffer(&chunk.uniform_buf, 0, bytemuck::bytes_of(&u));
-            }
-        }
-
-        // Update palette (only when changed)
-        if style.palette != self.cached_palette {
-            let palette_flat: Vec<f32> = style
-                .palette
-                .iter()
-                .flat_map(|c| [c[0], c[1], c[2], 0.0f32])
-                .collect();
-            self.queue
-                .write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(&palette_flat));
-            self.cached_palette = style.palette;
-        }
-
-        // Update keyboard scans (used for both CPU keyboard and GPU compute scan skipping)
-        profile_scope!("scans");
-        if let Some(midi) = midi {
-            Self::update_keyboard_scans(
-                midi,
-                render_state,
-                time,
-                scroll_tick as f64,
-                style.render_mode,
+    fn update_key_layouts(&mut self, width: u32, equal_key_width: bool) {
+        if width != self.current_width || equal_key_width != self.current_equal_key_width {
+            Self::update_shared_key_layouts(
+                &self.queue,
+                &self.compute.shared_key_layouts_buf,
+                width,
+                equal_key_width,
             );
-            let scans_u32: [u32; 128] =
-                std::array::from_fn(|i| render_state.scan_indices[i] as u32);
-            self.queue
-                .write_buffer(&self.scan_buffer, 0, bytemuck::bytes_of(&scans_u32));
-        }
-
-        // Update shared key layouts if needed
-        let eqw = style.equal_key_width;
-        if width != self.current_width || eqw != self.current_equal_key_width {
-            Self::update_shared_key_layouts(&self.queue, &self.shared_key_layouts_buf, width, eqw);
             self.current_width = width;
-            self.current_equal_key_width = eqw;
+            self.current_equal_key_width = equal_key_width;
         }
+    }
 
-        // Existing render uniforms (for vertex/fragment shader)
+    fn write_render_uniforms(&mut self, time: f64, width: u32, height: u32) {
         let uniforms = Uniforms {
             time: time as f32,
             width: width as f32,
             height: height as f32,
             _pad: 0.0,
         };
-        self.queue
-            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.queue.write_buffer(
+            &self.render.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
+    }
 
-        // Reset counter before compute
-        encoder.clear_buffer(&self.counter_buffer, 0, Some(4));
-
-        let mut has_notes = false;
-        if let Some(bundle) = bundle {
-            if !bundle.chunks.is_empty() {
-                has_notes = true;
-                {
-                    profile_scope!("compute_pass");
-                    let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                        label: Some("compute_notes_pass"),
-                        timestamp_writes: self.timestamp_query_set.as_ref().map(|qs| {
-                            ComputePassTimestampWrites {
-                                query_set: qs,
-                                beginning_of_pass_write_index: Some(0),
-                                end_of_pass_write_index: Some(1),
-                            }
-                        }),
-                    });
-                    cpass.set_pipeline(&self.compute_pipeline);
-                    for chunk in &bundle.chunks {
-                        cpass.set_bind_group(0, &chunk.bind_group, &[]);
-                        // workgroup_size(64): ceil(key_count / 64) workgroups
-                        cpass.dispatch_workgroups((chunk.key_count + 63) / 64, 1, 1);
-                    }
-                }
-                // Copy counter → indirect draw instance_count (offset 4)
-                encoder.copy_buffer_to_buffer(
-                    &self.counter_buffer,
-                    0,
-                    &self.indirect_draw_buffer,
-                    4,
-                    4,
-                );
-            }
-        }
-
-        // ---- CPU keyboard computation (avoids GPU compute→render pipeline barrier) ----
-        profile_scope!("keyboard");
-        let draw_keyboard = style.keyboard_height > 0.0 && midi.is_some();
-        if draw_keyboard {
-            let current_scroll_tick = scroll_tick as f64;
-            let keyboard_changed = self.keyboard_dirty
-                || (time - self.cached_keyboard_time).abs() > f64::EPSILON
-                || (current_scroll_tick - self.cached_scroll_tick).abs() > f64::EPSILON
-                || (style.keyboard_height - self.cached_keyboard_height).abs() > f32::EPSILON
-                || width != self.current_width
-                || style.equal_key_width != self.current_equal_key_width;
-
-            if keyboard_changed {
-                let instances = keyboard::build_keyboard_instances(
-                    width,
-                    height,
-                    time,
-                    midi.unwrap(),
-                    style,
-                    render_state,
-                );
-                self.queue
-                    .write_buffer(&self.keyboard_buffer, 0, bytemuck::cast_slice(&instances));
-                self.keyboard_dirty = false;
-                self.cached_keyboard_time = time;
-                self.cached_scroll_tick = current_scroll_tick;
-                self.cached_keyboard_height = style.keyboard_height;
-            }
-        }
+    fn execute_render_pass(
+        &self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        has_notes: bool,
+        draw_keyboard: bool,
+        background: [f64; 4],
+        clear_background: bool,
+    ) {
+        profile_scope!("render_pass");
 
         let load_op = if clear_background {
             LoadOp::Clear(Color {
-                r: style.background[0],
-                g: style.background[1],
-                b: style.background[2],
-                a: style.background[3],
+                r: background[0],
+                g: background[1],
+                b: background[2],
+                a: background[3],
             })
         } else {
             LoadOp::Load
         };
 
-        {
-            profile_scope!("render_pass");
-            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        let mut pass =
+            encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("render_pass"),
-                timestamp_writes: self.timestamp_query_set.as_ref().map(|qs| {
+                timestamp_writes: self.timer.query_set.as_ref().map(|qs| {
                     RenderPassTimestampWrites {
                         query_set: qs,
                         beginning_of_pass_write_index: Some(2),
@@ -757,101 +601,19 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            if has_notes {
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.render_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-                pass.draw_indirect(&self.indirect_draw_buffer, 0);
-            }
-
-            if draw_keyboard {
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.render_bind_group, &[]);
-                pass.set_vertex_buffer(0, self.keyboard_buffer.slice(..));
-                pass.draw(0..6, 0..75); // white keys (slots 0-74)
-                pass.draw(0..6, 75..128); // black keys (slots 75-127)
-            }
+        if has_notes {
+            pass.set_pipeline(&self.render.pipeline);
+            pass.set_bind_group(0, &self.render.bind_group, &[]);
+            pass.set_vertex_buffer(0, self.compute.instance_buffer.slice(..));
+            pass.draw_indirect(&self.compute.indirect_draw_buffer, 0);
         }
 
-        // (encoder is submitted by caller — no queue.submit here)
-
-        // ── Resolve GPU timestamps ──────────────────────────────────────────
-        if let (Some(qs), Some(resolve_buf), Some(readback_buf)) = (
-            &self.timestamp_query_set,
-            &self.timestamp_resolve_buffer,
-            &self.timestamp_readback_buffer,
-        ) {
-            encoder.resolve_query_set(qs, 0..4, resolve_buf, 0);
-            encoder.copy_buffer_to_buffer(
-                resolve_buf,
-                0,
-                readback_buf,
-                0,
-                4 * std::mem::size_of::<u64>() as u64,
-            );
+        if draw_keyboard {
+            pass.set_pipeline(&self.render.pipeline);
+            pass.set_bind_group(0, &self.render.bind_group, &[]);
+            pass.set_vertex_buffer(0, self.compute.keyboard_buffer.slice(..));
+            pass.draw(0..6, 0..75); // white keys (slots 0-74)
+            pass.draw(0..6, 75..128); // black keys (slots 75-127)
         }
-    }
-
-    /// Whether GPU timestamp queries are supported on this device.
-    pub fn gpu_timing_available(&self) -> bool {
-        self.gpu_timing_supported
-    }
-
-    /// Read back GPU timestamps from the previous frame.
-    /// Returns `(compute_ms, render_ms)` or `None` if unsupported or timed out.
-    pub fn read_gpu_timings(&self) -> Option<(f64, f64)> {
-        let readback_buf = self.timestamp_readback_buffer.as_ref()?;
-        let slice = readback_buf.slice(..);
-
-        // Map the buffer for reading
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-
-        // Poll in a loop with timeout — Metal backend doesn't always
-        // drive the mapping callback via PollType::Wait alone.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let mut done = false;
-        while std::time::Instant::now() < deadline && !done {
-            let _ = self.device.poll(PollType::Poll);
-            done = rx.try_recv().is_ok();
-            if !done {
-                std::thread::yield_now();
-            }
-        }
-        if !done {
-            // Timed out — map may still be pending; ignore this frame
-            return None;
-        }
-
-        let data = slice.get_mapped_range();
-        let timestamps: &[u64] = bytemuck::cast_slice(&data);
-
-        if timestamps.len() < 4 {
-            return None;
-        }
-
-        // Convert timestamp deltas to milliseconds
-        let period = self.timestamp_period as f64;
-        let ns_to_ms = 1_000_000.0;
-
-        // Guard against timestamp wrapping/ordering issues
-        let compute_ns = if timestamps[1] > timestamps[0] {
-            (timestamps[1] - timestamps[0]) as f64 * period
-        } else {
-            0.0
-        };
-        let render_ns = if timestamps[3] > timestamps[2] {
-            (timestamps[3] - timestamps[2]) as f64 * period
-        } else {
-            0.0
-        };
-
-        // Drop the mapped range so buffer can be used again next frame
-        drop(data);
-        readback_buf.unmap();
-
-        Some((compute_ns / ns_to_ms, render_ns / ns_to_ms))
     }
 }

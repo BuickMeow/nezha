@@ -1,5 +1,21 @@
-use crate::style::{MidiRenderState, NoteSource, RenderStyle};
+use crate::state::MidiRenderState;
+use crate::style::NoteSource;
 use crate::types::{NoteInstance, pack_props, pack_rgba};
+
+// ── Keyboard appearance constants ───────────────────────────────────────────
+
+/// Default white key color (light grey).
+const WHITE_KEY_COLOR: (f32, f32, f32) = (0.94, 0.94, 0.94);
+/// Default black key color (dark grey).
+const BLACK_KEY_COLOR: (f32, f32, f32) = (0.16, 0.16, 0.17);
+/// Black key height as a fraction of total keyboard height.
+const BLACK_KEY_HEIGHT_RATIO: f32 = 0.6;
+/// Corner radius for white keys.
+const WHITE_KEY_CORNER_RADIUS: f32 = 2.0;
+/// Corner radius for black keys.
+const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;
+/// Border width for all keys.
+const KEY_BORDER_WIDTH: f32 = 0.5;
 
 pub(crate) fn is_black_key(key: u8) -> bool {
     matches!(key % 12, 1 | 3 | 6 | 8 | 10)
@@ -41,12 +57,14 @@ pub(crate) fn build_keyboard_instances(
     height: u32,
     time: f64,
     midi: &dyn NoteSource,
-    style: &RenderStyle,
+    keyboard_height: f32,
+    equal_key_width: bool,
+    palette: &[[f32; 3]; 128],
     state: &MidiRenderState,
 ) -> Vec<NoteInstance> {
-    let kh = style.keyboard_height.max(1.0);
+    let kh = keyboard_height.max(1.0);
     let key_top = height as f32 - kh;
-    let layouts = compute_key_layouts(width, style.equal_key_width);
+    let layouts = compute_key_layouts(width, equal_key_width);
 
     let mut active_keys = [false; 128];
     let mut active_colors = [[0.0f32; 3]; 128];
@@ -60,14 +78,14 @@ pub(crate) fn build_keyboard_instances(
             if time < note.end {
                 active_keys[key as usize] = true;
                 let trk = note.track as usize % 128;
-                active_colors[key as usize] = style.palette[trk];
+                active_colors[key as usize] = palette[trk];
                 break;
             }
         }
     }
 
     let mut instances = Vec::with_capacity(256);
-    let black_h = kh * 0.6;
+    let black_h = kh * BLACK_KEY_HEIGHT_RATIO;
 
     // White keys first
     for key in 0..128u8 {
@@ -82,7 +100,7 @@ pub(crate) fn build_keyboard_instances(
             let [cr, cg, cb] = active_colors[key as usize];
             (cr, cg, cb)
         } else {
-            (0.94, 0.94, 0.94)
+            WHITE_KEY_COLOR
         };
         instances.push(NoteInstance {
             x,
@@ -90,7 +108,7 @@ pub(crate) fn build_keyboard_instances(
             w,
             h: kh,
             rgba_packed: pack_rgba(r, g, b, 1.0),
-            props_packed: pack_props(2.0, 0.5),
+            props_packed: pack_props(WHITE_KEY_CORNER_RADIUS, KEY_BORDER_WIDTH),
             velocity: 0,
             flags: 0,
         });
@@ -109,7 +127,7 @@ pub(crate) fn build_keyboard_instances(
             let [cr, cg, cb] = active_colors[key as usize];
             (cr, cg, cb)
         } else {
-            (0.16, 0.16, 0.17)
+            BLACK_KEY_COLOR
         };
         instances.push(NoteInstance {
             x,
@@ -117,7 +135,7 @@ pub(crate) fn build_keyboard_instances(
             w,
             h: black_h,
             rgba_packed: pack_rgba(r, g, b, 1.0),
-            props_packed: pack_props(1.5, 0.5),
+            props_packed: pack_props(BLACK_KEY_CORNER_RADIUS, KEY_BORDER_WIDTH),
             velocity: 0,
             flags: 0,
         });
