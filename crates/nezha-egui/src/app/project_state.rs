@@ -71,48 +71,7 @@ impl ProjectState {
     /// 返回 Ok(idx) 表示加载成功及新 MIDI 的索引
     pub fn load_midi(&mut self, path: String) -> Result<usize, String> {
         match MidiFile::load(&path) {
-            Ok(midi) => {
-                // 限制最大 MIDI 文件数，防止内存无限增长
-                if self.midi_files.len() >= MAX_MIDI_FILES {
-                    self.midi_files.remove(0);
-                    // 更新高亮索引和 clip 引用
-                    if let Some(ref mut h) = self.highlighted_midi_idx {
-                        if *h == 0 {
-                            *h = self.midi_files.len().saturating_sub(1);
-                        } else {
-                            *h -= 1;
-                        }
-                    }
-                    for track in &mut self.timeline_state.data.tracks {
-                        for clip in &mut track.clips {
-                            match clip.midi_idx {
-                                Some(0) => clip.midi_idx = None,
-                                Some(i) => clip.midi_idx = Some(i - 1),
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                let idx = self.midi_files.len();
-                self.midi_files.push(MidiEntry { path, file: midi });
-                self.highlighted_midi_idx = Some(idx);
-                // 把所有未绑定的瀑布流 clip 都绑定到这个新 MIDI
-                for track in &mut self.timeline_state.data.tracks {
-                    for clip in &mut track.clips {
-                        if clip.kind == crate::transport::ClipKind::Waterfall
-                            && clip.midi_idx.is_none()
-                        {
-                            clip.midi_idx = Some(idx);
-                        }
-                    }
-                }
-                let dur = self.duration();
-                self.timeline_state.update_duration(dur as f32);
-                self.current_time = 0.0;
-                self.playback_start = None;
-                let idx = self.midi_files.len() - 1;
-                Ok(idx)
-            }
+            Ok(midi) => Ok(self.insert_midi(path, midi)),
             Err(e) => {
                 let msg = format!("MIDI 加载失败: {}", e);
                 eprintln!("{}", msg);
@@ -120,6 +79,47 @@ impl ProjectState {
                 Err(msg)
             }
         }
+    }
+
+    /// 将已解析的 MidiFile 插入项目，执行所有后处理逻辑
+    pub fn insert_midi(&mut self, path: String, midi: MidiFile) -> usize {
+        // 限制最大 MIDI 文件数，防止内存无限增长
+        if self.midi_files.len() >= MAX_MIDI_FILES {
+            self.midi_files.remove(0);
+            // 更新高亮索引和 clip 引用
+            if let Some(ref mut h) = self.highlighted_midi_idx {
+                if *h == 0 {
+                    *h = self.midi_files.len().saturating_sub(1);
+                } else {
+                    *h -= 1;
+                }
+            }
+            for track in &mut self.timeline_state.data.tracks {
+                for clip in &mut track.clips {
+                    match clip.midi_idx {
+                        Some(0) => clip.midi_idx = None,
+                        Some(i) => clip.midi_idx = Some(i - 1),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let idx = self.midi_files.len();
+        self.midi_files.push(MidiEntry { path, file: midi });
+        self.highlighted_midi_idx = Some(idx);
+        // 把所有未绑定的瀑布流 clip 都绑定到这个新 MIDI
+        for track in &mut self.timeline_state.data.tracks {
+            for clip in &mut track.clips {
+                if clip.kind == crate::transport::ClipKind::Waterfall && clip.midi_idx.is_none() {
+                    clip.midi_idx = Some(idx);
+                }
+            }
+        }
+        let dur = self.duration();
+        self.timeline_state.update_duration(dur as f32);
+        self.current_time = 0.0;
+        self.playback_start = None;
+        idx
     }
 
     pub fn remove_midi(&mut self, idx: usize) {

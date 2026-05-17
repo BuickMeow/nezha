@@ -14,10 +14,24 @@ pub use project_state::ProjectState;
 pub use render_context::RenderContext;
 pub use ui_state::{ThemeMode, UiState};
 
+use std::sync::mpsc;
+
+enum MidiLoadEvent {
+    Progress(nezha_core::LoadProgress),
+    Complete(Result<nezha_core::MidiFile, nezha_core::MidiError>),
+}
+
+struct MidiLoader {
+    path: String,
+    rx: mpsc::Receiver<MidiLoadEvent>,
+    current_progress: Option<nezha_core::LoadProgress>,
+}
+
 pub struct App {
     pub render_ctx: RenderContext,
     pub project: ProjectState,
     pub ui: UiState,
+    midi_loader: Option<MidiLoader>,
 }
 
 /// 图层渲染所需数据（复制自 TrackClip，避免持有 self 的引用）
@@ -66,21 +80,34 @@ impl App {
             render_ctx: RenderContext::new(cc, 1920, 1080),
             project: ProjectState::new(),
             ui: UiState::default(),
+            midi_loader: None,
         }
     }
 
     pub fn pick_midi_file(&mut self) {
+        if self.midi_loader.is_some() {
+            return;
+        }
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("MIDI", &["mid", "midi"])
             .pick_file()
         {
-            if self
-                .project
-                .load_midi(path.to_string_lossy().to_string())
-                .is_ok()
-            {
-                self.render_ctx.reset_midi_state();
-            }
+            let path_str = path.to_string_lossy().to_string();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn({
+                let path = path_str.clone();
+                move || {
+                    let result = nezha_core::MidiFile::load_with_progress(&path, |p| {
+                        let _ = tx.send(MidiLoadEvent::Progress(p));
+                    });
+                    let _ = tx.send(MidiLoadEvent::Complete(result));
+                }
+            });
+            self.midi_loader = Some(MidiLoader {
+                path: path_str,
+                rx,
+                current_progress: None,
+            });
         }
     }
 
@@ -375,6 +402,69 @@ impl eframe::App for App {
 
             ui.ctx().request_repaint();
         });
+
+        // 处理 MIDI 异步加载事件
+        if let Some(mut loader) = self.midi_loader.take() {
+            let mut done = false;
+            while let Ok(event) = loader.rx.try_recv() {
+                match event {
+                    MidiLoadEvent::Progress(p) => loader.current_progress = Some(p),
+                    MidiLoadEvent::Complete(result) => {
+                        match result {
+                            Ok(midi) => {
+                                let path = loader.path.clone();
+                                let _idx = self.project.insert_midi(path, midi);
+                                self.render_ctx.reset_midi_state();
+                            }
+                            Err(e) => {
+                                self.project.last_error = Some(format!("MIDI 加载失败: {}", e));
+                            }
+                        }
+                        done = true;
+                        break;
+                    }
+                }
+            }
+            if !done {
+                self.midi_loader = Some(loader);
+            }
+        }
+
+        // 加载对话框
+        if let Some(loader) = &self.midi_loader {
+            let screen_rect = ui.ctx().content_rect();
+            ui.ctx()
+                .layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    "midi_loading_overlay".into(),
+                ))
+                .rect_filled(
+                    screen_rect,
+                    0.0,
+                    egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
+                );
+
+            egui::Window::new("正在加载 MIDI")
+                .order(egui::Order::Tooltip)
+                .collapsible(false)
+                .resizable(false)
+                .movable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ui.ctx(), |ui| {
+                    if let Some(progress) = &loader.current_progress {
+                        ui.label(format!(
+                            "正在解析音轨 {} / {}",
+                            progress.current_track, progress.total_tracks
+                        ));
+                        let ratio =
+                            progress.current_track as f32 / progress.total_tracks.max(1) as f32;
+                        ui.add(egui::ProgressBar::new(ratio).show_percentage());
+                    } else {
+                        ui.label("正在读取文件...");
+                        ui.add(egui::Spinner::new());
+                    }
+                });
+        }
 
         // 错误提示
         if let Some(err) = self.project.last_error.clone() {

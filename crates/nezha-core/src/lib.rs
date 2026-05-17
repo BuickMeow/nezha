@@ -82,8 +82,21 @@ pub struct TempoSegment {
     pub micros_per_quarter: u64,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct LoadProgress {
+    pub current_track: usize,
+    pub total_tracks: usize,
+}
+
 impl MidiFile {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, MidiError> {
+        Self::load_with_progress(path, |_| {})
+    }
+
+    pub fn load_with_progress(
+        path: impl AsRef<Path>,
+        mut progress: impl FnMut(LoadProgress),
+    ) -> Result<Self, MidiError> {
         let data = std::fs::read(path.as_ref())?;
         let smf = midly::Smf::parse(&data)?;
 
@@ -97,8 +110,13 @@ impl MidiFile {
 
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
         let mut global_duration = 0.0f64;
+        let total_tracks = smf.tracks.len();
 
         for (track_idx, track) in smf.tracks.iter().enumerate() {
+            progress(LoadProgress {
+                current_track: track_idx + 1,
+                total_tracks,
+            });
             Self::parse_track(
                 track,
                 &tempo_segments,
