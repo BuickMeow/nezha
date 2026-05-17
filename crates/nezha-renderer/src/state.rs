@@ -1,3 +1,4 @@
+/// Mutable scan state used during rendering to skip already-passed notes.
 pub struct MidiRenderState {
     pub(crate) scan_indices: [usize; 128],
     pub(crate) last_time: f64,

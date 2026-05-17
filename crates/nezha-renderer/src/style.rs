@@ -1,6 +1,6 @@
 use nezha_core::MidiFile;
 
-/// 音符数据源抽象，解耦 renderer 与具体 MIDI 格式
+/// Abstraction over a MIDI note source, decoupling the renderer from any specific format.
 pub trait NoteSource {
     fn key_notes(&self, key: u8) -> &[nezha_core::Note];
     fn duration(&self) -> f64;
@@ -12,12 +12,16 @@ pub trait NoteSource {
     }
 }
 
+/// How the renderer maps time to vertical position.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RenderMode {
+    /// Scroll based on wall-clock time (seconds).
     TimeBased,
+    /// Scroll based on MIDI ticks.
     TickBased,
 }
 
+/// Visual style configuration for a render pass.
 #[derive(Clone)]
 pub struct RenderStyle {
     pub render_mode: RenderMode,
@@ -45,6 +49,7 @@ impl Default for RenderStyle {
     }
 }
 
+/// Generate a deterministic pseudo-random HSV palette with 128 entries.
 pub fn random_palette() -> [[f32; 3]; 128] {
     let mult = 0.12345f32;
     let mut palette = [[0.0f32; 3]; 128];

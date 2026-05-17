@@ -102,17 +102,21 @@ impl GpuTimer {
     }
 
     pub fn resolve(&self, encoder: &mut CommandEncoder) {
-        if let (Some(qs), Some(resolve_buf), Some(_readback_buf)) =
-            (&self.query_set, &self.resolve_buffer, &self.readback_buffer)
-        {
-            encoder.resolve_query_set(qs, 0..4, resolve_buf, 0);
-            encoder.copy_buffer_to_buffer(
-                resolve_buf,
-                0,
-                self.readback_buffer.as_ref().unwrap(),
-                0,
-                4 * std::mem::size_of::<u64>() as u64,
-            );
-        }
+        let (qs, resolve_buf, readback_buf) = match (
+            self.query_set.as_ref(),
+            self.resolve_buffer.as_ref(),
+            self.readback_buffer.as_ref(),
+        ) {
+            (Some(qs), Some(resolve), Some(readback)) => (qs, resolve, readback),
+            _ => return,
+        };
+        encoder.resolve_query_set(qs, 0..4, resolve_buf, 0);
+        encoder.copy_buffer_to_buffer(
+            resolve_buf,
+            0,
+            readback_buf,
+            0,
+            4 * std::mem::size_of::<u64>() as u64,
+        );
     }
 }

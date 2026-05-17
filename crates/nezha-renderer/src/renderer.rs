@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use wgpu::*;
 
+use crate::compute::{
+    ComputeUniforms, GpuNote, GpuNoteBundle, GpuNoteChunk, KeyInfo, MAX_INSTANCE_COUNT,
+};
 use crate::gpu_timer::GpuTimer;
 use crate::keyboard;
 use crate::pipeline::{ComputePipelineState, RenderPipelineState};
 use crate::state::MidiRenderState;
 use crate::style::{NoteSource, RenderMode, RenderStyle};
-use crate::types::{
-    ComputeUniforms, GpuNote, GpuNoteBundle, GpuNoteChunk, KeyInfo, MAX_INSTANCE_COUNT,
-    NoteInstance, Uniforms,
-};
+use crate::vertex::{NoteInstance, Uniforms};
 
 #[cfg(feature = "profiling")]
 macro_rules! profile_scope {
@@ -44,6 +44,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Create a new renderer with the given wgpu device, queue, and swap-chain format.
     pub fn new(device: Device, queue: Queue, format: TextureFormat) -> Self {
         let render_shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("waterfall_shader"),
@@ -85,6 +86,8 @@ impl Renderer {
         }
     }
 
+    /// Upload note data from a [`NoteSource`] to the GPU.
+    /// Notes are automatically split into chunks to stay within GPU buffer limits.
     pub fn upload_note_data(
         &mut self,
         id: usize,
@@ -122,10 +125,23 @@ impl Renderer {
         self.note_bundles.insert(id, GpuNoteBundle { chunks });
     }
 
+    /// Remove previously uploaded note data by its ID.
     pub fn remove_note_data(&mut self, id: usize) {
         self.note_bundles.remove(&id);
     }
 
+    /// Render one frame.
+    ///
+    /// * `encoder` — command encoder to record into.
+    /// * `target` — texture view to render into.
+    /// * `width` / `height` — viewport size in pixels.
+    /// * `time` — current playback time in seconds.
+    /// * `speed` — vertical scroll speed.
+    /// * `midi` — optional note source for live keyboard highlights.
+    /// * `render_state` — mutable scan state for fast forward / rewind.
+    /// * `note_data_id` — ID returned by [`upload_note_data`](Self::upload_note_data).
+    /// * `style` — visual style configuration.
+    /// * `clear_background` — whether to clear the target before drawing.
     pub fn render(
         &mut self,
         encoder: &mut CommandEncoder,

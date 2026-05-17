@@ -1,8 +1,8 @@
 use wgpu::*;
 
-use crate::types::{NoteInstance, Uniforms};
+use crate::vertex::{NoteInstance, Uniforms};
 
-/// Render pipeline state: shader pipeline + uniform buffer + bind group.
+/// Owns the render pipeline and its associated uniform buffer / bind group.
 pub struct RenderPipelineState {
     pub pipeline: RenderPipeline,
     pub uniform_buffer: Buffer,
@@ -91,7 +91,7 @@ impl RenderPipelineState {
     }
 }
 
-/// Compute pipeline state: shader pipeline + all shared buffers + BGL.
+/// Owns the compute pipeline and all shared GPU buffers used by the compute shader.
 pub struct ComputePipelineState {
     pub pipeline: ComputePipeline,
     pub bgl: BindGroupLayout,

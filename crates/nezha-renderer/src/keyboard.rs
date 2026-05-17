@@ -1,6 +1,6 @@
 use crate::state::MidiRenderState;
 use crate::style::NoteSource;
-use crate::types::{NoteInstance, pack_props, pack_rgba};
+use crate::vertex::{NoteInstance, pack_props, pack_rgba};
 
 // ── Keyboard appearance constants ───────────────────────────────────────────
 
@@ -17,10 +17,12 @@ const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;
 /// Border width for all keys.
 const KEY_BORDER_WIDTH: f32 = 0.5;
 
+/// Returns `true` if the given MIDI key number is a black key.
 pub(crate) fn is_black_key(key: u8) -> bool {
     matches!(key % 12, 1 | 3 | 6 | 8 | 10)
 }
 
+/// Compute screen-space x-offset and width for each of the 128 keys.
 pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f32)> {
     let mut layouts = Vec::with_capacity(128);
     if equal_width {
@@ -52,6 +54,7 @@ pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f3
     layouts
 }
 
+/// Build vertex instances for the on-screen piano keyboard.
 pub(crate) fn build_keyboard_instances(
     width: u32,
     height: u32,
@@ -71,16 +74,22 @@ pub(crate) fn build_keyboard_instances(
     for key in 0..128u8 {
         let notes = midi.key_notes(key);
         let scan = state.scan_indices[key as usize];
+        let mut color = None;
         for note in notes[scan..].iter() {
             if note.start > time {
                 break;
             }
             if time < note.end {
-                active_keys[key as usize] = true;
+                // Keep iterating: because notes are sorted by start time,
+                // the last matching note is the one with the largest start
+                // (i.e. the top-most note visually, closest to the keyboard).
                 let trk = note.track as usize % 128;
-                active_colors[key as usize] = palette[trk];
-                break;
+                color = Some(palette[trk]);
             }
+        }
+        if let Some(c) = color {
+            active_keys[key as usize] = true;
+            active_colors[key as usize] = c;
         }
     }
 
