@@ -11,13 +11,13 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 bytemuck = { workspace = true }
 nezha-core = { path = "../nezha-core" }
-half = "2"
+half = "2.7.1"
 puffin = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
 puffin = { workspace = true }
-puffin_http = "0.17"
+puffin_http = "0.17.0"
 
 [[bench]]
 name = "render_bench"
