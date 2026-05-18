@@ -9,7 +9,10 @@ pub struct MidiEntry {
     pub file: MidiFile,
 }
 
+/// 最大同时加载的 MIDI 文件数量。
 const MAX_MIDI_FILES: usize = 16;
+/// 无 MIDI 时的默认时长（秒）。
+const DEFAULT_DURATION_SECS: f64 = 120.0;
 
 pub struct ProjectState {
     pub is_playing: bool,
@@ -65,7 +68,9 @@ impl ProjectState {
 
     /// 当前总时长（由高亮 MIDI 决定，如果没有则默认 120s）
     pub fn duration(&self) -> f64 {
-        self.highlighted_midi().map(|m| m.duration).unwrap_or(120.0)
+        self.highlighted_midi()
+            .map(|m| m.duration)
+            .unwrap_or(DEFAULT_DURATION_SECS)
     }
 
     /// 返回 Ok(idx) 表示加载成功及新 MIDI 的索引

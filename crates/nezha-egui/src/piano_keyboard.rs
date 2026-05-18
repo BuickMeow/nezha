@@ -1,5 +1,33 @@
 use eframe::egui;
+use nezha_core::is_black_key;
 use nezha_renderer::NoteSource;
+
+// ── Appearance constants ─────────────────────────────────────────────────
+
+/// 黑键高度占白键的比例
+const BLACK_KEY_HEIGHT_RATIO: f32 = 0.6;
+
+/// 等宽模式下黑键宽度占白键的比例
+const EQUAL_BLACK_KEY_WIDTH_RATIO: f32 = 0.7;
+
+/// 真实钢琴比例下黑键宽度占白键的比例
+const REALISTIC_BLACK_KEY_WIDTH_RATIO: f32 = 0.65;
+
+/// 黑键水平偏移比例（用于居中黑键）
+const BLACK_KEY_OFFSET_RATIO: f32 = 0.5;
+
+/// 白键默认颜色
+const WHITE_KEY_DEFAULT: egui::Color32 = egui::Color32::from_rgb(240, 240, 240);
+/// 黑键默认颜色
+const BLACK_KEY_DEFAULT: egui::Color32 = egui::Color32::from_rgb(40, 40, 42);
+/// 白键高亮颜色
+const WHITE_KEY_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgb(255, 200, 100);
+/// 黑键高亮颜色
+const BLACK_KEY_HIGHLIGHT: egui::Color32 = egui::Color32::from_rgb(255, 180, 60);
+/// 白键边框颜色
+const WHITE_KEY_BORDER: egui::Color32 = egui::Color32::from_rgb(180, 180, 180);
+/// 黑键边框颜色
+const BLACK_KEY_BORDER: egui::Color32 = egui::Color32::BLACK;
 
 /// 钢琴键盘高度配置：百分比或像素
 #[derive(Clone, Debug, PartialEq)]
@@ -42,11 +70,6 @@ impl Default for KeyboardRange {
             max_key: 127,
         }
     }
-}
-
-/// 判断 MIDI key 是否为黑键
-pub fn is_black_key(key: u8) -> bool {
-    matches!(key % 12, 1 | 3 | 6 | 8 | 10)
 }
 
 /// 白键在可视范围内的序号（从 min_key 开始计数）
@@ -115,7 +138,7 @@ fn draw_equal_width_keys(
     let key_w = rect.width() / total_keys;
     let h = rect.height();
     let white_h = h;
-    let black_h = h * 0.6;
+    let black_h = h * BLACK_KEY_HEIGHT_RATIO;
 
     // 构建激活键查找
     let active_set: std::collections::HashSet<u8> = active_keys.iter().copied().collect();
@@ -138,17 +161,17 @@ fn draw_equal_width_keys(
             if let Some(&(r, g, b)) = color_map.get(&key) {
                 egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
             } else {
-                egui::Color32::from_rgb(255, 200, 100) // 默认暖色高亮
+                WHITE_KEY_HIGHLIGHT
             }
         } else {
-            egui::Color32::from_rgb(240, 240, 240) // 白键默认色
+            WHITE_KEY_DEFAULT
         };
 
         painter.rect_filled(key_rect, 1.0, color);
         painter.rect_stroke(
             key_rect,
             1.0,
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(180, 180, 180)),
+            egui::Stroke::new(0.5, WHITE_KEY_BORDER),
             egui::StrokeKind::Inside,
         );
     }
@@ -160,7 +183,7 @@ fn draw_equal_width_keys(
         }
         let idx = (key - min_key) as f32;
         let x = rect.min.x + idx * key_w;
-        let black_w = key_w * 0.7;
+        let black_w = key_w * EQUAL_BLACK_KEY_WIDTH_RATIO;
         let offset_x = (key_w - black_w) / 2.0;
         let key_rect = egui::Rect::from_min_size(
             egui::pos2(x + offset_x, rect.min.y),
@@ -171,17 +194,17 @@ fn draw_equal_width_keys(
             if let Some(&(r, g, b)) = color_map.get(&key) {
                 egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
             } else {
-                egui::Color32::from_rgb(255, 180, 60) // 黑键高亮稍暗
+                BLACK_KEY_HIGHLIGHT
             }
         } else {
-            egui::Color32::from_rgb(40, 40, 42) // 黑键默认色
+            BLACK_KEY_DEFAULT
         };
 
         painter.rect_filled(key_rect, 1.0, color);
         painter.rect_stroke(
             key_rect,
             1.0,
-            egui::Stroke::new(0.5, egui::Color32::BLACK),
+            egui::Stroke::new(0.5, BLACK_KEY_BORDER),
             egui::StrokeKind::Inside,
         );
     }
@@ -201,9 +224,9 @@ fn draw_realistic_keys(
         return;
     }
     let white_w = rect.width() / white_count;
-    let black_w = white_w * 0.65;
+    let black_w = white_w * REALISTIC_BLACK_KEY_WIDTH_RATIO;
     let h = rect.height();
-    let black_h = h * 0.6;
+    let black_h = h * BLACK_KEY_HEIGHT_RATIO;
 
     let active_set: std::collections::HashSet<u8> = active_keys.iter().copied().collect();
     let color_map: std::collections::HashMap<u8, (f32, f32, f32)> = active_colors
@@ -226,17 +249,17 @@ fn draw_realistic_keys(
             if let Some(&(r, g, b)) = color_map.get(&key) {
                 egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
             } else {
-                egui::Color32::from_rgb(255, 200, 100)
+                WHITE_KEY_HIGHLIGHT
             }
         } else {
-            egui::Color32::from_rgb(240, 240, 240)
+            WHITE_KEY_DEFAULT
         };
 
         painter.rect_filled(key_rect, 1.0, color);
         painter.rect_stroke(
             key_rect,
             1.0,
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(180, 180, 180)),
+            egui::Stroke::new(0.5, WHITE_KEY_BORDER),
             egui::StrokeKind::Inside,
         );
     }
@@ -247,7 +270,7 @@ fn draw_realistic_keys(
             continue;
         }
         let white_before = white_key_index(key, min_key) as f32;
-        let x = rect.min.x + (white_before + 1.0) * white_w - black_w * 0.5;
+        let x = rect.min.x + (white_before + 1.0) * white_w - black_w * BLACK_KEY_OFFSET_RATIO;
         let key_rect =
             egui::Rect::from_min_size(egui::pos2(x, rect.min.y), egui::vec2(black_w, black_h));
 
@@ -255,17 +278,17 @@ fn draw_realistic_keys(
             if let Some(&(r, g, b)) = color_map.get(&key) {
                 egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
             } else {
-                egui::Color32::from_rgb(255, 180, 60)
+                BLACK_KEY_HIGHLIGHT
             }
         } else {
-            egui::Color32::from_rgb(40, 40, 42)
+            BLACK_KEY_DEFAULT
         };
 
         painter.rect_filled(key_rect, 1.0, color);
         painter.rect_stroke(
             key_rect,
             1.0,
-            egui::Stroke::new(0.5, egui::Color32::BLACK),
+            egui::Stroke::new(0.5, BLACK_KEY_BORDER),
             egui::StrokeKind::Inside,
         );
     }

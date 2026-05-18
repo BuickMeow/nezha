@@ -208,15 +208,10 @@ impl App {
             self.project.playback_start = None;
         }
     }
-}
 
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        #[cfg(feature = "profiling")]
-        puffin::GlobalProfiler::lock().new_frame();
+    // ── Input handling ─────────────────────────────────────────────────────
 
-        self.ui.theme_mode.apply(ui.ctx());
-
+    fn handle_input(&mut self, ui: &mut egui::Ui) {
         if ui.input(|i| i.key_pressed(egui::Key::Space)) {
             self.project.is_playing = !self.project.is_playing;
             self.project.playback_start = None;
@@ -240,170 +235,172 @@ impl eframe::App for App {
         if delete_pressed {
             self.project.timeline_state.remove_selected_clip();
         }
+    }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            let mut config_action: Option<config_panel::ConfigAction> = None;
+    // ── Side panels ────────────────────────────────────────────────────────
 
-            // 1. 左侧导航栏
-            egui::Panel::left("sidebar")
-                .exact_size(60.0)
-                .resizable(false)
-                .show_inside(ui, |ui| {
-                    sidebar::show(ui, &mut self.ui.active_tab);
-                });
+    fn render_side_panels(&mut self, ui: &mut egui::Ui) {
+        let mut config_action: Option<config_panel::ConfigAction> = None;
+        let dark_mode = self.ui.theme_mode.is_dark(ui.ctx());
+        self.project.timeline_state.fps = self.project.fps;
+        let dur = self.project.duration() as f32;
 
-            // 2. 底部走带
-            let dark_mode = self.ui.theme_mode.is_dark(ui.ctx());
-            self.project.timeline_state.fps = self.project.fps;
+        // Left sidebar
+        egui::Panel::left("sidebar")
+            .exact_size(60.0)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                sidebar::show(ui, &mut self.ui.active_tab);
+            });
 
-            let dur = self.project.duration() as f32;
-            egui::Panel::bottom("transport")
-                .exact_size(200.0)
-                .resizable(false)
-                .show_inside(ui, |ui| {
-                    let mut transport_time = self.project.current_time as f32;
-                    transport::show(
-                        ui,
-                        &mut self.project.is_playing,
-                        &mut transport_time,
-                        dur,
-                        &mut self.project.timeline_state,
-                        dark_mode,
-                    );
-                    self.project.current_time = transport_time as f64;
-                });
-
-            // 3. 配置面板
-            egui::Panel::left("config_panel")
-                .default_size(260.0)
-                .min_size(180.0)
-                .resizable(true)
-                .show_inside(ui, |ui| {
-                    let mut state = config_panel::ConfigState {
-                        active_tab: self.ui.active_tab,
-                        midi_files: &self.project.midi_files,
-                        highlighted_midi_idx: &mut self.project.highlighted_midi_idx,
-                        render_width: &mut self.project.render_width,
-                        render_height: &mut self.project.render_height,
-                        fps: &mut self.project.fps,
-                        export_format: &mut self.ui.export_format,
-                        encoder: &mut self.ui.encoder,
-                        export_path: &mut self.ui.export_path,
-                        theme_mode: &mut self.ui.theme_mode,
-                    };
-                    if let Some(action) = config_panel::show(ui, &mut state) {
-                        config_action = Some(action);
-                    }
-                });
-
-            if let Some(action) = config_action {
-                self.handle_config_action(action);
-            }
-
-            // 4. 属性面板
-            egui::Panel::right("properties_panel")
-                .default_size(220.0)
-                .min_size(160.0)
-                .resizable(true)
-                .show_inside(ui, |ui| {
-                    properties_panel::show(
-                        ui,
-                        &mut self.project.timeline_state,
-                        self.ui.zoom,
-                        &self.project.midi_files,
-                    );
-                });
-
-            // 5. 中央预览区 — 多图层叠加渲染
-            egui::CentralPanel::default().show_inside(ui, |ui| {
-                self.update_playback();
-
-                let available = ui.available_size();
-                let rw = self.project.render_width as f32;
-                let rh = self.project.render_height as f32;
-                let current_time = self.project.current_time as f32;
-                let render_w = self.project.render_width;
-                let render_h = self.project.render_height;
-
-                // 收集当前时间点所有可见图层（数据副本，不持有引用）
-                let layers = self.collect_visible_layers(current_time);
-                let default_style = self.default_style();
-
-                // 纯色背景
-                let bg = layers.iter().find(|c| c.kind == ClipKind::SolidColor);
-                let bg_style = if let Some(bg) = bg {
-                    nezha_renderer::RenderStyle {
-                        background: [
-                            bg.color.r() as f64 / 255.0,
-                            bg.color.g() as f64 / 255.0,
-                            bg.color.b() as f64 / 255.0,
-                            1.0,
-                        ],
-                        ..default_style.clone()
-                    }
-                } else {
-                    default_style.clone()
-                };
-
-                self.render_ctx.begin_pass();
-                self.render_ctx
-                    .render_background(render_w, render_h, &bg_style);
-
-                // 瀑布流图层，从底到顶叠加
-                let mut is_first_waterfall = true;
-                for clip in &layers {
-                    if clip.kind != ClipKind::Waterfall {
-                        continue;
-                    }
-                    let Some(midi_idx) = clip.midi_idx else {
-                        continue;
-                    };
-                    let Some(entry) = self.project.midi_files.get(midi_idx) else {
-                        continue;
-                    };
-
-                    let clip_time = (current_time - clip.clip_start).max(0.0) as f64;
-
-                    let clip_style = nezha_renderer::RenderStyle {
-                        render_mode: clip.render_mode,
-                        border_width: clip.border_width,
-                        rounding: clip.rounding,
-                        track_index: 0,
-                        palette: default_style.palette,
-                        background: default_style.background,
-                        equal_key_width: clip.equal_key_width,
-                        keyboard_height: default_style.keyboard_height,
-                    };
-
-                    self.render_ctx.render_layer(
-                        render_w,
-                        render_h,
-                        clip_time,
-                        clip.speed,
-                        midi_idx,
-                        &entry.file,
-                        &clip_style,
-                        is_first_waterfall && bg.is_none(),
-                    );
-                    is_first_waterfall = false;
-                }
-                self.render_ctx.end_pass();
-
-                let aspect = rw / rh;
-                self.ui.zoom = piano_view::show(
+        // Bottom transport
+        egui::Panel::bottom("transport")
+            .exact_size(200.0)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                let mut transport_time = self.project.current_time as f32;
+                transport::show(
                     ui,
-                    self.render_ctx.preview_texture_id,
-                    available,
-                    aspect,
-                    &mut self.ui.zoom,
-                    &mut self.ui.pan_offset,
+                    &mut self.project.is_playing,
+                    &mut transport_time,
+                    dur,
+                    &mut self.project.timeline_state,
+                    dark_mode,
+                );
+                self.project.current_time = transport_time as f64;
+            });
+
+        // Config panel
+        egui::Panel::left("config_panel")
+            .default_size(260.0)
+            .min_size(180.0)
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                let mut state = config_panel::ConfigState {
+                    active_tab: self.ui.active_tab,
+                    midi_files: &self.project.midi_files,
+                    highlighted_midi_idx: &mut self.project.highlighted_midi_idx,
+                    render_width: &mut self.project.render_width,
+                    render_height: &mut self.project.render_height,
+                    fps: &mut self.project.fps,
+                    export_format: &mut self.ui.export_format,
+                    encoder: &mut self.ui.encoder,
+                    export_path: &mut self.ui.export_path,
+                    theme_mode: &mut self.ui.theme_mode,
+                };
+                if let Some(action) = config_panel::show(ui, &mut state) {
+                    config_action = Some(action);
+                }
+            });
+
+        // Properties panel
+        egui::Panel::right("properties_panel")
+            .default_size(220.0)
+            .min_size(160.0)
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                properties_panel::show(
+                    ui,
+                    &mut self.project.timeline_state,
+                    self.ui.zoom,
+                    &self.project.midi_files,
                 );
             });
 
-            ui.ctx().request_repaint();
-        });
+        if let Some(action) = config_action {
+            self.handle_config_action(action);
+        }
+    }
 
-        // 处理 MIDI 异步加载事件
+    // ── Central preview ────────────────────────────────────────────────────
+
+    fn render_preview(&mut self, ui: &mut egui::Ui) {
+        self.update_playback();
+
+        let available = ui.available_size();
+        let rw = self.project.render_width as f32;
+        let rh = self.project.render_height as f32;
+        let current_time = self.project.current_time as f32;
+        let render_w = self.project.render_width;
+        let render_h = self.project.render_height;
+
+        let layers = self.collect_visible_layers(current_time);
+        let default_style = self.default_style();
+
+        // Solid-color background
+        let bg = layers.iter().find(|c| c.kind == ClipKind::SolidColor);
+        let bg_style = if let Some(bg) = bg {
+            nezha_renderer::RenderStyle {
+                background: [
+                    bg.color.r() as f64 / 255.0,
+                    bg.color.g() as f64 / 255.0,
+                    bg.color.b() as f64 / 255.0,
+                    1.0,
+                ],
+                ..default_style.clone()
+            }
+        } else {
+            default_style.clone()
+        };
+
+        self.render_ctx.begin_pass();
+        self.render_ctx
+            .render_background(render_w, render_h, &bg_style);
+
+        // Waterfall layers, bottom-to-top
+        let mut is_first_waterfall = true;
+        for clip in &layers {
+            if clip.kind != ClipKind::Waterfall {
+                continue;
+            }
+            let Some(midi_idx) = clip.midi_idx else {
+                continue;
+            };
+            let Some(entry) = self.project.midi_files.get(midi_idx) else {
+                continue;
+            };
+
+            let clip_time = (current_time - clip.clip_start).max(0.0) as f64;
+
+            let clip_style = nezha_renderer::RenderStyle {
+                render_mode: clip.render_mode,
+                border_width: clip.border_width,
+                rounding: clip.rounding,
+                track_index: 0,
+                palette: default_style.palette,
+                background: default_style.background,
+                equal_key_width: clip.equal_key_width,
+                keyboard_height: default_style.keyboard_height,
+            };
+
+            self.render_ctx.render_layer(
+                render_w,
+                render_h,
+                clip_time,
+                clip.speed,
+                midi_idx,
+                &entry.file,
+                &clip_style,
+                is_first_waterfall && bg.is_none(),
+            );
+            is_first_waterfall = false;
+        }
+        self.render_ctx.end_pass();
+
+        let aspect = rw / rh;
+        self.ui.zoom = piano_view::show(
+            ui,
+            self.render_ctx.preview_texture_id,
+            available,
+            aspect,
+            &mut self.ui.zoom,
+            &mut self.ui.pan_offset,
+        );
+    }
+
+    // ── MIDI loading overlay ───────────────────────────────────────────────
+
+    fn show_midi_loading(&mut self, ui: &mut egui::Ui) {
         if let Some(mut loader) = self.midi_loader.take() {
             let mut done = false;
             while let Ok(event) = loader.rx.try_recv() {
@@ -430,7 +427,6 @@ impl eframe::App for App {
             }
         }
 
-        // 加载对话框
         if let Some(loader) = &self.midi_loader {
             let screen_rect = ui.ctx().content_rect();
             ui.ctx()
@@ -465,8 +461,11 @@ impl eframe::App for App {
                     }
                 });
         }
+    }
 
-        // 错误提示
+    // ── Error toast ────────────────────────────────────────────────────────
+
+    fn show_error_toast(&mut self, ui: &mut egui::Ui) {
         if let Some(err) = self.project.last_error.clone() {
             let mut dismissed = false;
             let screen_rect = ui.ctx().content_rect();
@@ -492,5 +491,28 @@ impl eframe::App for App {
                 self.project.last_error = None;
             }
         }
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "profiling")]
+        puffin::GlobalProfiler::lock().new_frame();
+
+        self.ui.theme_mode.apply(ui.ctx());
+        self.handle_input(ui);
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            self.render_side_panels(ui);
+
+            egui::CentralPanel::default().show_inside(ui, |ui| {
+                self.render_preview(ui);
+            });
+
+            ui.ctx().request_repaint();
+        });
+
+        self.show_midi_loading(ui);
+        self.show_error_toast(ui);
     }
 }

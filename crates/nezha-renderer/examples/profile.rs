@@ -117,7 +117,7 @@ fn main() {
 
     let width = 1920u32;
     let height = 1080u32;
-    let (_tex, target_view) = create_target(&renderer.device, width, height);
+    let (_tex, target_view) = create_target(&*renderer.device(), width, height);
 
     let midi = generate_stress();
     let note_count: usize = midi.key_notes.iter().map(|v| v.len()).sum();
@@ -165,8 +165,8 @@ fn main() {
             true,
         );
 
-        renderer.queue.submit(std::iter::once(encoder.finish()));
-        let _ = renderer.device.poll(PollType::Poll);
+        renderer.queue().submit(std::iter::once(encoder.finish()));
+        let _ = renderer.device().poll(PollType::Poll);
 
         if i > 0 && i % 100 == 0 {
             let fps = i as f64 / start.elapsed().as_secs_f64();
@@ -200,8 +200,8 @@ fn main() {
             &style,
             true,
         );
-        renderer.queue.submit(std::iter::once(encoder.finish()));
-        let _ = renderer.device.poll(PollType::Poll);
+        renderer.queue().submit(std::iter::once(encoder.finish()));
+        let _ = renderer.device().poll(PollType::Poll);
         println!("⏱️  Reading GPU timestamps...");
         match renderer.read_gpu_timings() {
             Some((c, r)) => println!("   GPU compute={:.2}ms  render={:.2}ms", c, r),

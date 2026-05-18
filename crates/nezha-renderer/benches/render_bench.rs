@@ -161,7 +161,7 @@ fn bench_render_frame(c: &mut Criterion) {
 
     let width = 1920u32;
     let height = 1080u32;
-    let (_target_tex, target_view) = create_target(&renderer.device, width, height);
+    let (_target_tex, target_view) = create_target(&*renderer.device(), width, height);
 
     let style = RenderStyle {
         render_mode: RenderMode::TimeBased,
@@ -228,8 +228,8 @@ fn bench_render_frame(c: &mut Criterion) {
                                 &style,
                                 true,
                             );
-                            renderer.queue.submit(std::iter::once(encoder.finish()));
-                            let _ = renderer.device.poll(PollType::Poll);
+                            renderer.queue().submit(std::iter::once(encoder.finish()));
+                            let _ = renderer.device().poll(PollType::Poll);
                         });
                     },
                 );
@@ -280,7 +280,7 @@ fn bench_gpu_timing(_c: &mut Criterion) {
 
     let width = 1920u32;
     let height = 1080u32;
-    let (_target_tex, target_view) = create_target(&renderer.device, width, height);
+    let (_target_tex, target_view) = create_target(&*renderer.device(), width, height);
 
     let style = RenderStyle {
         render_mode: RenderMode::TimeBased,
@@ -323,8 +323,8 @@ fn bench_gpu_timing(_c: &mut Criterion) {
                 &style,
                 true,
             );
-            renderer.queue.submit(std::iter::once(encoder.finish()));
-            let _ = renderer.device.poll(PollType::Poll);
+            renderer.queue().submit(std::iter::once(encoder.finish()));
+            let _ = renderer.device().poll(PollType::Poll);
         }
 
         // Measure
@@ -348,8 +348,8 @@ fn bench_gpu_timing(_c: &mut Criterion) {
                 &style,
                 true,
             );
-            renderer.queue.submit(std::iter::once(encoder.finish()));
-            let _ = renderer.device.poll(PollType::Poll);
+            renderer.queue().submit(std::iter::once(encoder.finish()));
+            let _ = renderer.device().poll(PollType::Poll);
             if let Some((c, r)) = renderer.read_gpu_timings() {
                 total_compute += c;
                 total_render += r;

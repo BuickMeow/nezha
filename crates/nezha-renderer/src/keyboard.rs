@@ -1,6 +1,7 @@
+use crate::source::NoteSource;
 use crate::state::MidiRenderState;
-use crate::style::NoteSource;
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
+pub(crate) use nezha_core::is_black_key;
 
 // ── Keyboard appearance constants ───────────────────────────────────────────
 
@@ -17,11 +18,6 @@ const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;
 /// Border width for all keys.
 const KEY_BORDER_WIDTH: f32 = 0.5;
 
-/// Returns `true` if the given MIDI key number is a black key.
-pub(crate) fn is_black_key(key: u8) -> bool {
-    matches!(key % 12, 1 | 3 | 6 | 8 | 10)
-}
-
 /// Compute screen-space x-offset and width for each of the 128 keys.
 pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f32)> {
     let mut layouts = Vec::with_capacity(128);
@@ -35,11 +31,16 @@ pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f3
         }
     } else {
         let white_width = width as f64 / 75.0;
-        let black_width = white_width * 0.65;
+        /// Width of black keys relative to white keys.
+        const BLACK_KEY_WIDTH_RATIO: f64 = 0.65;
+        /// Horizontal offset to center black keys over the white-key boundary.
+        const BLACK_KEY_OFFSET_RATIO: f64 = 0.5;
+        let black_width = white_width * BLACK_KEY_WIDTH_RATIO;
         let mut white_count = 0usize;
         for key in 0..128u8 {
             if is_black_key(key) {
-                let x = (white_count as f64 * white_width - black_width * 0.5).round() as f32;
+                let x = (white_count as f64 * white_width - black_width * BLACK_KEY_OFFSET_RATIO)
+                    .round() as f32;
                 let w = black_width.round() as f32;
                 layouts.push((x, w.max(1.0)));
             } else {
@@ -96,31 +97,55 @@ pub(crate) fn build_keyboard_instances(
     let mut instances = Vec::with_capacity(256);
     let black_h = kh * BLACK_KEY_HEIGHT_RATIO;
 
-    // White keys first
-    for key in 0..128u8 {
-        if is_black_key(key) {
-            continue;
-        }
+    fn build_key_instance(
+        key: u8,
+        layouts: &[(f32, f32)],
+        key_top: f32,
+        height: f32,
+        default_color: (f32, f32, f32),
+        corner_radius: f32,
+        active_keys: &[bool; 128],
+        active_colors: &[[f32; 3]; 128],
+    ) -> Option<NoteInstance> {
         let (x, w) = layouts[key as usize];
         if w <= 0.0 {
-            continue;
+            return None;
         }
         let (r, g, b) = if active_keys[key as usize] {
             let [cr, cg, cb] = active_colors[key as usize];
             (cr, cg, cb)
         } else {
-            WHITE_KEY_COLOR
+            default_color
         };
-        instances.push(NoteInstance {
+        Some(NoteInstance {
             x,
             y: key_top,
             w,
-            h: kh,
+            h: height,
             rgba_packed: pack_rgba(r, g, b, 1.0),
-            props_packed: pack_props(WHITE_KEY_CORNER_RADIUS, KEY_BORDER_WIDTH),
+            props_packed: pack_props(corner_radius, KEY_BORDER_WIDTH),
             velocity: 0,
             flags: 0,
-        });
+        })
+    }
+
+    // White keys first
+    for key in 0..128u8 {
+        if is_black_key(key) {
+            continue;
+        }
+        if let Some(inst) = build_key_instance(
+            key,
+            &layouts,
+            key_top,
+            kh,
+            WHITE_KEY_COLOR,
+            WHITE_KEY_CORNER_RADIUS,
+            &active_keys,
+            &active_colors,
+        ) {
+            instances.push(inst);
+        }
     }
 
     // Black keys on top
@@ -128,26 +153,18 @@ pub(crate) fn build_keyboard_instances(
         if !is_black_key(key) {
             continue;
         }
-        let (x, w) = layouts[key as usize];
-        if w <= 0.0 {
-            continue;
+        if let Some(inst) = build_key_instance(
+            key,
+            &layouts,
+            key_top,
+            black_h,
+            BLACK_KEY_COLOR,
+            BLACK_KEY_CORNER_RADIUS,
+            &active_keys,
+            &active_colors,
+        ) {
+            instances.push(inst);
         }
-        let (r, g, b) = if active_keys[key as usize] {
-            let [cr, cg, cb] = active_colors[key as usize];
-            (cr, cg, cb)
-        } else {
-            BLACK_KEY_COLOR
-        };
-        instances.push(NoteInstance {
-            x,
-            y: key_top,
-            w,
-            h: black_h,
-            rgba_packed: pack_rgba(r, g, b, 1.0),
-            props_packed: pack_props(BLACK_KEY_CORNER_RADIUS, KEY_BORDER_WIDTH),
-            velocity: 0,
-            flags: 0,
-        });
     }
 
     instances

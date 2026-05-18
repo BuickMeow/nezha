@@ -1,5 +1,12 @@
 use eframe::egui;
 
+/// 最小缩放倍数
+const MIN_ZOOM: f32 = 1.0;
+/// 最大缩放倍数
+const MAX_ZOOM: f32 = 10.0;
+/// 滚轮缩放系数
+const ZOOM_SCROLL_FACTOR: f32 = 1.1;
+
 /// 显示瀑布流预览纹理（琴键已由渲染器绘制在纹理内部）
 pub fn show(
     ui: &mut egui::Ui,
@@ -31,12 +38,12 @@ pub fn show(
 
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
         if scroll_delta.y > 0.0 {
-            *zoom *= 1.1;
+            *zoom *= ZOOM_SCROLL_FACTOR;
         } else if scroll_delta.y < 0.0 {
-            *zoom /= 1.1;
+            *zoom /= ZOOM_SCROLL_FACTOR;
         }
 
-        *zoom = zoom.clamp(1.0, 10.0);
+        *zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
         // 以鼠标位置为中心缩放
         if *zoom != old_zoom {
