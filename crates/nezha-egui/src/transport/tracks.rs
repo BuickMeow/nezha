@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::transport::controller::{apply_track_commands, TrackEditCommand};
+use crate::transport::hit_test::clip_hit_areas;
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::timecode::font;
 use crate::transport::{
@@ -206,23 +207,13 @@ fn draw_track_row(
         let clip_id = track.clips[clip_idx].id;
         let clip_name = track.clips[clip_idx].name.clone();
         let clip_color = track.clips[clip_idx].color;
-        let clip_rect = layout.clip_rect(view, &track_rect, clip_start, clip_end, metrics);
+        let hit_areas = clip_hit_areas(layout, metrics, view, &track_rect, clip_start, clip_end);
+        let clip_rect = hit_areas.clip_rect;
         if clip_rect.width() > 0.0 {
             let is_selected = selected_id == Some(clip_id);
 
             if is_selected && clip_rect.width() > metrics.clip_edge_width * 3.0 {
-                let left_edge =
-                    egui::Rect::from_min_size(clip_rect.min, egui::vec2(metrics.clip_edge_width, clip_rect.height()));
-                let right_edge = egui::Rect::from_min_size(
-                    egui::pos2(clip_rect.max.x - metrics.clip_edge_width, clip_rect.min.y),
-                    egui::vec2(metrics.clip_edge_width, clip_rect.height()),
-                );
-                let mid_rect = egui::Rect::from_min_max(
-                    egui::pos2(clip_rect.min.x + metrics.clip_edge_width, clip_rect.min.y),
-                    egui::pos2(clip_rect.max.x - metrics.clip_edge_width, clip_rect.max.y),
-                );
-
-                let left_interact = ui.interact(left_edge, egui::Id::new(("clip_left", clip_id)), egui::Sense::drag())
+                let left_interact = ui.interact(hit_areas.left_edge, egui::Id::new(("clip_left", clip_id)), egui::Sense::drag())
                     .on_hover_cursor(egui::CursorIcon::ResizeWest);
                 if left_interact.drag_started() {
                     let pointer_time = view.time_at_screen_x(
@@ -255,7 +246,7 @@ fn draw_track_row(
                     commands.push(TrackEditCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                 }
-                let right_interact = ui.interact(right_edge, egui::Id::new(("clip_right", clip_id)), egui::Sense::drag())
+                let right_interact = ui.interact(hit_areas.right_edge, egui::Id::new(("clip_right", clip_id)), egui::Sense::drag())
                     .on_hover_cursor(egui::CursorIcon::ResizeEast);
                 if right_interact.drag_started() {
                     let pointer_time = view.time_at_screen_x(
@@ -288,7 +279,7 @@ fn draw_track_row(
                     commands.push(TrackEditCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                 }
-                let mid_interact = ui.interact(mid_rect, egui::Id::new(("clip_mid", clip_id)), egui::Sense::drag())
+                let mid_interact = ui.interact(hit_areas.middle_rect, egui::Id::new(("clip_mid", clip_id)), egui::Sense::drag())
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 if mid_interact.clicked() {
                     commands.push(TrackEditCommand::SelectClip(clip_id));
@@ -401,16 +392,8 @@ fn draw_track_row(
 
             if is_selected {
                 painter.rect_stroke(clip_rect, 3.0, egui::Stroke::new(2.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
-                let left_edge = egui::Rect::from_min_size(
-                    clip_rect.min,
-                    egui::vec2(metrics.clip_edge_width, clip_rect.height()),
-                );
-                let right_edge = egui::Rect::from_min_size(
-                    egui::pos2(clip_rect.max.x - metrics.clip_edge_width, clip_rect.min.y),
-                    egui::vec2(metrics.clip_edge_width, clip_rect.height()),
-                );
-                painter.rect_filled(left_edge, 0.0, egui::Color32::from_white_alpha(60));
-                painter.rect_filled(right_edge, 0.0, egui::Color32::from_white_alpha(60));
+                painter.rect_filled(hit_areas.left_edge, 0.0, egui::Color32::from_white_alpha(60));
+                painter.rect_filled(hit_areas.right_edge, 0.0, egui::Color32::from_white_alpha(60));
             }
 
             if clip_rect.width() > metrics.clip_label_min_width {

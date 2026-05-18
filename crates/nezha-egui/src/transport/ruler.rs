@@ -1,5 +1,6 @@
 use eframe::egui;
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
+use crate::transport::hit_test::is_ruler_hit;
 use crate::transport::{TimelineState, ThemeColors};
 use crate::transport::timecode::{snap_to_frame, format_timecode_frames, format_timecode_seconds, font};
 
@@ -29,7 +30,7 @@ pub fn draw_ruler(
         && state.interaction.scrollbar_drag.is_none()
     {
         if let Some(mouse_pos) = response.hover_pos() {
-            if ruler_rect.contains(mouse_pos) && mouse_pos.x > timeline_rect.min.x + state.view.header_width {
+            if is_ruler_hit(layout, &state.view, mouse_pos) {
                 let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
                 *current_time = snap_to_frame(new_time, fps).clamp(0.0, duration);
             }

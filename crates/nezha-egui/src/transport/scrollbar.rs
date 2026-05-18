@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::transport::hit_test::{scrollbar_hit_areas, ScrollbarHitTarget};
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::{TimelineView, TimelineInteraction, ScrollbarDrag, ThemeColors};
 
@@ -27,28 +28,14 @@ pub fn draw_scrollbar(
     let (visible_start, visible_end) = view.visible_range(content_width);
     let vis_start = visible_start.clamp(0.0, duration);
     let vis_end = visible_end.clamp(vis_start, duration);
-
-    let thumb_x1 = scrollbar_rect.min.x + (vis_start / duration) * scrollbar_rect.width();
-    let thumb_x2 = scrollbar_rect.min.x + (vis_end / duration) * scrollbar_rect.width();
-    let thumb_rect = egui::Rect::from_min_max(
-        egui::pos2(thumb_x1.max(scrollbar_rect.min.x), scrollbar_rect.min.y + 2.0),
-        egui::pos2(thumb_x2.min(scrollbar_rect.max.x), scrollbar_rect.max.y - 2.0),
-    );
+    let Some(hit_areas) = scrollbar_hit_areas(layout, metrics, duration, view) else {
+        return;
+    };
+    let thumb_rect = hit_areas.thumb_rect;
 
     painter.rect_filled(thumb_rect, 2.0, c.scrollbar_thumb);
-
-    let handle_w = metrics.scrollbar_handle_width;
-    let left_handle = egui::Rect::from_min_max(
-        egui::pos2(thumb_rect.min.x, thumb_rect.min.y),
-        egui::pos2(thumb_rect.min.x + handle_w, thumb_rect.max.y),
-    );
-    let right_handle = egui::Rect::from_min_max(
-        egui::pos2(thumb_rect.max.x - handle_w, thumb_rect.min.y),
-        egui::pos2(thumb_rect.max.x, thumb_rect.max.y),
-    );
-
-    painter.rect_filled(left_handle, 1.0, c.scrollbar_handle);
-    painter.rect_filled(right_handle, 1.0, c.scrollbar_handle);
+    painter.rect_filled(hit_areas.left_handle, 1.0, c.scrollbar_handle);
+    painter.rect_filled(hit_areas.right_handle, 1.0, c.scrollbar_handle);
 
     // 交互
     if response.drag_started_by(egui::PointerButton::Primary)
@@ -57,14 +44,14 @@ pub fn draw_scrollbar(
     {
         if let Some(pos) = response.interact_pointer_pos() {
             if scrollbar_rect.contains(pos) {
-                if left_handle.contains(pos) {
-                    interaction.scrollbar_drag = Some(ScrollbarDrag::LeftEdge);
-                } else if right_handle.contains(pos) {
-                    interaction.scrollbar_drag = Some(ScrollbarDrag::RightEdge);
-                } else if thumb_rect.contains(pos) {
-                    let rel_x = (pos.x - scrollbar_rect.min.x).clamp(0.0, scrollbar_rect.width());
-                    let anchor_time = rel_x / scrollbar_rect.width() * duration;
-                    interaction.scrollbar_drag = Some(ScrollbarDrag::Pan { anchor_time });
+                if let Some(hit) = hit_areas.target_at(pos, &scrollbar_rect, duration) {
+                    interaction.scrollbar_drag = Some(match hit {
+                        ScrollbarHitTarget::Pan { anchor_time } => {
+                            ScrollbarDrag::Pan { anchor_time }
+                        }
+                        ScrollbarHitTarget::LeftEdge => ScrollbarDrag::LeftEdge,
+                        ScrollbarHitTarget::RightEdge => ScrollbarDrag::RightEdge,
+                    });
                 }
             }
         }

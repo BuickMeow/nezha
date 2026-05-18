@@ -4,6 +4,7 @@ use eframe::egui;
 
 mod controller;
 mod controls;
+mod hit_test;
 mod input;
 mod layout;
 mod model;
