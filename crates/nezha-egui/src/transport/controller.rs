@@ -3,9 +3,9 @@ use super::TimelineState;
 pub enum TrackEditCommand {
     SelectClip(usize),
     ClearSelection,
-    MoveClip { clip_id: usize, delta: f32 },
-    ResizeClipStart { clip_id: usize, delta: f32 },
-    ResizeClipEnd { clip_id: usize, delta: f32 },
+    MoveClipToStart { clip_id: usize, start: f32 },
+    ResizeClipStartTo { clip_id: usize, start: f32 },
+    ResizeClipEndTo { clip_id: usize, end: f32 },
     MoveClipToTrack { clip_id: usize, target_track_index: usize },
 }
 
@@ -14,12 +14,14 @@ pub fn apply_track_commands(state: &mut TimelineState, commands: Vec<TrackEditCo
         match command {
             TrackEditCommand::SelectClip(clip_id) => state.select_clip(clip_id),
             TrackEditCommand::ClearSelection => state.clear_selection(),
-            TrackEditCommand::MoveClip { clip_id, delta } => state.move_clip_by(clip_id, delta),
-            TrackEditCommand::ResizeClipStart { clip_id, delta } => {
-                state.resize_clip_start_by(clip_id, delta);
+            TrackEditCommand::MoveClipToStart { clip_id, start } => {
+                state.move_clip_to_start(clip_id, start);
             }
-            TrackEditCommand::ResizeClipEnd { clip_id, delta } => {
-                state.resize_clip_end_by(clip_id, delta);
+            TrackEditCommand::ResizeClipStartTo { clip_id, start } => {
+                state.resize_clip_start_to(clip_id, start);
+            }
+            TrackEditCommand::ResizeClipEndTo { clip_id, end } => {
+                state.resize_clip_end_to(clip_id, end);
             }
             TrackEditCommand::MoveClipToTrack {
                 clip_id,

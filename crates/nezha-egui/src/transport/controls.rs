@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::transport::layout::TimelineLayout;
 use crate::transport::{TimelineState, ThemeColors};
 use crate::transport::timecode::{format_timecode_full, font};
 
@@ -6,17 +7,13 @@ pub fn draw_controls(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
     c: &ThemeColors,
-    timeline_rect: &egui::Rect,
+    layout: &TimelineLayout,
     is_playing: &mut bool,
     current_time: &mut f32,
     duration: f32,
     state: &TimelineState,
-    controls_height: f32,
 ) {
-    let controls_rect = egui::Rect::from_min_max(
-        egui::pos2(timeline_rect.min.x, timeline_rect.max.y - controls_height),
-        timeline_rect.max,
-    );
+    let controls_rect = layout.controls_rect;
     painter.rect_filled(controls_rect, 0.0, c.controls_bg);
     painter.rect_stroke(controls_rect, 0.0, egui::Stroke::new(1.0, c.border), egui::StrokeKind::Inside);
 

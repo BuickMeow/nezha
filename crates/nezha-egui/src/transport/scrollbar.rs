@@ -1,25 +1,21 @@
 use eframe::egui;
+use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::{TimelineView, TimelineInteraction, ScrollbarDrag, ThemeColors};
 
 pub fn draw_scrollbar(
     _ui: &egui::Ui,
     painter: &egui::Painter,
     c: &ThemeColors,
-    timeline_rect: &egui::Rect,
+    layout: &TimelineLayout,
+    metrics: &TimelineMetrics,
     view: &mut TimelineView,
     interaction: &mut TimelineInteraction,
     duration: f32,
-    content_width: f32,
-    scrollbar_height: f32,
-    controls_height: f32,
     response: &egui::Response,
     fps: u32,
 ) {
-    let scrollbar_y = timeline_rect.max.y - controls_height - scrollbar_height;
-    let scrollbar_rect = egui::Rect::from_min_size(
-        egui::pos2(timeline_rect.min.x + view.header_width, scrollbar_y),
-        egui::vec2(content_width, scrollbar_height),
-    );
+    let scrollbar_rect = layout.scrollbar_rect;
+    let content_width = layout.content_width;
 
     painter.rect_filled(scrollbar_rect, 2.0, c.scrollbar_bg);
     painter.rect_stroke(scrollbar_rect, 2.0, egui::Stroke::new(1.0, c.border), egui::StrokeKind::Inside);
@@ -41,7 +37,7 @@ pub fn draw_scrollbar(
 
     painter.rect_filled(thumb_rect, 2.0, c.scrollbar_thumb);
 
-    let handle_w = 6.0;
+    let handle_w = metrics.scrollbar_handle_width;
     let left_handle = egui::Rect::from_min_max(
         egui::pos2(thumb_rect.min.x, thumb_rect.min.y),
         egui::pos2(thumb_rect.min.x + handle_w, thumb_rect.max.y),

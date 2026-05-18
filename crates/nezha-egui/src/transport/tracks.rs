@@ -1,20 +1,20 @@
 use eframe::egui;
 use crate::transport::controller::{apply_track_commands, TrackEditCommand};
+use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::timecode::font;
-use crate::transport::{ThemeColors, TimelineState, TimelineView, Track, TrackKind};
+use crate::transport::{
+    ClipDragMode, ThemeColors, TimelineInteraction, TimelineState, TimelineView, Track, TrackKind,
+};
 
 pub fn draw_tracks(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
     c: &ThemeColors,
-    timeline_rect: &egui::Rect,
+    layout: &TimelineLayout,
+    metrics: &TimelineMetrics,
     state: &mut TimelineState,
-    visible_start: f32,
-    visible_end: f32,
-    ruler_height: f32,
-    _scrollbar_height: f32,
-    _controls_height: f32,
 ) -> f32 {
+    let timeline_rect = layout.timeline_rect;
     let has_video = state
         .data
         .tracks
@@ -26,33 +26,29 @@ pub fn draw_tracks(
         .iter()
         .any(|track| track.kind == TrackKind::Audio);
 
-    let label_height = 20.0f32;
-    let mut y = timeline_rect.min.y + ruler_height;
+    let mut y = layout.ruler_rect.max.y;
     let view = &state.view;
     let selected_id = state.selected_clip_id;
     let mut commands = Vec::new();
+    let tracks = &state.data.tracks;
+    let interaction = &mut state.interaction;
 
     if has_video {
-        painter.rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(timeline_rect.min.x, y),
-                egui::vec2(timeline_rect.width(), label_height),
-            ),
-            0.0,
-            c.video_label_bg,
-        );
+        let label_rect = layout.section_label_rect(y, metrics);
+        painter.rect_filled(label_rect, 0.0, c.video_label_bg);
         painter.text(
-            egui::pos2(timeline_rect.min.x + 8.0, y + label_height / 2.0),
+            egui::pos2(
+                timeline_rect.min.x + 8.0,
+                y + metrics.section_label_height / 2.0,
+            ),
             egui::Align2::LEFT_CENTER,
             "视频",
             font(11.0),
             c.dim_text,
         );
-        y += label_height;
+        y += metrics.section_label_height;
 
-        for (track_index, track) in state
-            .data
-            .tracks
+        for (track_index, track) in tracks
             .iter()
             .enumerate()
             .filter(|(_, track)| track.kind == TrackKind::Video)
@@ -61,13 +57,13 @@ pub fn draw_tracks(
                 ui,
                 painter,
                 c,
-                timeline_rect,
+                layout,
+                metrics,
                 view,
                 selected_id,
                 track,
-                visible_start,
-                visible_end,
                 y,
+                interaction,
                 &mut commands,
                 track_index,
             );
@@ -75,27 +71,22 @@ pub fn draw_tracks(
     }
 
     if has_audio {
-        y += 4.0;
-        painter.rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(timeline_rect.min.x, y),
-                egui::vec2(timeline_rect.width(), label_height),
-            ),
-            0.0,
-            c.audio_label_bg,
-        );
+        y += metrics.section_gap;
+        let label_rect = layout.section_label_rect(y, metrics);
+        painter.rect_filled(label_rect, 0.0, c.audio_label_bg);
         painter.text(
-            egui::pos2(timeline_rect.min.x + 8.0, y + label_height / 2.0),
+            egui::pos2(
+                timeline_rect.min.x + 8.0,
+                y + metrics.section_label_height / 2.0,
+            ),
             egui::Align2::LEFT_CENTER,
             "音频",
             font(11.0),
             c.dim_text,
         );
-        y += label_height;
+        y += metrics.section_label_height;
 
-        for (track_index, track) in state
-            .data
-            .tracks
+        for (track_index, track) in tracks
             .iter()
             .enumerate()
             .filter(|(_, track)| track.kind == TrackKind::Audio)
@@ -104,13 +95,13 @@ pub fn draw_tracks(
                 ui,
                 painter,
                 c,
-                timeline_rect,
+                layout,
+                metrics,
                 view,
                 selected_id,
                 track,
-                visible_start,
-                visible_end,
                 y,
+                interaction,
                 &mut commands,
                 track_index,
             );
@@ -126,32 +117,28 @@ fn draw_track_row(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
     c: &ThemeColors,
-    timeline_rect: &egui::Rect,
+    layout: &TimelineLayout,
+    metrics: &TimelineMetrics,
     view: &TimelineView,
     selected_id: Option<usize>,
     track: &Track,
-    visible_start: f32,
-    visible_end: f32,
     y: f32,
+    interaction: &mut TimelineInteraction,
     commands: &mut Vec<TrackEditCommand>,
     track_index: usize,
 ) -> f32 {
+    let visible_start = layout.visible_start;
+    let visible_end = layout.visible_end;
     let track_bg = match track.kind {
         TrackKind::Video => c.video_track_bg,
         TrackKind::Audio => c.audio_track_bg,
     };
 
-    let track_rect = egui::Rect::from_min_size(
-        egui::pos2(timeline_rect.min.x, y),
-        egui::vec2(timeline_rect.width(), view.track_height),
-    );
+    let track_rect = layout.track_rect(y, view.track_height);
     painter.rect_filled(track_rect, 0.0, track_bg);
     painter.rect_stroke(track_rect, 0.0, egui::Stroke::new(1.0, c.border), egui::StrokeKind::Inside);
 
-    let header_rect = egui::Rect::from_min_size(
-        track_rect.min,
-        egui::vec2(view.header_width, view.track_height),
-    );
+    let header_rect = layout.header_rect(&track_rect, view.header_width);
     let header_color = if track.muted { c.header_bg_muted } else { c.header_bg };
     painter.rect_filled(header_rect, 0.0, header_color);
     painter.rect_stroke(header_rect, 0.0, egui::Stroke::new(1.0, c.border), egui::StrokeKind::Inside);
@@ -203,9 +190,12 @@ fn draw_track_row(
         );
     }
 
-    let edge_width = 8.0f32;
     let mut clip_clicked = false;
     let mut dragged_clip_id = None;
+    let primary_dragging = ui.input(|i| i.pointer.primary_down());
+    if !primary_dragging {
+        interaction.clip_drag = None;
+    }
 
     for clip_idx in 0..track.clips.len() {
         let clip_start = track.clips[clip_idx].start;
@@ -216,40 +206,85 @@ fn draw_track_row(
         let clip_id = track.clips[clip_idx].id;
         let clip_name = track.clips[clip_idx].name.clone();
         let clip_color = track.clips[clip_idx].color;
-        let x1 = timeline_rect.min.x + view.header_width + (clip_start - view.scroll_offset) * view.zoom;
-        let x2 = timeline_rect.min.x + view.header_width + (clip_end - view.scroll_offset) * view.zoom;
-        let clip_rect = egui::Rect::from_min_max(
-            egui::pos2(x1.max(track_rect.min.x + view.header_width), track_rect.min.y + 3.0),
-            egui::pos2(x2.min(track_rect.max.x), track_rect.max.y - 3.0),
-        );
+        let clip_rect = layout.clip_rect(view, &track_rect, clip_start, clip_end, metrics);
         if clip_rect.width() > 0.0 {
             let is_selected = selected_id == Some(clip_id);
 
-            if is_selected && clip_rect.width() > edge_width * 3.0 {
+            if is_selected && clip_rect.width() > metrics.clip_edge_width * 3.0 {
                 let left_edge =
-                    egui::Rect::from_min_size(clip_rect.min, egui::vec2(edge_width, clip_rect.height()));
+                    egui::Rect::from_min_size(clip_rect.min, egui::vec2(metrics.clip_edge_width, clip_rect.height()));
                 let right_edge = egui::Rect::from_min_size(
-                    egui::pos2(clip_rect.max.x - edge_width, clip_rect.min.y),
-                    egui::vec2(edge_width, clip_rect.height()),
+                    egui::pos2(clip_rect.max.x - metrics.clip_edge_width, clip_rect.min.y),
+                    egui::vec2(metrics.clip_edge_width, clip_rect.height()),
                 );
                 let mid_rect = egui::Rect::from_min_max(
-                    egui::pos2(clip_rect.min.x + edge_width, clip_rect.min.y),
-                    egui::pos2(clip_rect.max.x - edge_width, clip_rect.max.y),
+                    egui::pos2(clip_rect.min.x + metrics.clip_edge_width, clip_rect.min.y),
+                    egui::pos2(clip_rect.max.x - metrics.clip_edge_width, clip_rect.max.y),
                 );
 
                 let left_interact = ui.interact(left_edge, egui::Id::new(("clip_left", clip_id)), egui::Sense::drag())
                     .on_hover_cursor(egui::CursorIcon::ResizeWest);
+                if left_interact.drag_started() {
+                    let pointer_time = view.time_at_screen_x(
+                        &layout.timeline_rect,
+                        left_interact.interact_pointer_pos().map(|pos| pos.x).unwrap_or(clip_rect.min.x),
+                    );
+                    interaction.clip_drag = Some(crate::transport::ClipDragState {
+                        clip_id,
+                        mode: ClipDragMode::ResizeStart,
+                        anchor_pointer_time: pointer_time,
+                        anchor_start: clip_start,
+                        anchor_end: clip_end,
+                    });
+                }
                 if left_interact.dragged() {
-                    let delta = left_interact.drag_delta().x / view.zoom;
-                    commands.push(TrackEditCommand::ResizeClipStart { clip_id, delta });
+                    if let (Some(drag), Some(pointer_pos)) =
+                        (interaction.clip_drag, left_interact.interact_pointer_pos())
+                    {
+                        if drag.clip_id == clip_id && drag.mode == ClipDragMode::ResizeStart {
+                            let pointer_time =
+                                view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+                            let new_start =
+                                drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+                            commands.push(TrackEditCommand::ResizeClipStartTo {
+                                clip_id,
+                                start: new_start,
+                            });
+                        }
+                    }
                     commands.push(TrackEditCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                 }
                 let right_interact = ui.interact(right_edge, egui::Id::new(("clip_right", clip_id)), egui::Sense::drag())
                     .on_hover_cursor(egui::CursorIcon::ResizeEast);
+                if right_interact.drag_started() {
+                    let pointer_time = view.time_at_screen_x(
+                        &layout.timeline_rect,
+                        right_interact.interact_pointer_pos().map(|pos| pos.x).unwrap_or(clip_rect.max.x),
+                    );
+                    interaction.clip_drag = Some(crate::transport::ClipDragState {
+                        clip_id,
+                        mode: ClipDragMode::ResizeEnd,
+                        anchor_pointer_time: pointer_time,
+                        anchor_start: clip_start,
+                        anchor_end: clip_end,
+                    });
+                }
                 if right_interact.dragged() {
-                    let delta = right_interact.drag_delta().x / view.zoom;
-                    commands.push(TrackEditCommand::ResizeClipEnd { clip_id, delta });
+                    if let (Some(drag), Some(pointer_pos)) =
+                        (interaction.clip_drag, right_interact.interact_pointer_pos())
+                    {
+                        if drag.clip_id == clip_id && drag.mode == ClipDragMode::ResizeEnd {
+                            let pointer_time =
+                                view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+                            let new_end =
+                                drag.anchor_end + (pointer_time - drag.anchor_pointer_time);
+                            commands.push(TrackEditCommand::ResizeClipEndTo {
+                                clip_id,
+                                end: new_end,
+                            });
+                        }
+                    }
                     commands.push(TrackEditCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                 }
@@ -259,9 +294,37 @@ fn draw_track_row(
                     commands.push(TrackEditCommand::SelectClip(clip_id));
                     clip_clicked = true;
                 }
+                if mid_interact.drag_started() {
+                    let pointer_time = view.time_at_screen_x(
+                        &layout.timeline_rect,
+                        mid_interact
+                            .interact_pointer_pos()
+                            .map(|pos| pos.x)
+                            .unwrap_or(clip_rect.center().x),
+                    );
+                    interaction.clip_drag = Some(crate::transport::ClipDragState {
+                        clip_id,
+                        mode: ClipDragMode::Move,
+                        anchor_pointer_time: pointer_time,
+                        anchor_start: clip_start,
+                        anchor_end: clip_end,
+                    });
+                }
                 if mid_interact.dragged() {
-                    let delta = mid_interact.drag_delta().x / view.zoom;
-                    commands.push(TrackEditCommand::MoveClip { clip_id, delta });
+                    if let (Some(drag), Some(pointer_pos)) =
+                        (interaction.clip_drag, mid_interact.interact_pointer_pos())
+                    {
+                        if drag.clip_id == clip_id && drag.mode == ClipDragMode::Move {
+                            let pointer_time =
+                                view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+                            let new_start =
+                                drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+                            commands.push(TrackEditCommand::MoveClipToStart {
+                                clip_id,
+                                start: new_start,
+                            });
+                        }
+                    }
                     commands.push(TrackEditCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                     if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
@@ -285,9 +348,37 @@ fn draw_track_row(
                     commands.push(TrackEditCommand::SelectClip(clip_id));
                     clip_clicked = true;
                 }
+                if clip_interact.drag_started() {
+                    let pointer_time = view.time_at_screen_x(
+                        &layout.timeline_rect,
+                        clip_interact
+                            .interact_pointer_pos()
+                            .map(|pos| pos.x)
+                            .unwrap_or(clip_rect.center().x),
+                    );
+                    interaction.clip_drag = Some(crate::transport::ClipDragState {
+                        clip_id,
+                        mode: ClipDragMode::Move,
+                        anchor_pointer_time: pointer_time,
+                        anchor_start: clip_start,
+                        anchor_end: clip_end,
+                    });
+                }
                 if clip_interact.dragged() {
-                    let delta = clip_interact.drag_delta().x / view.zoom;
-                    commands.push(TrackEditCommand::MoveClip { clip_id, delta });
+                    if let (Some(drag), Some(pointer_pos)) =
+                        (interaction.clip_drag, clip_interact.interact_pointer_pos())
+                    {
+                        if drag.clip_id == clip_id && drag.mode == ClipDragMode::Move {
+                            let pointer_time =
+                                view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+                            let new_start =
+                                drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+                            commands.push(TrackEditCommand::MoveClipToStart {
+                                clip_id,
+                                start: new_start,
+                            });
+                        }
+                    }
                     commands.push(TrackEditCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                     if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
@@ -310,18 +401,24 @@ fn draw_track_row(
 
             if is_selected {
                 painter.rect_stroke(clip_rect, 3.0, egui::Stroke::new(2.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
-                let left_edge = egui::Rect::from_min_size(clip_rect.min, egui::vec2(edge_width, clip_rect.height()));
+                let left_edge = egui::Rect::from_min_size(
+                    clip_rect.min,
+                    egui::vec2(metrics.clip_edge_width, clip_rect.height()),
+                );
                 let right_edge = egui::Rect::from_min_size(
-                    egui::pos2(clip_rect.max.x - edge_width, clip_rect.min.y),
-                    egui::vec2(edge_width, clip_rect.height()),
+                    egui::pos2(clip_rect.max.x - metrics.clip_edge_width, clip_rect.min.y),
+                    egui::vec2(metrics.clip_edge_width, clip_rect.height()),
                 );
                 painter.rect_filled(left_edge, 0.0, egui::Color32::from_white_alpha(60));
                 painter.rect_filled(right_edge, 0.0, egui::Color32::from_white_alpha(60));
             }
 
-            if clip_rect.width() > 40.0 {
+            if clip_rect.width() > metrics.clip_label_min_width {
                 painter.text(
-                    egui::pos2(clip_rect.min.x + edge_width + 2.0, clip_rect.center().y),
+                    egui::pos2(
+                        clip_rect.min.x + metrics.clip_edge_width + metrics.clip_text_padding,
+                        clip_rect.center().y,
+                    ),
                     egui::Align2::LEFT_CENTER, &clip_name, font(10.0), egui::Color32::WHITE,
                 );
             }

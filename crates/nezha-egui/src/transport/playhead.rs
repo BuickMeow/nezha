@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::{TimelineState, ThemeColors};
 use crate::transport::timecode::snap_to_frame;
 
@@ -6,17 +7,16 @@ pub fn draw_playhead(
     ui: &egui::Ui,
     painter: &egui::Painter,
     c: &ThemeColors,
-    timeline_rect: &egui::Rect,
+    layout: &TimelineLayout,
+    _metrics: &TimelineMetrics,
     response: &egui::Response,
     state: &mut TimelineState,
     current_time: &mut f32,
     duration: f32,
-    ruler_height: f32,
-    controls_height: f32,
-    scrollbar_height: f32,
     fps: u32,
 ) {
-    let playhead_x = state.view.screen_x_for_time(timeline_rect, *current_time);
+    let timeline_rect = layout.timeline_rect;
+    let playhead_x = state.view.screen_x_for_time(&timeline_rect, *current_time);
 
     let playhead_hit_rect = egui::Rect::from_center_size(
         egui::pos2(playhead_x, timeline_rect.center().y),
@@ -37,7 +37,7 @@ pub fn draw_playhead(
 
     if state.interaction.dragging_playhead {
         if let Some(mouse_pos) = response.interact_pointer_pos() {
-            let new_time = state.view.time_at_screen_x(timeline_rect, mouse_pos.x);
+            let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
             *current_time = snap_to_frame(new_time, fps).clamp(0.0, duration);
         }
     }
@@ -49,11 +49,11 @@ pub fn draw_playhead(
         && state.interaction.scrollbar_drag.is_none()
     {
         if let Some(mouse_pos) = response.hover_pos() {
+            let content_rect = layout.content_interact_rect(&state.view);
             if mouse_pos.x > timeline_rect.min.x + state.view.header_width
-                && mouse_pos.y > timeline_rect.min.y + ruler_height
-                && mouse_pos.y < timeline_rect.max.y - controls_height - scrollbar_height
+                && content_rect.contains(mouse_pos)
             {
-                let new_time = state.view.time_at_screen_x(timeline_rect, mouse_pos.x);
+                let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
                 *current_time = snap_to_frame(new_time, fps).clamp(0.0, duration);
             }
         }
@@ -63,7 +63,7 @@ pub fn draw_playhead(
         painter.line_segment(
             [
                 egui::pos2(playhead_x, timeline_rect.min.y),
-                egui::pos2(playhead_x, timeline_rect.max.y - controls_height),
+                egui::pos2(playhead_x, layout.controls_rect.min.y),
             ],
             egui::Stroke::new(2.0, c.playhead),
         );

@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::{TimelineState, ThemeColors};
 use crate::transport::timecode::{snap_to_frame, format_timecode_frames, format_timecode_seconds, font};
 
@@ -6,20 +7,18 @@ pub fn draw_ruler(
     ui: &egui::Ui,
     painter: &egui::Painter,
     c: &ThemeColors,
-    timeline_rect: &egui::Rect,
+    layout: &TimelineLayout,
+    _metrics: &TimelineMetrics,
     state: &mut TimelineState,
-    visible_start: f32,
-    visible_end: f32,
-    ruler_height: f32,
     response: &egui::Response,
     current_time: &mut f32,
     duration: f32,
     fps: u32,
 ) {
-    let ruler_rect = egui::Rect::from_min_size(
-        timeline_rect.min,
-        egui::vec2(timeline_rect.width(), ruler_height),
-    );
+    let timeline_rect = layout.timeline_rect;
+    let ruler_rect = layout.ruler_rect;
+    let visible_start = layout.visible_start;
+    let visible_end = layout.visible_end;
     painter.rect_filled(ruler_rect, 0.0, c.ruler_bg);
     painter.rect_stroke(ruler_rect, 0.0, egui::Stroke::new(1.0, c.border), egui::StrokeKind::Inside);
 
@@ -31,7 +30,7 @@ pub fn draw_ruler(
     {
         if let Some(mouse_pos) = response.hover_pos() {
             if ruler_rect.contains(mouse_pos) && mouse_pos.x > timeline_rect.min.x + state.view.header_width {
-                let new_time = state.view.time_at_screen_x(timeline_rect, mouse_pos.x);
+                let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
                 *current_time = snap_to_frame(new_time, fps).clamp(0.0, duration);
             }
         }
@@ -62,7 +61,7 @@ pub fn draw_ruler(
     // 主刻度
     let mut t = (visible_start / major_interval).floor() * major_interval;
     while t <= visible_end {
-        let x = state.view.screen_x_for_time(timeline_rect, t);
+        let x = state.view.screen_x_for_time(&timeline_rect, t);
         if x >= timeline_rect.min.x + state.view.header_width {
             painter.line_segment(
                 [
@@ -91,7 +90,7 @@ pub fn draw_ruler(
     if state.view.zoom > 3000.0 {
         let mut ft = (visible_start / frame_interval).floor() * frame_interval;
         while ft <= visible_end {
-            let x = state.view.screen_x_for_time(timeline_rect, ft);
+            let x = state.view.screen_x_for_time(&timeline_rect, ft);
             if x >= timeline_rect.min.x + state.view.header_width {
                 let is_major = ((ft / major_interval).round() * major_interval - ft).abs() < 0.001;
                 if !is_major {

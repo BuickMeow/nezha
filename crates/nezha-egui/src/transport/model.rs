@@ -119,6 +119,22 @@ pub enum ScrollbarDrag {
     RightEdge,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClipDragMode {
+    Move,
+    ResizeStart,
+    ResizeEnd,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ClipDragState {
+    pub clip_id: usize,
+    pub mode: ClipDragMode,
+    pub anchor_pointer_time: f32,
+    pub anchor_start: f32,
+    pub anchor_end: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct TimelineView {
     pub zoom: f32,
@@ -197,6 +213,7 @@ impl Default for TimelineData {
 pub struct TimelineInteraction {
     pub dragging_playhead: bool,
     pub scrollbar_drag: Option<ScrollbarDrag>,
+    pub clip_drag: Option<ClipDragState>,
 }
 
 #[derive(Clone, Debug)]
@@ -296,27 +313,27 @@ impl TimelineState {
         self.selected_clip_id = None;
     }
 
-    pub fn move_clip_by(&mut self, clip_id: usize, delta: f32) {
+    pub fn move_clip_to_start(&mut self, clip_id: usize, new_start: f32) {
         let frame_duration = self.frame_duration();
         if let Some(clip) = self.find_clip_mut(clip_id) {
             let width = clip.end - clip.start;
-            clip.start = snap_to_frame((clip.start + delta).max(0.0), frame_duration);
+            clip.start = snap_to_frame(new_start.max(0.0), frame_duration);
             clip.end = clip.start + width;
         }
     }
 
-    pub fn resize_clip_start_by(&mut self, clip_id: usize, delta: f32) {
+    pub fn resize_clip_start_to(&mut self, clip_id: usize, new_start: f32) {
         let frame_duration = self.frame_duration();
         if let Some(clip) = self.find_clip_mut(clip_id) {
-            clip.start = snap_to_frame((clip.start + delta).max(0.0), frame_duration);
+            clip.start = snap_to_frame(new_start.max(0.0), frame_duration);
             clip.start = clip.start.min(clip.end - frame_duration);
         }
     }
 
-    pub fn resize_clip_end_by(&mut self, clip_id: usize, delta: f32) {
+    pub fn resize_clip_end_to(&mut self, clip_id: usize, new_end: f32) {
         let frame_duration = self.frame_duration();
         if let Some(clip) = self.find_clip_mut(clip_id) {
-            clip.end = snap_to_frame((clip.end + delta).max(clip.start + frame_duration), frame_duration);
+            clip.end = snap_to_frame(new_end.max(clip.start + frame_duration), frame_duration);
         }
     }
 

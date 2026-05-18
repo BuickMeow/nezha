@@ -1,11 +1,12 @@
 use eframe::egui;
+use crate::transport::layout::TimelineLayout;
 use crate::transport::TimelineView;
 
 pub fn handle_input(
     ui: &egui::Ui,
     response: &egui::Response,
     view: &mut TimelineView,
-    timeline_rect: &egui::Rect,
+    layout: &TimelineLayout,
 ) {
     if !response.hovered() {
         return;
@@ -17,7 +18,11 @@ pub fn handle_input(
 
     if scroll_y != 0.0 {
         if let Some(mouse_pos) = response.hover_pos() {
-            view.zoom_around_pointer(timeline_rect, mouse_pos.x, 1.0 + scroll_y * 0.001);
+            view.zoom_around_pointer(
+                &layout.timeline_rect,
+                mouse_pos.x,
+                1.0 + scroll_y * 0.001,
+            );
         }
     }
 
@@ -27,7 +32,7 @@ pub fn handle_input(
 
     if zoom_delta != 1.0 {
         if let Some(mouse_pos) = response.hover_pos() {
-            view.zoom_around_pointer(timeline_rect, mouse_pos.x, zoom_delta);
+            view.zoom_around_pointer(&layout.timeline_rect, mouse_pos.x, zoom_delta);
         }
     }
 }
