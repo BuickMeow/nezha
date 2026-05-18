@@ -164,8 +164,8 @@ impl TimelineView {
     ) {
         let old_zoom = self.zoom;
         self.zoom = (self.zoom * zoom_factor).clamp(0.2, 5000.0);
-        let mouse_time = (pointer_x - timeline_rect.min.x - self.header_width) / old_zoom
-            + self.scroll_offset;
+        let mouse_time =
+            (pointer_x - timeline_rect.min.x - self.header_width) / old_zoom + self.scroll_offset;
         self.scroll_offset =
             mouse_time - (pointer_x - timeline_rect.min.x - self.header_width) / self.zoom;
         self.clamp_scroll();
@@ -227,10 +227,22 @@ impl Default for TimelineState {
 }
 
 impl TimelineState {
+    /// 计算时间线有内容的最后一帧（所有 clip `end` 的最大值）。
+    pub fn content_duration(&self) -> f32 {
+        self.data
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .map(|c| c.end)
+            .fold(0.0, f32::max)
+    }
+
+    /// 仅对尚未设置长度的 clip（end == 0）设置默认长度，
+    /// 不会截断已经存在的 clip。
     pub fn update_duration(&mut self, duration: f32) {
         for track in &mut self.data.tracks {
             for clip in &mut track.clips {
-                if clip.end > duration || clip.end == 0.0 {
+                if clip.end == 0.0 {
                     clip.end = duration;
                 }
             }
@@ -252,7 +264,7 @@ impl TimelineState {
         let track_len = self.data.tracks.len();
         let mut track = Track::new_video(&format!("视频 {}", track_len + 1));
         let mut clip = TrackClip::new_waterfall(id, midi_idx);
-        clip.end = duration.max(1.0);
+        clip.end = if duration > 0.0 { duration } else { 5.0 };
         track.clips.push(clip);
         self.data.tracks.insert(0, track);
     }
@@ -263,7 +275,7 @@ impl TimelineState {
         let track_len = self.data.tracks.len();
         let mut track = Track::new_video(&format!("视频 {}", track_len + 1));
         let mut clip = TrackClip::new_solid_color(id, color);
-        clip.end = duration.max(1.0);
+        clip.end = if duration > 0.0 { duration } else { 5.0 };
         track.clips.push(clip);
         self.data.tracks.insert(0, track);
     }

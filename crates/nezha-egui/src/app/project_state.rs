@@ -39,18 +39,20 @@ impl ProjectState {
         self.midi.highlighted_midi()
     }
 
-    /// 当前总时长（由高亮 MIDI 决定，如果没有则默认 120s）
+    /// 当前总时长。
+    ///
+    /// 取时间线中所有 clip 的最晚结束时间（有内容的最后一帧）。
+    /// 如果时间线尚无内容（所有 clip 的 end 均为 0），则返回 0。
     pub fn duration(&self) -> f64 {
-        self.highlighted_midi()
-            .map(|m| m.duration)
-            .unwrap_or(DEFAULT_DURATION_SECS)
+        self.timeline_state.content_duration() as f64
     }
 
     /// 将已解析的 MidiFile 插入项目，执行所有后处理逻辑
     pub fn insert_midi(&mut self, path: String, midi: MidiFile) -> usize {
+        let duration = midi.duration;
         let idx = self.midi.insert(path, midi, &mut self.timeline_state);
         self.sync_timeline_settings();
-        self.timeline_state.update_duration(self.duration() as f32);
+        self.timeline_state.update_duration(duration as f32);
         self.playback.reset();
         idx
     }
@@ -58,7 +60,12 @@ impl ProjectState {
     pub fn remove_midi(&mut self, idx: usize) {
         self.midi.remove(idx, &mut self.timeline_state);
         self.sync_timeline_settings();
-        self.timeline_state.update_duration(self.duration() as f32);
+        let fallback_duration = self
+            .highlighted_midi()
+            .map(|m| m.duration)
+            .unwrap_or(DEFAULT_DURATION_SECS);
+        self.timeline_state
+            .update_duration(fallback_duration as f32);
         self.playback.current_time = self.playback.current_time.min(self.duration());
         self.playback.start = None;
     }

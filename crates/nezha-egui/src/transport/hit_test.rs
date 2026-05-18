@@ -1,5 +1,5 @@
-use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::TimelineView;
+use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use eframe::egui;
 
 #[derive(Clone, Copy, Debug)]
@@ -19,18 +19,24 @@ pub fn clip_hit_areas(
     clip_end: f32,
 ) -> ClipHitAreas {
     let clip_rect = layout.clip_rect(view, track_rect, clip_start, clip_end, metrics);
-    let left_edge = egui::Rect::from_min_size(
-        clip_rect.min,
-        egui::vec2(metrics.clip_edge_width, clip_rect.height()),
-    );
+    let half_width = clip_rect.width() / 2.0;
+    let edge_width = metrics.clip_edge_width.min(half_width);
+
+    let left_edge =
+        egui::Rect::from_min_size(clip_rect.min, egui::vec2(edge_width, clip_rect.height()));
     let right_edge = egui::Rect::from_min_size(
-        egui::pos2(clip_rect.max.x - metrics.clip_edge_width, clip_rect.min.y),
-        egui::vec2(metrics.clip_edge_width, clip_rect.height()),
+        egui::pos2(clip_rect.max.x - edge_width, clip_rect.min.y),
+        egui::vec2(edge_width, clip_rect.height()),
     );
-    let middle_rect = egui::Rect::from_min_max(
-        egui::pos2(clip_rect.min.x + metrics.clip_edge_width, clip_rect.min.y),
-        egui::pos2(clip_rect.max.x - metrics.clip_edge_width, clip_rect.max.y),
-    );
+    let middle_rect = if clip_rect.width() > edge_width * 2.0 {
+        egui::Rect::from_min_max(
+            egui::pos2(clip_rect.min.x + edge_width, clip_rect.min.y),
+            egui::pos2(clip_rect.max.x - edge_width, clip_rect.max.y),
+        )
+    } else {
+        // clip 极窄时 middle_rect 为空，避免无效矩形
+        egui::Rect::from_min_max(clip_rect.max, clip_rect.max)
+    };
 
     ClipHitAreas {
         clip_rect,
@@ -94,8 +100,14 @@ pub fn scrollbar_hit_areas(
     let thumb_x1 = scrollbar_rect.min.x + (vis_start / duration) * scrollbar_rect.width();
     let thumb_x2 = scrollbar_rect.min.x + (vis_end / duration) * scrollbar_rect.width();
     let thumb_rect = egui::Rect::from_min_max(
-        egui::pos2(thumb_x1.max(scrollbar_rect.min.x), scrollbar_rect.min.y + 2.0),
-        egui::pos2(thumb_x2.min(scrollbar_rect.max.x), scrollbar_rect.max.y - 2.0),
+        egui::pos2(
+            thumb_x1.max(scrollbar_rect.min.x),
+            scrollbar_rect.min.y + 2.0,
+        ),
+        egui::pos2(
+            thumb_x2.min(scrollbar_rect.max.x),
+            scrollbar_rect.max.y - 2.0,
+        ),
     );
     let left_handle = egui::Rect::from_min_max(
         egui::pos2(thumb_rect.min.x, thumb_rect.min.y),
@@ -136,7 +148,11 @@ pub fn is_ruler_hit(layout: &TimelineLayout, view: &TimelineView, pointer_pos: e
         && pointer_pos.x > layout.timeline_rect.min.x + view.header_width
 }
 
-pub fn is_content_hit(layout: &TimelineLayout, view: &TimelineView, pointer_pos: egui::Pos2) -> bool {
+pub fn is_content_hit(
+    layout: &TimelineLayout,
+    view: &TimelineView,
+    pointer_pos: egui::Pos2,
+) -> bool {
     layout.content_interact_rect(view).contains(pointer_pos)
         && pointer_pos.x > layout.timeline_rect.min.x + view.header_width
 }
