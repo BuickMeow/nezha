@@ -101,7 +101,10 @@ impl Track {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ScrollbarDrag {
-    Pan { anchor_time: f32 },
+    Pan {
+        anchor_time: f32,
+        anchor_vis_start: f32,
+    },
     LeftEdge,
     RightEdge,
 }

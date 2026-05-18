@@ -8,14 +8,28 @@ pub enum TimelineCommand {
     SetPlayheadDragging(bool),
     SetClipDrag(Option<ClipDragState>),
     SetScrollOffset(f32),
-    SetZoom(f32),
-    SetZoomAndScroll { zoom: f32, scroll_offset: f32 },
+    SetZoomAndScroll {
+        zoom: f32,
+        scroll_offset: f32,
+    },
     SelectClip(usize),
     ClearSelection,
-    MoveClipToStart { clip_id: usize, start: f32 },
-    ResizeClipStartTo { clip_id: usize, start: f32 },
-    ResizeClipEndTo { clip_id: usize, end: f32 },
-    MoveClipToTrack { clip_id: usize, target_track_index: usize },
+    MoveClipToStart {
+        clip_id: usize,
+        start: f32,
+    },
+    ResizeClipStartTo {
+        clip_id: usize,
+        start: f32,
+    },
+    ResizeClipEndTo {
+        clip_id: usize,
+        end: f32,
+    },
+    MoveClipToTrack {
+        clip_id: usize,
+        target_track_index: usize,
+    },
 }
 
 pub fn apply_timeline_commands(
@@ -40,10 +54,10 @@ pub fn apply_timeline_commands(
             TimelineCommand::SetScrollOffset(offset) => {
                 state.view.scroll_offset = offset.max(0.0);
             }
-            TimelineCommand::SetZoom(zoom) => {
-                state.view.zoom = zoom.clamp(0.2, 5000.0);
-            }
-            TimelineCommand::SetZoomAndScroll { zoom, scroll_offset } => {
+            TimelineCommand::SetZoomAndScroll {
+                zoom,
+                scroll_offset,
+            } => {
                 state.view.zoom = zoom.clamp(0.2, 5000.0);
                 state.view.scroll_offset = scroll_offset.max(0.0);
             }

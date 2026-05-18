@@ -498,5 +498,20 @@ fn draw_track_row(
         }
     }
 
+    // 根据当前 clip 拖拽状态设置光标
+    if let Some(drag) = active_clip_drag {
+        match drag.mode {
+            ClipDragMode::Move => {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+            ClipDragMode::ResizeStart => {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest);
+            }
+            ClipDragMode::ResizeEnd => {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast);
+            }
+        }
+    }
+
     y + view.track_height
 }

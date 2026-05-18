@@ -49,37 +49,8 @@ pub fn clip_hit_areas(
 #[derive(Clone, Copy, Debug)]
 pub struct ScrollbarHitAreas {
     pub thumb_rect: egui::Rect,
-    pub left_handle: egui::Rect,
-    pub right_handle: egui::Rect,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ScrollbarHitTarget {
-    Pan { anchor_time: f32 },
-    LeftEdge,
-    RightEdge,
-}
-
-impl ScrollbarHitAreas {
-    pub fn target_at(
-        &self,
-        pointer_pos: egui::Pos2,
-        scrollbar_rect: &egui::Rect,
-        duration: f32,
-    ) -> Option<ScrollbarHitTarget> {
-        if self.left_handle.contains(pointer_pos) {
-            Some(ScrollbarHitTarget::LeftEdge)
-        } else if self.right_handle.contains(pointer_pos) {
-            Some(ScrollbarHitTarget::RightEdge)
-        } else if self.thumb_rect.contains(pointer_pos) {
-            let rel_x = (pointer_pos.x - scrollbar_rect.min.x).clamp(0.0, scrollbar_rect.width());
-            Some(ScrollbarHitTarget::Pan {
-                anchor_time: rel_x / scrollbar_rect.width() * duration,
-            })
-        } else {
-            None
-        }
-    }
+    pub left_handle: Option<egui::Rect>,
+    pub right_handle: Option<egui::Rect>,
 }
 
 pub fn scrollbar_hit_areas(
@@ -109,20 +80,39 @@ pub fn scrollbar_hit_areas(
             scrollbar_rect.max.y - 2.0,
         ),
     );
-    let left_handle = egui::Rect::from_min_max(
-        egui::pos2(thumb_rect.min.x, thumb_rect.min.y),
-        egui::pos2(
-            thumb_rect.min.x + metrics.scrollbar_handle_width,
-            thumb_rect.max.y,
-        ),
-    );
-    let right_handle = egui::Rect::from_min_max(
-        egui::pos2(
-            thumb_rect.max.x - metrics.scrollbar_handle_width,
-            thumb_rect.min.y,
-        ),
-        egui::pos2(thumb_rect.max.x, thumb_rect.max.y),
-    );
+
+    let thumb_width = thumb_rect.width();
+    let min_handle_space = metrics.scrollbar_handle_width * 2.0;
+    let (left_handle, right_handle, _pan_rect) = if thumb_width < min_handle_space + 4.0 {
+        // thumb 太窄时不拆分 handle，整个 thumb 用于 Pan
+        (None, None, thumb_rect)
+    } else {
+        let left = egui::Rect::from_min_max(
+            egui::pos2(thumb_rect.min.x, thumb_rect.min.y),
+            egui::pos2(
+                thumb_rect.min.x + metrics.scrollbar_handle_width,
+                thumb_rect.max.y,
+            ),
+        );
+        let right = egui::Rect::from_min_max(
+            egui::pos2(
+                thumb_rect.max.x - metrics.scrollbar_handle_width,
+                thumb_rect.min.y,
+            ),
+            egui::pos2(thumb_rect.max.x, thumb_rect.max.y),
+        );
+        let pan = egui::Rect::from_min_max(
+            egui::pos2(
+                thumb_rect.min.x + metrics.scrollbar_handle_width,
+                thumb_rect.min.y,
+            ),
+            egui::pos2(
+                thumb_rect.max.x - metrics.scrollbar_handle_width,
+                thumb_rect.max.y,
+            ),
+        );
+        (Some(left), Some(right), pan)
+    };
 
     Some(ScrollbarHitAreas {
         thumb_rect,
