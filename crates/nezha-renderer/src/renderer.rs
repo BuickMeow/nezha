@@ -49,12 +49,12 @@ impl Renderer {
     pub fn new(device: Device, queue: Queue, format: TextureFormat) -> Self {
         let render_shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("waterfall_shader"),
-            source: ShaderSource::Wgsl(include_str!("../shader.wgsl").into()),
+            source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
         let compute_shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("compute_notes"),
-            source: ShaderSource::Wgsl(include_str!("../compute_notes.wgsl").into()),
+            source: ShaderSource::Wgsl(include_str!("compute_notes.wgsl").into()),
         });
 
         let render = RenderPipelineState::new(&device, format, &render_shader);
