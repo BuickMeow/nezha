@@ -74,6 +74,14 @@ fn write_instance(idx: u32, x: f32, y: f32, w: f32, h: f32,
     }
 }
 
+/// Shared emission logic: compute border/rounding and atomically append.
+fn emit_note(x: f32, y: f32, w: f32, h: f32, track: u32, velocity: u32) {
+    let border_px = u.border_width * w / 2.0;
+    let rounding_radius = u.rounding * min(w, h);
+    let idx = atomicAdd(&instance_count, 1u);
+    write_instance(idx, x, y, w, h, track, rounding_radius, border_px, velocity);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 @compute
@@ -123,13 +131,7 @@ fn compute_notes(
             let y = note_top_val;
             let h = max(note_bottom - note_top_val, 1.0);
 
-            let trk = note.track % 128u;
-            let border_px = u.border_width * w / 2.0;
-            let rounding_radius = u.rounding * min(w, h);
-            let vel = note.velocity;
-
-            let idx = atomicAdd(&instance_count, 1u);
-            write_instance(idx, x, y, w, h, trk, rounding_radius, border_px, vel);
+            emit_note(x, y, w, h, note.track % 128u, note.velocity);
         }
     } else {
         let ppt = 100.0 / u.ticks_per_beat * max(u.speed, 0.01);
@@ -151,13 +153,7 @@ fn compute_notes(
             let y = note_top_val;
             let h = max(note_bottom - note_top_val, 1.0);
 
-            let trk = note.track % 128u;
-            let border_px = u.border_width * w / 2.0;
-            let rounding_radius = u.rounding * min(w, h);
-            let vel = note.velocity;
-
-            let idx = atomicAdd(&instance_count, 1u);
-            write_instance(idx, x, y, w, h, trk, rounding_radius, border_px, vel);
+            emit_note(x, y, w, h, note.track % 128u, note.velocity);
         }
     }
 }
