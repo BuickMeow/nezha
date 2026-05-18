@@ -14,7 +14,7 @@ impl App {
             }
             config_panel::ConfigAction::AddWaterfall => {
                 let duration = self.project.duration() as f32;
-                let midi_idx = self.project.highlighted_midi_idx;
+                let midi_idx = self.project.midi.highlighted_idx;
                 self.project
                     .timeline_state
                     .push_waterfall_clip(midi_idx, duration);
@@ -28,6 +28,7 @@ impl App {
             }
             config_panel::ConfigAction::RemoveMidi(idx) => {
                 self.project.remove_midi(idx);
+                self.render_ctx.reset_midi_state();
             }
         }
     }
@@ -35,7 +36,7 @@ impl App {
     pub(super) fn render_side_panels(&mut self, ui: &mut egui::Ui) {
         let mut config_action = None;
         let dark_mode = self.ui.theme_mode.is_dark(ui.ctx());
-        self.project.timeline_state.fps = self.project.fps;
+        self.project.timeline_state.fps = self.project.render.fps;
         let duration = self.project.duration() as f32;
 
         egui::Panel::left("sidebar")
@@ -49,16 +50,16 @@ impl App {
             .exact_size(200.0)
             .resizable(false)
             .show_inside(ui, |ui| {
-                let mut transport_time = self.project.current_time as f32;
+                let mut transport_time = self.project.playback.current_time as f32;
                 transport::show(
                     ui,
-                    &mut self.project.is_playing,
+                    &mut self.project.playback.is_playing,
                     &mut transport_time,
                     duration,
                     &mut self.project.timeline_state,
                     dark_mode,
                 );
-                self.project.current_time = transport_time as f64;
+                self.project.playback.current_time = transport_time as f64;
             });
 
         egui::Panel::left("config_panel")
@@ -68,11 +69,11 @@ impl App {
             .show_inside(ui, |ui| {
                 let mut state = config_panel::ConfigState {
                     active_tab: self.ui.active_tab,
-                    midi_files: &self.project.midi_files,
-                    highlighted_midi_idx: &mut self.project.highlighted_midi_idx,
-                    render_width: &mut self.project.render_width,
-                    render_height: &mut self.project.render_height,
-                    fps: &mut self.project.fps,
+                    midi_files: &self.project.midi.entries,
+                    highlighted_midi_idx: &mut self.project.midi.highlighted_idx,
+                    render_width: &mut self.project.render.width,
+                    render_height: &mut self.project.render.height,
+                    fps: &mut self.project.render.fps,
                     export_format: &mut self.ui.export_format,
                     encoder: &mut self.ui.encoder,
                     export_path: &mut self.ui.export_path,
@@ -93,7 +94,7 @@ impl App {
                     ui,
                     &mut self.project.timeline_state,
                     self.ui.zoom,
-                    &self.project.midi_files,
+                    &self.project.midi.entries,
                 );
             });
 

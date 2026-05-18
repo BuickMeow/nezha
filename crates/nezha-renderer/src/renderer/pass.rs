@@ -6,7 +6,7 @@ use super::Renderer;
 
 impl Renderer {
     pub(super) fn update_palette(&mut self, palette: &[[f32; 3]; 128]) {
-        if *palette != self.cached_palette {
+        if *palette != self.cache.cached_palette {
             let palette_flat: Vec<f32> = palette
                 .iter()
                 .flat_map(|c| [c[0], c[1], c[2], 0.0f32])
@@ -16,20 +16,21 @@ impl Renderer {
                 0,
                 bytemuck::cast_slice(&palette_flat),
             );
-            self.cached_palette = *palette;
+            self.cache.cached_palette = *palette;
         }
     }
 
     pub(super) fn update_key_layouts(&mut self, width: u32, equal_key_width: bool) {
-        if width != self.current_width || equal_key_width != self.current_equal_key_width {
+        if width != self.cache.current_width || equal_key_width != self.cache.current_equal_key_width
+        {
             Self::update_shared_key_layouts(
                 &self.queue,
                 &self.compute.shared_key_layouts_buf,
                 width,
                 equal_key_width,
             );
-            self.current_width = width;
-            self.current_equal_key_width = equal_key_width;
+            self.cache.current_width = width;
+            self.cache.current_equal_key_width = equal_key_width;
         }
     }
 
@@ -52,7 +53,7 @@ impl Renderer {
         encoder: &mut CommandEncoder,
         note_data_id: Option<usize>,
     ) -> bool {
-        let bundle = note_data_id.and_then(|id| self.note_bundles.get(&id));
+        let bundle = note_data_id.and_then(|id| self.cache.note_bundles.get(&id));
         match bundle {
             Some(b) if !b.chunks.is_empty() => {
                 profile_scope!("compute_pass");

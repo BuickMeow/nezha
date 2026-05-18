@@ -16,30 +16,18 @@ pub fn handle_input(
     let zoom_delta = ui.input(|i| i.zoom_delta());
 
     if scroll_y != 0.0 {
-        let old_zoom = view.zoom;
-        view.zoom = (view.zoom * (1.0 + scroll_y * 0.001)).clamp(0.2, 5000.0);
         if let Some(mouse_pos) = response.hover_pos() {
-            let mouse_time = (mouse_pos.x - timeline_rect.min.x - view.header_width) / old_zoom
-                + view.scroll_offset;
-            view.scroll_offset = mouse_time
-                - (mouse_pos.x - timeline_rect.min.x - view.header_width) / view.zoom;
+            view.zoom_around_pointer(timeline_rect, mouse_pos.x, 1.0 + scroll_y * 0.001);
         }
     }
 
     if scroll_x != 0.0 {
-        view.scroll_offset -= scroll_x / view.zoom;
+        view.pan_by_pixels(scroll_x);
     }
 
     if zoom_delta != 1.0 {
-        let old_zoom = view.zoom;
-        view.zoom = (view.zoom * zoom_delta).clamp(0.2, 5000.0);
         if let Some(mouse_pos) = response.hover_pos() {
-            let mouse_time = (mouse_pos.x - timeline_rect.min.x - view.header_width) / old_zoom
-                + view.scroll_offset;
-            view.scroll_offset = mouse_time
-                - (mouse_pos.x - timeline_rect.min.x - view.header_width) / view.zoom;
+            view.zoom_around_pointer(timeline_rect, mouse_pos.x, zoom_delta);
         }
     }
-
-    view.scroll_offset = view.scroll_offset.max(0.0);
 }

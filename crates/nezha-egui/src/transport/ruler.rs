@@ -31,9 +31,7 @@ pub fn draw_ruler(
     {
         if let Some(mouse_pos) = response.hover_pos() {
             if ruler_rect.contains(mouse_pos) && mouse_pos.x > timeline_rect.min.x + state.view.header_width {
-                let new_time = (mouse_pos.x - timeline_rect.min.x - state.view.header_width)
-                    / state.view.zoom
-                    + state.view.scroll_offset;
+                let new_time = state.view.time_at_screen_x(timeline_rect, mouse_pos.x);
                 *current_time = snap_to_frame(new_time, fps).clamp(0.0, duration);
             }
         }
@@ -64,9 +62,7 @@ pub fn draw_ruler(
     // 主刻度
     let mut t = (visible_start / major_interval).floor() * major_interval;
     while t <= visible_end {
-        let x = timeline_rect.min.x
-            + state.view.header_width
-            + (t - state.view.scroll_offset) * state.view.zoom;
+        let x = state.view.screen_x_for_time(timeline_rect, t);
         if x >= timeline_rect.min.x + state.view.header_width {
             painter.line_segment(
                 [
@@ -95,9 +91,7 @@ pub fn draw_ruler(
     if state.view.zoom > 3000.0 {
         let mut ft = (visible_start / frame_interval).floor() * frame_interval;
         while ft <= visible_end {
-            let x = timeline_rect.min.x
-                + state.view.header_width
-                + (ft - state.view.scroll_offset) * state.view.zoom;
+            let x = state.view.screen_x_for_time(timeline_rect, ft);
             if x >= timeline_rect.min.x + state.view.header_width {
                 let is_major = ((ft / major_interval).round() * major_interval - ft).abs() < 0.001;
                 if !is_major {

@@ -57,7 +57,7 @@ impl App {
             })
             .unwrap_or(TrackClip::default_render_params());
 
-        let keyboard_height_px = self.project.render_height as f32 * keyboard_percent;
+        let keyboard_height_px = self.project.render.height as f32 * keyboard_percent;
 
         nezha_renderer::RenderStyle {
             render_mode,
@@ -75,10 +75,10 @@ impl App {
         self.update_playback();
 
         let available = ui.available_size();
-        let render_width = self.project.render_width;
-        let render_height = self.project.render_height;
+        let render_width = self.project.render.width;
+        let render_height = self.project.render.height;
         let aspect = render_width as f32 / render_height as f32;
-        let current_time = self.project.current_time as f32;
+        let current_time = self.project.playback.current_time as f32;
 
         let layers = self.collect_visible_layers(current_time);
         let default_style = self.default_style();
@@ -111,7 +111,7 @@ impl App {
             let Some(midi_idx) = clip.midi_idx else {
                 continue;
             };
-            let Some(entry) = self.project.midi_files.get(midi_idx) else {
+            let Some(entry) = self.project.midi.entries.get(midi_idx) else {
                 continue;
             };
 
@@ -143,7 +143,7 @@ impl App {
 
         self.ui.zoom = piano_view::show(
             ui,
-            self.render_ctx.preview_texture_id,
+            self.render_ctx.preview_texture_id(),
             available,
             aspect,
             &mut self.ui.zoom,

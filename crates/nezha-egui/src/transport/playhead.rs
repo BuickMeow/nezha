@@ -16,9 +16,7 @@ pub fn draw_playhead(
     scrollbar_height: f32,
     fps: u32,
 ) {
-    let playhead_x = timeline_rect.min.x
-        + state.view.header_width
-        + (*current_time - state.view.scroll_offset) * state.view.zoom;
+    let playhead_x = state.view.screen_x_for_time(timeline_rect, *current_time);
 
     let playhead_hit_rect = egui::Rect::from_center_size(
         egui::pos2(playhead_x, timeline_rect.center().y),
@@ -39,9 +37,7 @@ pub fn draw_playhead(
 
     if state.interaction.dragging_playhead {
         if let Some(mouse_pos) = response.interact_pointer_pos() {
-            let new_time = (mouse_pos.x - timeline_rect.min.x - state.view.header_width)
-                / state.view.zoom
-                + state.view.scroll_offset;
+            let new_time = state.view.time_at_screen_x(timeline_rect, mouse_pos.x);
             *current_time = snap_to_frame(new_time, fps).clamp(0.0, duration);
         }
     }
@@ -57,9 +53,7 @@ pub fn draw_playhead(
                 && mouse_pos.y > timeline_rect.min.y + ruler_height
                 && mouse_pos.y < timeline_rect.max.y - controls_height - scrollbar_height
             {
-                let new_time = (mouse_pos.x - timeline_rect.min.x - state.view.header_width)
-                    / state.view.zoom
-                    + state.view.scroll_offset;
+                let new_time = state.view.time_at_screen_x(timeline_rect, mouse_pos.x);
                 *current_time = snap_to_frame(new_time, fps).clamp(0.0, duration);
             }
         }

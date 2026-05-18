@@ -1,0 +1,370 @@
+use eframe::egui;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TrackKind {
+    Video,
+    Audio,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClipKind {
+    Waterfall,
+    SolidColor,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrackClip {
+    pub id: usize,
+    pub name: String,
+    pub kind: ClipKind,
+    pub start: f32,
+    pub end: f32,
+    pub color: egui::Color32,
+    pub speed: f32,
+    pub border_width: f32,
+    pub rounding: f32,
+    pub render_mode: nezha_renderer::RenderMode,
+    pub equal_key_width: bool,
+    pub midi_idx: Option<usize>,
+    pub keyboard_height_percent: f32,
+}
+
+impl TrackClip {
+    pub fn new_waterfall(id: usize, midi_idx: Option<usize>) -> Self {
+        Self {
+            id,
+            name: format!("默认瀑布流 {}", id),
+            kind: ClipKind::Waterfall,
+            start: 0.0,
+            end: 0.0,
+            color: egui::Color32::from_rgb(80, 150, 220),
+            speed: 1.0,
+            border_width: 0.1,
+            rounding: 0.0,
+            render_mode: nezha_renderer::RenderMode::TimeBased,
+            equal_key_width: true,
+            midi_idx,
+            keyboard_height_percent: 0.15,
+        }
+    }
+
+    pub fn new_solid_color(id: usize, color: egui::Color32) -> Self {
+        Self {
+            id,
+            name: format!("纯色 {}", id),
+            kind: ClipKind::SolidColor,
+            start: 0.0,
+            end: 0.0,
+            color,
+            speed: 1.0,
+            border_width: 0.0,
+            rounding: 0.0,
+            render_mode: nezha_renderer::RenderMode::TimeBased,
+            equal_key_width: true,
+            midi_idx: None,
+            keyboard_height_percent: 0.0,
+        }
+    }
+
+    pub fn default_render_params() -> (f32, f32, usize, nezha_renderer::RenderMode, bool, f32) {
+        (
+            0.1,
+            0.0,
+            0,
+            nezha_renderer::RenderMode::TimeBased,
+            true,
+            0.15,
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Track {
+    pub name: String,
+    pub kind: TrackKind,
+    pub clips: Vec<TrackClip>,
+    pub muted: bool,
+    pub solo: bool,
+    pub visible: bool,
+}
+
+impl Track {
+    pub fn new_video(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: TrackKind::Video,
+            clips: Vec::new(),
+            muted: false,
+            solo: false,
+            visible: true,
+        }
+    }
+
+    pub fn new_audio(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: TrackKind::Audio,
+            clips: Vec::new(),
+            muted: false,
+            solo: false,
+            visible: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ScrollbarDrag {
+    Pan { anchor_time: f32 },
+    LeftEdge,
+    RightEdge,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimelineView {
+    pub zoom: f32,
+    pub scroll_offset: f32,
+    pub track_height: f32,
+    pub header_width: f32,
+}
+
+impl Default for TimelineView {
+    fn default() -> Self {
+        Self {
+            zoom: 50.0,
+            scroll_offset: 0.0,
+            track_height: 36.0,
+            header_width: 100.0,
+        }
+    }
+}
+
+impl TimelineView {
+    pub fn visible_range(&self, content_width: f32) -> (f32, f32) {
+        let visible_start = self.scroll_offset;
+        let visible_end = visible_start + content_width / self.zoom;
+        (visible_start, visible_end)
+    }
+
+    pub fn time_at_screen_x(&self, timeline_rect: &egui::Rect, x: f32) -> f32 {
+        (x - timeline_rect.min.x - self.header_width) / self.zoom + self.scroll_offset
+    }
+
+    pub fn screen_x_for_time(&self, timeline_rect: &egui::Rect, time: f32) -> f32 {
+        timeline_rect.min.x + self.header_width + (time - self.scroll_offset) * self.zoom
+    }
+
+    pub fn zoom_around_pointer(
+        &mut self,
+        timeline_rect: &egui::Rect,
+        pointer_x: f32,
+        zoom_factor: f32,
+    ) {
+        let old_zoom = self.zoom;
+        self.zoom = (self.zoom * zoom_factor).clamp(0.2, 5000.0);
+        let mouse_time = (pointer_x - timeline_rect.min.x - self.header_width) / old_zoom
+            + self.scroll_offset;
+        self.scroll_offset =
+            mouse_time - (pointer_x - timeline_rect.min.x - self.header_width) / self.zoom;
+        self.clamp_scroll();
+    }
+
+    pub fn pan_by_pixels(&mut self, pixels: f32) {
+        self.scroll_offset -= pixels / self.zoom;
+        self.clamp_scroll();
+    }
+
+    pub fn clamp_scroll(&mut self) {
+        self.scroll_offset = self.scroll_offset.max(0.0);
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TimelineData {
+    pub tracks: Vec<Track>,
+}
+
+impl Default for TimelineData {
+    fn default() -> Self {
+        let mut tracks = Vec::new();
+        let mut video_track = Track::new_video("视频 1");
+        video_track.clips.push(TrackClip::new_waterfall(1, None));
+        tracks.push(video_track);
+        Self { tracks }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct TimelineInteraction {
+    pub dragging_playhead: bool,
+    pub scrollbar_drag: Option<ScrollbarDrag>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimelineState {
+    pub view: TimelineView,
+    pub data: TimelineData,
+    pub interaction: TimelineInteraction,
+    pub fps: u32,
+    pub selected_clip_id: Option<usize>,
+    pub next_clip_id: usize,
+}
+
+impl Default for TimelineState {
+    fn default() -> Self {
+        Self {
+            view: TimelineView::default(),
+            data: TimelineData::default(),
+            interaction: TimelineInteraction::default(),
+            fps: 60,
+            selected_clip_id: None,
+            next_clip_id: 2,
+        }
+    }
+}
+
+impl TimelineState {
+    pub fn update_duration(&mut self, duration: f32) {
+        for track in &mut self.data.tracks {
+            for clip in &mut track.clips {
+                if clip.end > duration || clip.end == 0.0 {
+                    clip.end = duration;
+                }
+            }
+        }
+    }
+
+    pub fn add_video_track(&mut self, name: &str) {
+        self.data.tracks.push(Track::new_video(name));
+    }
+
+    pub fn add_audio_track(&mut self, name: &str) {
+        self.data.tracks.push(Track::new_audio(name));
+    }
+
+    pub fn selected_clip(&self) -> Option<&TrackClip> {
+        let id = self.selected_clip_id?;
+        self.data
+            .tracks
+            .iter()
+            .flat_map(|track| track.clips.iter())
+            .find(|clip| clip.id == id)
+    }
+
+    pub fn solid_color_at(&self, time_secs: f32) -> Option<&TrackClip> {
+        self.data
+            .tracks
+            .iter()
+            .flat_map(|track| track.clips.iter())
+            .find(|clip| clip.kind == ClipKind::SolidColor && time_secs >= clip.start && time_secs < clip.end)
+    }
+
+    pub fn push_waterfall_clip(&mut self, midi_idx: Option<usize>, duration: f32) {
+        let id = self.next_clip_id;
+        self.next_clip_id += 1;
+        let track_len = self.data.tracks.len();
+        let mut track = Track::new_video(&format!("视频 {}", track_len + 1));
+        let mut clip = TrackClip::new_waterfall(id, midi_idx);
+        clip.end = duration.max(1.0);
+        track.clips.push(clip);
+        self.data.tracks.insert(0, track);
+    }
+
+    pub fn push_solid_color_clip(&mut self, color: egui::Color32, duration: f32) {
+        let id = self.next_clip_id;
+        self.next_clip_id += 1;
+        let track_len = self.data.tracks.len();
+        let mut track = Track::new_video(&format!("视频 {}", track_len + 1));
+        let mut clip = TrackClip::new_solid_color(id, color);
+        clip.end = duration.max(1.0);
+        track.clips.push(clip);
+        self.data.tracks.insert(0, track);
+    }
+
+    pub fn remove_selected_clip(&mut self) {
+        let Some(id) = self.selected_clip_id else {
+            return;
+        };
+        self.remove_clip_by_id(id);
+        self.selected_clip_id = None;
+    }
+
+    pub fn select_clip(&mut self, clip_id: usize) {
+        self.selected_clip_id = Some(clip_id);
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected_clip_id = None;
+    }
+
+    pub fn move_clip_by(&mut self, clip_id: usize, delta: f32) {
+        let frame_duration = self.frame_duration();
+        if let Some(clip) = self.find_clip_mut(clip_id) {
+            let width = clip.end - clip.start;
+            clip.start = snap_to_frame((clip.start + delta).max(0.0), frame_duration);
+            clip.end = clip.start + width;
+        }
+    }
+
+    pub fn resize_clip_start_by(&mut self, clip_id: usize, delta: f32) {
+        let frame_duration = self.frame_duration();
+        if let Some(clip) = self.find_clip_mut(clip_id) {
+            clip.start = snap_to_frame((clip.start + delta).max(0.0), frame_duration);
+            clip.start = clip.start.min(clip.end - frame_duration);
+        }
+    }
+
+    pub fn resize_clip_end_by(&mut self, clip_id: usize, delta: f32) {
+        let frame_duration = self.frame_duration();
+        if let Some(clip) = self.find_clip_mut(clip_id) {
+            clip.end = snap_to_frame((clip.end + delta).max(clip.start + frame_duration), frame_duration);
+        }
+    }
+
+    pub fn move_clip_to_track(&mut self, clip_id: usize, target_track_index: usize) {
+        let mut clip_to_move = None;
+        for track in &mut self.data.tracks {
+            if let Some(pos) = track.clips.iter().position(|clip| clip.id == clip_id) {
+                clip_to_move = Some(track.clips.remove(pos));
+                break;
+            }
+        }
+
+        let Some(clip) = clip_to_move else {
+            return;
+        };
+
+        if target_track_index < self.data.tracks.len()
+            && self.data.tracks[target_track_index].kind == TrackKind::Video
+        {
+            self.data.tracks[target_track_index].clips.push(clip);
+            self.data.tracks.retain(|track| !track.clips.is_empty());
+        }
+    }
+
+    fn frame_duration(&self) -> f32 {
+        1.0 / self.fps.max(1) as f32
+    }
+
+    fn find_clip_mut(&mut self, clip_id: usize) -> Option<&mut TrackClip> {
+        for track in &mut self.data.tracks {
+            if let Some(clip) = track.clips.iter_mut().find(|clip| clip.id == clip_id) {
+                return Some(clip);
+            }
+        }
+        None
+    }
+
+    fn remove_clip_by_id(&mut self, clip_id: usize) {
+        self.data.tracks.retain_mut(|track| {
+            track.clips.retain(|clip| clip.id != clip_id);
+            !track.clips.is_empty()
+        });
+    }
+}
+
+fn snap_to_frame(time: f32, frame_duration: f32) -> f32 {
+    if frame_duration <= 0.0 {
+        return time.max(0.0);
+    }
+    (time / frame_duration).round() * frame_duration
+}

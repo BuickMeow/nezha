@@ -28,8 +28,7 @@ pub fn draw_scrollbar(
         return;
     }
 
-    let visible_start = view.scroll_offset;
-    let visible_end = visible_start + content_width / view.zoom;
+    let (visible_start, visible_end) = view.visible_range(content_width);
     let vis_start = visible_start.clamp(0.0, duration);
     let vis_end = visible_end.clamp(vis_start, duration);
 
