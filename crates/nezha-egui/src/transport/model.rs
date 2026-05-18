@@ -85,7 +85,6 @@ pub struct Track {
     pub clips: Vec<TrackClip>,
     pub muted: bool,
     pub solo: bool,
-    pub visible: bool,
 }
 
 impl Track {
@@ -96,18 +95,6 @@ impl Track {
             clips: Vec::new(),
             muted: false,
             solo: false,
-            visible: true,
-        }
-    }
-
-    pub fn new_audio(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            kind: TrackKind::Audio,
-            clips: Vec::new(),
-            muted: false,
-            solo: false,
-            visible: true,
         }
     }
 }
@@ -250,14 +237,6 @@ impl TimelineState {
         }
     }
 
-    pub fn add_video_track(&mut self, name: &str) {
-        self.data.tracks.push(Track::new_video(name));
-    }
-
-    pub fn add_audio_track(&mut self, name: &str) {
-        self.data.tracks.push(Track::new_audio(name));
-    }
-
     pub fn selected_clip(&self) -> Option<&TrackClip> {
         let id = self.selected_clip_id?;
         self.data
@@ -265,14 +244,6 @@ impl TimelineState {
             .iter()
             .flat_map(|track| track.clips.iter())
             .find(|clip| clip.id == id)
-    }
-
-    pub fn solid_color_at(&self, time_secs: f32) -> Option<&TrackClip> {
-        self.data
-            .tracks
-            .iter()
-            .flat_map(|track| track.clips.iter())
-            .find(|clip| clip.kind == ClipKind::SolidColor && time_secs >= clip.start && time_secs < clip.end)
     }
 
     pub fn push_waterfall_clip(&mut self, midi_idx: Option<usize>, duration: f32) {

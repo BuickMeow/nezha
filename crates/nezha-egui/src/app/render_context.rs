@@ -41,12 +41,12 @@ impl RenderContext {
         }
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    fn ensure_preview_size(&mut self, width: u32, height: u32) {
         let format = self.wgpu_state.target_format;
         let device = &self.wgpu_state.device;
         let mut egui_renderer = self.wgpu_state.renderer.write();
         self.preview
-            .recreate(device, &mut egui_renderer, format, width, height);
+            .ensure_size(device, &mut egui_renderer, format, width, height);
     }
 
     pub fn preview_texture_id(&self) -> egui::TextureId {
@@ -73,6 +73,7 @@ impl RenderContext {
         style: &nezha_renderer::RenderStyle,
         clear_background: bool,
     ) {
+        self.ensure_preview_size(width, height);
         self.midi_cache.ensure_uploaded(
             &mut self.renderer,
             width,
@@ -103,6 +104,7 @@ impl RenderContext {
         height: u32,
         style: &nezha_renderer::RenderStyle,
     ) {
+        self.ensure_preview_size(width, height);
         let mut dummy_state = nezha_renderer::MidiRenderState::default();
         let encoder = self.frame_encoder.encoder_mut();
         self.renderer.render(

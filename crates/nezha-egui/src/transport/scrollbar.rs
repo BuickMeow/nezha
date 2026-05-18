@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::transport::controller::TimelineCommand;
 use crate::transport::hit_test::{scrollbar_hit_areas, ScrollbarHitTarget};
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::{TimelineView, TimelineInteraction, ScrollbarDrag, ThemeColors};
@@ -9,11 +10,12 @@ pub fn draw_scrollbar(
     c: &ThemeColors,
     layout: &TimelineLayout,
     metrics: &TimelineMetrics,
-    view: &mut TimelineView,
-    interaction: &mut TimelineInteraction,
+    view: &TimelineView,
+    interaction: &TimelineInteraction,
     duration: f32,
     response: &egui::Response,
     fps: u32,
+    commands: &mut Vec<TimelineCommand>,
 ) {
     let scrollbar_rect = layout.scrollbar_rect;
     let content_width = layout.content_width;
@@ -45,20 +47,20 @@ pub fn draw_scrollbar(
         if let Some(pos) = response.interact_pointer_pos() {
             if scrollbar_rect.contains(pos) {
                 if let Some(hit) = hit_areas.target_at(pos, &scrollbar_rect, duration) {
-                    interaction.scrollbar_drag = Some(match hit {
-                        ScrollbarHitTarget::Pan { anchor_time } => {
-                            ScrollbarDrag::Pan { anchor_time }
-                        }
+                    commands.push(TimelineCommand::SetScrollbarDrag(Some(match hit {
+                        ScrollbarHitTarget::Pan { anchor_time } => ScrollbarDrag::Pan {
+                            anchor_time,
+                        },
                         ScrollbarHitTarget::LeftEdge => ScrollbarDrag::LeftEdge,
                         ScrollbarHitTarget::RightEdge => ScrollbarDrag::RightEdge,
-                    });
+                    })));
                 }
             }
         }
     }
 
     if !response.dragged_by(egui::PointerButton::Primary) {
-        interaction.scrollbar_drag = None;
+        commands.push(TimelineCommand::SetScrollbarDrag(None));
     }
 
     if let Some(drag) = &interaction.scrollbar_drag {
@@ -70,19 +72,22 @@ pub fn draw_scrollbar(
                 ScrollbarDrag::Pan { anchor_time } => {
                     let time_offset = mouse_time - anchor_time;
                     let visible_dur = vis_end - vis_start;
-                    view.scroll_offset = (vis_start + time_offset)
-                        .clamp(0.0, (duration - visible_dur).max(0.0));
+                    commands.push(TimelineCommand::SetScrollOffset(
+                        (vis_start + time_offset).clamp(0.0, (duration - visible_dur).max(0.0)),
+                    ));
                 }
                 ScrollbarDrag::LeftEdge => {
                     let new_start = mouse_time.clamp(0.0, vis_end - 1.0 / fps.max(1) as f32);
                     let new_zoom = content_width / (vis_end - new_start);
-                    view.zoom = new_zoom.clamp(0.2, 5000.0);
-                    view.scroll_offset = new_start;
+                    commands.push(TimelineCommand::SetZoomAndScroll {
+                        zoom: new_zoom,
+                        scroll_offset: new_start,
+                    });
                 }
                 ScrollbarDrag::RightEdge => {
                     let new_end = mouse_time.clamp(vis_start + 1.0 / fps.max(1) as f32, duration);
                     let new_zoom = content_width / (new_end - vis_start);
-                    view.zoom = new_zoom.clamp(0.2, 5000.0);
+                    commands.push(TimelineCommand::SetZoom(new_zoom));
                 }
             }
         }

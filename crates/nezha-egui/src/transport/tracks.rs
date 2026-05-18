@@ -1,10 +1,10 @@
 use eframe::egui;
-use crate::transport::controller::{apply_track_commands, TrackEditCommand};
+use crate::transport::controller::TimelineCommand;
 use crate::transport::hit_test::clip_hit_areas;
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::timecode::font;
 use crate::transport::{
-    ClipDragMode, ThemeColors, TimelineInteraction, TimelineState, TimelineView, Track, TrackKind,
+    ClipDragMode, ClipDragState, ThemeColors, TimelineState, TimelineView, Track, TrackKind,
 };
 
 pub fn draw_tracks(
@@ -13,7 +13,8 @@ pub fn draw_tracks(
     c: &ThemeColors,
     layout: &TimelineLayout,
     metrics: &TimelineMetrics,
-    state: &mut TimelineState,
+    state: &TimelineState,
+    commands: &mut Vec<TimelineCommand>,
 ) -> f32 {
     let timeline_rect = layout.timeline_rect;
     let has_video = state
@@ -30,9 +31,7 @@ pub fn draw_tracks(
     let mut y = layout.ruler_rect.max.y;
     let view = &state.view;
     let selected_id = state.selected_clip_id;
-    let mut commands = Vec::new();
     let tracks = &state.data.tracks;
-    let interaction = &mut state.interaction;
 
     if has_video {
         let label_rect = layout.section_label_rect(y, metrics);
@@ -64,8 +63,8 @@ pub fn draw_tracks(
                 selected_id,
                 track,
                 y,
-                interaction,
-                &mut commands,
+                &state.interaction.clip_drag,
+                commands,
                 track_index,
             );
         }
@@ -102,14 +101,12 @@ pub fn draw_tracks(
                 selected_id,
                 track,
                 y,
-                interaction,
-                &mut commands,
+                &state.interaction.clip_drag,
+                commands,
                 track_index,
             );
         }
     }
-
-    apply_track_commands(state, commands);
 
     y
 }
@@ -124,8 +121,8 @@ fn draw_track_row(
     selected_id: Option<usize>,
     track: &Track,
     y: f32,
-    interaction: &mut TimelineInteraction,
-    commands: &mut Vec<TrackEditCommand>,
+    clip_drag: &Option<ClipDragState>,
+    commands: &mut Vec<TimelineCommand>,
     track_index: usize,
 ) -> f32 {
     let visible_start = layout.visible_start;
@@ -194,8 +191,10 @@ fn draw_track_row(
     let mut clip_clicked = false;
     let mut dragged_clip_id = None;
     let primary_dragging = ui.input(|i| i.pointer.primary_down());
+    let mut active_clip_drag = *clip_drag;
     if !primary_dragging {
-        interaction.clip_drag = None;
+        active_clip_drag = None;
+        commands.push(TimelineCommand::SetClipDrag(None));
     }
 
     for clip_idx in 0..track.clips.len() {
@@ -220,30 +219,32 @@ fn draw_track_row(
                         &layout.timeline_rect,
                         left_interact.interact_pointer_pos().map(|pos| pos.x).unwrap_or(clip_rect.min.x),
                     );
-                    interaction.clip_drag = Some(crate::transport::ClipDragState {
+                    let drag_state = ClipDragState {
                         clip_id,
                         mode: ClipDragMode::ResizeStart,
                         anchor_pointer_time: pointer_time,
                         anchor_start: clip_start,
                         anchor_end: clip_end,
-                    });
+                    };
+                    active_clip_drag = Some(drag_state);
+                    commands.push(TimelineCommand::SetClipDrag(Some(drag_state)));
                 }
                 if left_interact.dragged() {
                     if let (Some(drag), Some(pointer_pos)) =
-                        (interaction.clip_drag, left_interact.interact_pointer_pos())
+                        (active_clip_drag, left_interact.interact_pointer_pos())
                     {
                         if drag.clip_id == clip_id && drag.mode == ClipDragMode::ResizeStart {
                             let pointer_time =
                                 view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
                             let new_start =
                                 drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
-                            commands.push(TrackEditCommand::ResizeClipStartTo {
+                            commands.push(TimelineCommand::ResizeClipStartTo {
                                 clip_id,
                                 start: new_start,
                             });
                         }
                     }
-                    commands.push(TrackEditCommand::SelectClip(clip_id));
+                    commands.push(TimelineCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                 }
                 let right_interact = ui.interact(hit_areas.right_edge, egui::Id::new(("clip_right", clip_id)), egui::Sense::drag())
@@ -253,36 +254,38 @@ fn draw_track_row(
                         &layout.timeline_rect,
                         right_interact.interact_pointer_pos().map(|pos| pos.x).unwrap_or(clip_rect.max.x),
                     );
-                    interaction.clip_drag = Some(crate::transport::ClipDragState {
+                    let drag_state = ClipDragState {
                         clip_id,
                         mode: ClipDragMode::ResizeEnd,
                         anchor_pointer_time: pointer_time,
                         anchor_start: clip_start,
                         anchor_end: clip_end,
-                    });
+                    };
+                    active_clip_drag = Some(drag_state);
+                    commands.push(TimelineCommand::SetClipDrag(Some(drag_state)));
                 }
                 if right_interact.dragged() {
                     if let (Some(drag), Some(pointer_pos)) =
-                        (interaction.clip_drag, right_interact.interact_pointer_pos())
+                        (active_clip_drag, right_interact.interact_pointer_pos())
                     {
                         if drag.clip_id == clip_id && drag.mode == ClipDragMode::ResizeEnd {
                             let pointer_time =
                                 view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
                             let new_end =
                                 drag.anchor_end + (pointer_time - drag.anchor_pointer_time);
-                            commands.push(TrackEditCommand::ResizeClipEndTo {
+                            commands.push(TimelineCommand::ResizeClipEndTo {
                                 clip_id,
                                 end: new_end,
                             });
                         }
                     }
-                    commands.push(TrackEditCommand::SelectClip(clip_id));
+                    commands.push(TimelineCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                 }
                 let mid_interact = ui.interact(hit_areas.middle_rect, egui::Id::new(("clip_mid", clip_id)), egui::Sense::drag())
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 if mid_interact.clicked() {
-                    commands.push(TrackEditCommand::SelectClip(clip_id));
+                    commands.push(TimelineCommand::SelectClip(clip_id));
                     clip_clicked = true;
                 }
                 if mid_interact.drag_started() {
@@ -293,39 +296,41 @@ fn draw_track_row(
                             .map(|pos| pos.x)
                             .unwrap_or(clip_rect.center().x),
                     );
-                    interaction.clip_drag = Some(crate::transport::ClipDragState {
+                    let drag_state = ClipDragState {
                         clip_id,
                         mode: ClipDragMode::Move,
                         anchor_pointer_time: pointer_time,
                         anchor_start: clip_start,
                         anchor_end: clip_end,
-                    });
+                    };
+                    active_clip_drag = Some(drag_state);
+                    commands.push(TimelineCommand::SetClipDrag(Some(drag_state)));
                 }
                 if mid_interact.dragged() {
                     if let (Some(drag), Some(pointer_pos)) =
-                        (interaction.clip_drag, mid_interact.interact_pointer_pos())
+                        (active_clip_drag, mid_interact.interact_pointer_pos())
                     {
                         if drag.clip_id == clip_id && drag.mode == ClipDragMode::Move {
                             let pointer_time =
                                 view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
                             let new_start =
                                 drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
-                            commands.push(TrackEditCommand::MoveClipToStart {
+                            commands.push(TimelineCommand::MoveClipToStart {
                                 clip_id,
                                 start: new_start,
                             });
                         }
                     }
-                    commands.push(TrackEditCommand::SelectClip(clip_id));
+                    commands.push(TimelineCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                     if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
                         if ptr.y < track_rect.min.y && track_index > 0 {
-                            commands.push(TrackEditCommand::MoveClipToTrack {
+                            commands.push(TimelineCommand::MoveClipToTrack {
                                 clip_id,
                                 target_track_index: track_index - 1,
                             });
                         } else if ptr.y > track_rect.max.y {
-                            commands.push(TrackEditCommand::MoveClipToTrack {
+                            commands.push(TimelineCommand::MoveClipToTrack {
                                 clip_id,
                                 target_track_index: track_index + 1,
                             });
@@ -336,7 +341,7 @@ fn draw_track_row(
                 let clip_interact = ui.interact(clip_rect, egui::Id::new(("timeline_clip", clip_id)), egui::Sense::drag())
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 if clip_interact.clicked() {
-                    commands.push(TrackEditCommand::SelectClip(clip_id));
+                    commands.push(TimelineCommand::SelectClip(clip_id));
                     clip_clicked = true;
                 }
                 if clip_interact.drag_started() {
@@ -347,39 +352,41 @@ fn draw_track_row(
                             .map(|pos| pos.x)
                             .unwrap_or(clip_rect.center().x),
                     );
-                    interaction.clip_drag = Some(crate::transport::ClipDragState {
+                    let drag_state = ClipDragState {
                         clip_id,
                         mode: ClipDragMode::Move,
                         anchor_pointer_time: pointer_time,
                         anchor_start: clip_start,
                         anchor_end: clip_end,
-                    });
+                    };
+                    active_clip_drag = Some(drag_state);
+                    commands.push(TimelineCommand::SetClipDrag(Some(drag_state)));
                 }
                 if clip_interact.dragged() {
                     if let (Some(drag), Some(pointer_pos)) =
-                        (interaction.clip_drag, clip_interact.interact_pointer_pos())
+                        (active_clip_drag, clip_interact.interact_pointer_pos())
                     {
                         if drag.clip_id == clip_id && drag.mode == ClipDragMode::Move {
                             let pointer_time =
                                 view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
                             let new_start =
                                 drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
-                            commands.push(TrackEditCommand::MoveClipToStart {
+                            commands.push(TimelineCommand::MoveClipToStart {
                                 clip_id,
                                 start: new_start,
                             });
                         }
                     }
-                    commands.push(TrackEditCommand::SelectClip(clip_id));
+                    commands.push(TimelineCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                     if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
                         if ptr.y < track_rect.min.y && track_index > 0 {
-                            commands.push(TrackEditCommand::MoveClipToTrack {
+                            commands.push(TimelineCommand::MoveClipToTrack {
                                 clip_id,
                                 target_track_index: track_index - 1,
                             });
                         } else if ptr.y > track_rect.max.y {
-                            commands.push(TrackEditCommand::MoveClipToTrack {
+                            commands.push(TimelineCommand::MoveClipToTrack {
                                 clip_id,
                                 target_track_index: track_index + 1,
                             });
@@ -419,7 +426,7 @@ fn draw_track_row(
             egui::Sense::click(),
         );
         if deselect.clicked() {
-            commands.push(TrackEditCommand::ClearSelection);
+            commands.push(TimelineCommand::ClearSelection);
         }
     }
 

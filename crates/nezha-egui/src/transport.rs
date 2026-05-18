@@ -21,6 +21,7 @@ pub use model::{
 };
 pub use theme::ThemeColors;
 
+use controller::{apply_timeline_commands, TimelineCommand};
 use controls::draw_controls;
 use input::handle_input;
 use layout::{TimelineLayout, TimelineMetrics};
@@ -39,6 +40,7 @@ pub fn show(
 ) {
     let c = ThemeColors::new(dark_mode);
     let metrics = TimelineMetrics::default();
+    let mut commands = Vec::<TimelineCommand>::new();
 
     let available = ui.available_size();
     let response = ui.allocate_response(available, egui::Sense::click_and_drag());
@@ -61,9 +63,10 @@ pub fn show(
         &metrics,
         state,
         &response,
-        current_time,
+        *current_time,
         duration,
         fps,
+        &mut commands,
     );
 
     // ── 滚动条 ──
@@ -73,11 +76,12 @@ pub fn show(
         &c,
         &layout,
         &metrics,
-        &mut state.view,
-        &mut state.interaction,
+        &state.view,
+        &state.interaction,
         duration,
         &response,
         fps,
+        &mut commands,
     );
 
     // ── 轨道 ──
@@ -88,6 +92,7 @@ pub fn show(
         &layout,
         &metrics,
         state,
+        &mut commands,
     );
 
     // 底部填充
@@ -111,9 +116,10 @@ pub fn show(
         &metrics,
         &response,
         state,
-        current_time,
+        *current_time,
         duration,
         fps,
+        &mut commands,
     );
 
     // ── 底部控制栏 ──
@@ -122,9 +128,12 @@ pub fn show(
         &painter,
         &c,
         &layout,
-        is_playing,
-        current_time,
+        *is_playing,
+        *current_time,
         duration,
         state,
+        &mut commands,
     );
+
+    apply_timeline_commands(is_playing, current_time, state, commands);
 }

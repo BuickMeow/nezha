@@ -4,6 +4,8 @@ pub(super) struct PreviewTarget {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
     texture_id: egui::TextureId,
+    width: u32,
+    height: u32,
 }
 
 impl PreviewTarget {
@@ -37,10 +39,12 @@ impl PreviewTarget {
             _texture: texture,
             view,
             texture_id,
+            width,
+            height,
         }
     }
 
-    pub(super) fn recreate(
+    pub(super) fn ensure_size(
         &mut self,
         device: &wgpu::Device,
         egui_renderer: &mut eframe::egui_wgpu::Renderer,
@@ -48,6 +52,9 @@ impl PreviewTarget {
         width: u32,
         height: u32,
     ) {
+        if self.width == width && self.height == height {
+            return;
+        }
         egui_renderer.free_texture(&self.texture_id);
         *self = Self::new(device, egui_renderer, format, width, height);
     }

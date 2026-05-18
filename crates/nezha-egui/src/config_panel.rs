@@ -27,7 +27,6 @@ pub struct ConfigState<'a> {
 #[derive(Clone, Debug)]
 pub enum ConfigAction {
     SelectMidi,
-    Resize { width: u32, height: u32 },
     AddWaterfall,
     AddSolidColor,
     RemoveMidi(usize),

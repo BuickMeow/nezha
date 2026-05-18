@@ -9,9 +9,6 @@ impl App {
     pub(super) fn handle_config_action(&mut self, action: config_panel::ConfigAction) {
         match action {
             config_panel::ConfigAction::SelectMidi => self.pick_midi_file(),
-            config_panel::ConfigAction::Resize { width, height } => {
-                self.render_ctx.resize(width, height);
-            }
             config_panel::ConfigAction::AddWaterfall => {
                 let duration = self.project.duration() as f32;
                 let midi_idx = self.project.midi.highlighted_idx;

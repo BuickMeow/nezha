@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::transport::controller::TimelineCommand;
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::hit_test::is_ruler_hit;
 use crate::transport::{TimelineState, ThemeColors};
@@ -10,11 +11,12 @@ pub fn draw_ruler(
     c: &ThemeColors,
     layout: &TimelineLayout,
     _metrics: &TimelineMetrics,
-    state: &mut TimelineState,
+    state: &TimelineState,
     response: &egui::Response,
-    current_time: &mut f32,
+    _current_time: f32,
     duration: f32,
     fps: u32,
+    commands: &mut Vec<TimelineCommand>,
 ) {
     let timeline_rect = layout.timeline_rect;
     let ruler_rect = layout.ruler_rect;
@@ -32,7 +34,9 @@ pub fn draw_ruler(
         if let Some(mouse_pos) = response.hover_pos() {
             if is_ruler_hit(layout, &state.view, mouse_pos) {
                 let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
-                *current_time = snap_to_frame(new_time, fps).clamp(0.0, duration);
+                commands.push(TimelineCommand::SetCurrentTime(
+                    snap_to_frame(new_time, fps).clamp(0.0, duration),
+                ));
             }
         }
     }
