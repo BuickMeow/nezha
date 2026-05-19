@@ -1,4 +1,3 @@
-mod compute;
 mod gpu_timer;
 mod keyboard;
 mod palette;

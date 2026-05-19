@@ -1,15 +1,12 @@
 use wgpu::*;
 
 use crate::gpu_timer::GpuTimer;
-use crate::pipeline::ComputePipelineState;
+use crate::keyboard;
 use crate::pipeline::RenderPipelineState;
 use crate::source::NoteSource;
 use crate::state::MidiRenderState;
-use crate::style::RenderStyle;
-use crate::vertex::NoteInstance;
-
-use cache::RendererCache;
-use frame::PreparedFrame;
+use crate::style::{RenderMode, RenderStyle};
+use crate::vertex::{NoteInstance, Uniforms, pack_props, pack_rgba};
 
 #[cfg(feature = "profiling")]
 macro_rules! profile_scope {
@@ -26,17 +23,12 @@ pub struct Renderer {
     device: Device,
     queue: Queue,
     render: RenderPipelineState,
-    compute: ComputePipelineState,
     timer: GpuTimer,
-    cache: RendererCache,
+    instance_buffers: Vec<Buffer>,
 }
 
-mod cache;
-mod chunk;
-mod frame;
-mod pass;
-mod scan;
-mod upload;
+/// CPU path keeps multi-buffer batching to avoid a single hard cap per frame.
+const MAX_INSTANCE_COUNT: usize = 6_000_000;
 
 impl Renderer {
     /// Create a new renderer with the given wgpu device, queue, and swap-chain format.
@@ -46,27 +38,7 @@ impl Renderer {
             source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let compute_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("compute_notes"),
-            source: ShaderSource::Wgsl(include_str!("compute_notes.wgsl").into()),
-        });
-
-        let finalize_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("finalize_counts"),
-            source: ShaderSource::Wgsl(include_str!("finalize_counts.wgsl").into()),
-        });
-
         let render = RenderPipelineState::new(&device, format, &render_shader);
-
-        let instance_size = std::mem::size_of::<NoteInstance>() as u64;
-        let compute = ComputePipelineState::new(
-            &device,
-            &queue,
-            &compute_shader,
-            &finalize_shader,
-            crate::compute::MAX_INSTANCE_COUNT as u64 * instance_size,
-            128 * instance_size,
-        );
 
         let timer = GpuTimer::new(&device, &queue);
 
@@ -74,9 +46,8 @@ impl Renderer {
             device,
             queue,
             render,
-            compute,
             timer,
-            cache: RendererCache::default(),
+            instance_buffers: Vec::new(),
         }
     }
 
@@ -99,154 +70,140 @@ impl Renderer {
         speed: f32,
         midi: Option<&dyn NoteSource>,
         render_state: &mut MidiRenderState,
-        note_data_id: Option<usize>,
+        _note_data_id: Option<usize>,
         style: &RenderStyle,
         clear_background: bool,
     ) {
         profile_scope!("render");
-        let PreparedFrame {
-            scroll_tick,
-            base_uniforms,
-            draw_keyboard,
-            keyboard_changed,
-        } = self.prepare_frame(width, height, time, speed, midi, style);
-
-        self.write_chunk_uniforms(note_data_id, base_uniforms);
-
-        self.update_palette(&style.palette);
-
-        if let Some(midi) = midi {
-            self.upload_scans(
-                midi,
-                render_state,
-                time,
-                scroll_tick as f64,
-                style.render_mode,
-            );
-        }
-
-        self.update_key_layouts(width, style.equal_key_width);
-        self.write_render_uniforms(time, width, height);
-
-        encoder.clear_buffer(&self.compute.overflow_buffer, 0, Some(4));
-
-        if let Some(midi) = midi {
-            if keyboard_changed {
-                self.update_keyboard_instances(
-                    width,
-                    height,
-                    time,
-                    scroll_tick as f64,
-                    midi,
-                    style,
-                    render_state,
-                );
-            }
-
-            let bundle = note_data_id.and_then(|id| self.cache.note_bundles.get(&id));
-            let note_pass_count = bundle.map(|b| b.chunks.len()).unwrap_or(0);
-            let total_render_passes = note_pass_count.max(1) + usize::from(draw_keyboard);
-
-            let mut render_pass_index = 0usize;
-            let mut cleared_target = false;
-
-            if let Some(bundle) = bundle {
-                let last_chunk_idx = bundle.chunks.len().saturating_sub(1);
-                for (i, chunk) in bundle.chunks.iter().enumerate() {
-                    self.dispatch_chunk_compute_pass(
-                        encoder,
-                        chunk,
-                        i == 0,
-                        i == last_chunk_idx,
-                    );
-                    self.execute_render_pass(
-                        encoder,
-                        target,
-                        Some(&chunk.indirect_draw_buffer),
-                        None,
-                        false,
-                        style.background,
-                        clear_background && !cleared_target,
-                        render_pass_index == 0,
-                        render_pass_index + 1 == total_render_passes,
-                    );
-                    cleared_target = true;
-                    render_pass_index += 1;
-                }
-            } else {
-                self.execute_render_pass(
-                    encoder,
-                    target,
-                    None,
-                    None,
-                    false,
-                    style.background,
-                    clear_background,
-                    render_pass_index == 0,
-                    render_pass_index + 1 == total_render_passes,
-                );
-                cleared_target = true;
-                render_pass_index += 1;
-            }
-
-            if draw_keyboard {
-                self.execute_render_pass(
-                    encoder,
-                    target,
-                    None,
-                    None,
-                    true,
-                    style.background,
-                    clear_background && !cleared_target,
-                    render_pass_index == 0,
-                    render_pass_index + 1 == total_render_passes,
-                );
-            }
-        } else {
-            // Solid color: write a single full-screen quad instance
-            let instance = crate::vertex::NoteInstance {
-                x: 0.0,
-                y: 0.0,
-                w: width as f32,
-                h: height as f32,
-                rgba_packed: crate::vertex::pack_rgba(
-                    style.background[0] as f32,
-                    style.background[1] as f32,
-                    style.background[2] as f32,
-                    style.background[3] as f32,
-                ),
-                props_packed: crate::vertex::pack_props(0.0, 0.0),
-                velocity: 0,
-                flags: 0,
-            };
-            self.queue.write_buffer(
-                &self.compute.instance_buffer,
-                0,
-                bytemuck::bytes_of(&instance),
-            );
-            self.execute_render_pass(
-                encoder,
-                target,
-                None,
-                Some(1),
-                false,
-                style.background,
-                clear_background,
-                true,
-                true,
-            );
-        }
-
-        encoder.copy_buffer_to_buffer(
-            &self.compute.overflow_buffer,
+        let uniforms = Uniforms {
+            time: time as f32,
+            width: width as f32,
+            height: height as f32,
+            _pad: 0.0,
+        };
+        self.queue.write_buffer(
+            &self.render.uniform_buffer,
             0,
-            &self.compute.overflow_readback_buffer,
-            0,
-            4,
+            bytemuck::bytes_of(&uniforms),
         );
+
+        let instances = midi
+            .map(|m| self.build_instances(width, height, time, speed, m, render_state, style))
+            .unwrap_or_else(|| {
+                vec![NoteInstance {
+                    x: 0.0,
+                    y: 0.0,
+                    w: width as f32,
+                    h: height as f32,
+                    rgba_packed: pack_rgba(
+                        style.background[0] as f32,
+                        style.background[1] as f32,
+                        style.background[2] as f32,
+                        style.background[3] as f32,
+                    ),
+                    props_packed: pack_props(0.0, 0.0),
+                    velocity: 0,
+                    flags: 0,
+                }]
+            });
+
+        let instance_size = std::mem::size_of::<NoteInstance>() as u64;
+        let batches: Vec<&[NoteInstance]> = if instances.is_empty() {
+            Vec::new()
+        } else {
+            instances.chunks(MAX_INSTANCE_COUNT).collect()
+        };
+
+        while self.instance_buffers.len() > batches.len() {
+            self.instance_buffers.pop();
+        }
+        while self.instance_buffers.len() < batches.len() {
+            let buf = self.device.create_buffer(&BufferDescriptor {
+                label: Some("instance_buffer"),
+                size: MAX_INSTANCE_COUNT as u64 * instance_size,
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.instance_buffers.push(buf);
+        }
+        for (i, batch) in batches.iter().enumerate() {
+            self.queue
+                .write_buffer(&self.instance_buffers[i], 0, bytemuck::cast_slice(batch));
+        }
+
+        if self.timer.query_set.is_some() {
+            let cpu_scope = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("cpu_build_scope"),
+                timestamp_writes: self.timer.query_set.as_ref().map(|qs| {
+                    ComputePassTimestampWrites {
+                        query_set: qs,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    }
+                }),
+            });
+            drop(cpu_scope);
+        }
+
+        let load_op = if clear_background {
+            LoadOp::Clear(Color {
+                r: style.background[0],
+                g: style.background[1],
+                b: style.background[2],
+                a: style.background[3],
+            })
+        } else {
+            LoadOp::Load
+        };
+
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("render_pass"),
+                timestamp_writes: self.timer.query_set.as_ref().map(|qs| RenderPassTimestampWrites {
+                    query_set: qs,
+                    beginning_of_pass_write_index: Some(2),
+                    end_of_pass_write_index: Some(3),
+                }),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: load_op,
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            if !batches.is_empty() {
+                pass.set_pipeline(&self.render.pipeline);
+                pass.set_bind_group(0, &self.render.bind_group, &[]);
+                for (i, batch) in batches.iter().enumerate() {
+                    pass.set_vertex_buffer(0, self.instance_buffers[i].slice(..));
+                    pass.draw(0..6, 0..batch.len() as u32);
+                }
+            }
+        }
 
         self.timer.resolve(encoder);
     }
+
+    pub fn upload_note_data(
+        &mut self,
+        _id: usize,
+        _source: &dyn NoteSource,
+        _width: u32,
+        _equal_key_width: bool,
+    ) {
+        profile_scope!("upload_note_data");
+    }
+
+    pub fn remove_note_data(&mut self, _id: usize) {}
+
+    pub fn clear_note_data(&mut self) {}
 
     /// Whether GPU timestamp queries are supported on this device.
     pub fn gpu_timing_available(&self) -> bool {
@@ -259,34 +216,221 @@ impl Renderer {
         self.timer.read_timings(&self.device)
     }
 
-    /// Read back whether the previous frame overflowed the instance output buffer.
     pub fn read_instance_overflowed(&self) -> Option<bool> {
-        let readback_buf = &self.compute.overflow_readback_buffer;
-        let slice = readback_buf.slice(..);
+        Some(false)
+    }
 
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
+    fn build_instances(
+        &self,
+        width: u32,
+        height: u32,
+        time: f64,
+        speed: f32,
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
+        style: &RenderStyle,
+    ) -> Vec<NoteInstance> {
+        let mut instances = match style.render_mode {
+            RenderMode::TimeBased => {
+                self.build_instances_time(width, height, time, speed, midi, state, style)
+            }
+            RenderMode::TickBased => {
+                self.build_instances_tick(width, height, time, speed, midi, state, style)
+            }
+        };
+        if style.keyboard_height > 0.0 {
+            let mut keys = keyboard::build_keyboard_instances(
+                width,
+                height,
+                time,
+                midi,
+                style.keyboard_height,
+                style.equal_key_width,
+                &style.palette,
+                state,
+            );
+            instances.append(&mut keys);
+        }
+        instances
+    }
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        let mut done = false;
-        while std::time::Instant::now() < deadline && !done {
-            let _ = self.device.poll(PollType::Poll);
-            done = rx.try_recv().is_ok();
-            if !done {
-                std::thread::yield_now();
+    fn build_instances_time(
+        &self,
+        width: u32,
+        height: u32,
+        time: f64,
+        speed: f32,
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
+        style: &RenderStyle,
+    ) -> Vec<NoteInstance> {
+        let kh = (style.keyboard_height as f64).max(0.0);
+        let effective_h = (height as f64 - kh).max(1.0);
+        let pps = 200.0f64 * speed.max(0.01) as f64;
+        let screen_top = effective_h + time * pps;
+        let time_top = time + effective_h / pps + 1.0;
+        let time_bottom = time;
+
+        Self::advance_scan_indices(midi, state, time, 0.0, RenderMode::TimeBased);
+
+        let layouts = keyboard::compute_key_layouts(width, style.equal_key_width);
+        let mut instances = Vec::new();
+
+        for key in Self::iter_render_keys(style.equal_key_width) {
+            let notes = midi.key_notes(key);
+            if notes.is_empty() {
+                continue;
+            }
+            let scan = state.scan_indices[key as usize];
+            let (x, w) = layouts[key as usize];
+
+            for note in &notes[scan..] {
+                if note.start > time_top {
+                    break;
+                }
+                if note.end <= time_bottom {
+                    continue;
+                }
+
+                let note_bottom = (screen_top - note.start * pps) as f32;
+                let note_top = (screen_top - note.end * pps) as f32;
+                let h = (note_bottom - note_top).max(1.0);
+
+                let trk = note.track as usize % 128;
+                let [r, g, b] = style.palette[trk];
+                instances.push(NoteInstance {
+                    x,
+                    y: note_top,
+                    w,
+                    h,
+                    rgba_packed: pack_rgba(r, g, b, 1.0),
+                    props_packed: pack_props(style.rounding * f32::min(w, h), style.border_width * w / 2.0),
+                    velocity: note.velocity as u32,
+                    flags: 0,
+                });
             }
         }
-        if !done {
-            return None;
+
+        instances
+    }
+
+    fn build_instances_tick(
+        &self,
+        width: u32,
+        height: u32,
+        time: f64,
+        speed: f32,
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
+        style: &RenderStyle,
+    ) -> Vec<NoteInstance> {
+        let kh = (style.keyboard_height as f64).max(0.0);
+        let effective_h = (height as f64 - kh).max(1.0);
+        let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
+        let ppt = 100.0 / ticks_per_beat * speed.max(0.01) as f64;
+        let scroll_tick = midi
+            .tick_at_time(time)
+            .unwrap_or(time * ticks_per_beat * 2.0);
+        let visible_ticks = effective_h / ppt;
+        let tick_at_top = scroll_tick + visible_ticks;
+        let screen_bottom = effective_h + scroll_tick * ppt;
+
+        Self::advance_scan_indices(midi, state, time, scroll_tick, RenderMode::TickBased);
+
+        let layouts = keyboard::compute_key_layouts(width, style.equal_key_width);
+        let mut instances = Vec::new();
+
+        for key in Self::iter_render_keys(style.equal_key_width) {
+            let notes = midi.key_notes(key);
+            if notes.is_empty() {
+                continue;
+            }
+            let scan = state.scan_indices[key as usize];
+            let (x, w) = layouts[key as usize];
+
+            for note in &notes[scan..] {
+                if (note.start_tick as f64) > tick_at_top + 1.0 {
+                    break;
+                }
+                if (note.end_tick as f64) <= scroll_tick {
+                    continue;
+                }
+
+                let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
+                let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
+                let h = (note_bottom - note_top).max(1.0);
+
+                let trk = note.track as usize % 128;
+                let [r, g, b] = style.palette[trk];
+                instances.push(NoteInstance {
+                    x,
+                    y: note_top,
+                    w,
+                    h,
+                    rgba_packed: pack_rgba(r, g, b, 1.0),
+                    props_packed: pack_props(style.rounding * f32::min(w, h), style.border_width * w / 2.0),
+                    velocity: note.velocity as u32,
+                    flags: 0,
+                });
+            }
         }
 
-        let data = slice.get_mapped_range();
-        let words: &[u32] = bytemuck::cast_slice(&data);
-        let overflowed = words.first().copied().unwrap_or(0) != 0;
-        drop(data);
-        readback_buf.unmap();
-        Some(overflowed)
+        instances
+    }
+
+    fn advance_scan_indices(
+        midi: &dyn NoteSource,
+        state: &mut MidiRenderState,
+        time: f64,
+        scroll_tick: f64,
+        mode: RenderMode,
+    ) {
+        match mode {
+            RenderMode::TimeBased => {
+                if time < state.last_time {
+                    state.scan_indices = [0; 128];
+                }
+                state.last_time = time;
+                for key in 0..128u8 {
+                    let notes = midi.key_notes(key);
+                    if notes.is_empty() {
+                        continue;
+                    }
+                    let mut scan = state.scan_indices[key as usize];
+                    while scan < notes.len() && notes[scan].end <= time {
+                        scan += 1;
+                    }
+                    state.scan_indices[key as usize] = scan;
+                }
+            }
+            RenderMode::TickBased => {
+                if scroll_tick < state.last_scroll_tick {
+                    state.scan_indices = [0; 128];
+                }
+                state.last_scroll_tick = scroll_tick;
+                for key in 0..128u8 {
+                    let notes = midi.key_notes(key);
+                    if notes.is_empty() {
+                        continue;
+                    }
+                    let mut scan = state.scan_indices[key as usize];
+                    while scan < notes.len() && (notes[scan].end_tick as f64) <= scroll_tick {
+                        scan += 1;
+                    }
+                    state.scan_indices[key as usize] = scan;
+                }
+            }
+        }
+    }
+
+    fn iter_render_keys(equal_key_width: bool) -> Vec<u8> {
+        if equal_key_width {
+            (0..128u8).collect()
+        } else {
+            (0..128u8)
+                .filter(|k| !keyboard::is_black_key(*k))
+                .chain((0..128u8).filter(|k| keyboard::is_black_key(*k)))
+                .collect()
+        }
     }
 }
