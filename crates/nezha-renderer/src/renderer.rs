@@ -25,6 +25,10 @@ pub struct Renderer {
     render: RenderPipelineState,
     timer: GpuTimer,
     instance_buffers: Vec<Buffer>,
+    instance_scratch: Vec<NoteInstance>,
+    cached_layouts: Vec<(f32, f32)>,
+    cached_layout_width: u32,
+    cached_layout_equal_key_width: bool,
 }
 
 /// CPU path keeps multi-buffer batching to avoid a single hard cap per frame.
@@ -48,6 +52,10 @@ impl Renderer {
             render,
             timer,
             instance_buffers: Vec::new(),
+            instance_scratch: Vec::new(),
+            cached_layouts: Vec::new(),
+            cached_layout_width: 0,
+            cached_layout_equal_key_width: false,
         }
     }
 
@@ -87,10 +95,25 @@ impl Renderer {
             bytemuck::bytes_of(&uniforms),
         );
 
-        let instances = midi
-            .map(|m| self.build_instances(width, height, time, speed, m, render_state, style))
-            .unwrap_or_else(|| {
-                vec![NoteInstance {
+        let mut instances = std::mem::take(&mut self.instance_scratch);
+        instances.clear();
+        self.ensure_cached_key_layouts(width, style.equal_key_width);
+        let layouts = self.cached_layouts.clone();
+
+        match midi {
+            Some(m) => self.build_instances(
+                &mut instances,
+                &layouts,
+                width,
+                height,
+                time,
+                speed,
+                m,
+                render_state,
+                style,
+            ),
+            None => {
+                instances.push(NoteInstance {
                     x: 0.0,
                     y: 0.0,
                     w: width as f32,
@@ -104,8 +127,9 @@ impl Renderer {
                     props_packed: pack_props(0.0, 0.0),
                     velocity: 0,
                     flags: 0,
-                }]
-            });
+                });
+            }
+        }
 
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let batches: Vec<&[NoteInstance]> = if instances.is_empty() {
@@ -131,18 +155,9 @@ impl Renderer {
                 .write_buffer(&self.instance_buffers[i], 0, bytemuck::cast_slice(batch));
         }
 
-        if self.timer.query_set.is_some() {
-            let cpu_scope = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("cpu_build_scope"),
-                timestamp_writes: self.timer.query_set.as_ref().map(|qs| {
-                    ComputePassTimestampWrites {
-                        query_set: qs,
-                        beginning_of_pass_write_index: Some(0),
-                        end_of_pass_write_index: Some(1),
-                    }
-                }),
-            });
-            drop(cpu_scope);
+        if let Some(qs) = self.timer.query_set.as_ref() {
+            encoder.write_timestamp(qs, 0);
+            encoder.write_timestamp(qs, 1);
         }
 
         let load_op = if clear_background {
@@ -188,6 +203,8 @@ impl Renderer {
             }
         }
 
+        instances.clear();
+        self.instance_scratch = instances;
         self.timer.resolve(encoder);
     }
 
@@ -222,48 +239,70 @@ impl Renderer {
 
     fn build_instances(
         &self,
-        width: u32,
+        instances: &mut Vec<NoteInstance>,
+        layouts: &[(f32, f32)],
+        _width: u32,
         height: u32,
         time: f64,
         speed: f32,
         midi: &dyn NoteSource,
         state: &mut MidiRenderState,
         style: &RenderStyle,
-    ) -> Vec<NoteInstance> {
-        let mut instances = match style.render_mode {
-            RenderMode::TimeBased => {
-                self.build_instances_time(width, height, time, speed, midi, state, style)
-            }
-            RenderMode::TickBased => {
-                self.build_instances_tick(width, height, time, speed, midi, state, style)
-            }
-        };
-        if style.keyboard_height > 0.0 {
-            let mut keys = keyboard::build_keyboard_instances(
-                width,
+    ) {
+        let mut active_keys = [false; 128];
+        let mut active_colors = [[0.0f32; 3]; 128];
+
+        match style.render_mode {
+            RenderMode::TimeBased => Self::build_instances_time(
+                instances,
+                layouts,
+                &mut active_keys,
+                &mut active_colors,
                 height,
                 time,
+                speed,
                 midi,
-                style.keyboard_height,
-                style.equal_key_width,
-                &style.palette,
                 state,
+                style,
+            ),
+            RenderMode::TickBased => Self::build_instances_tick(
+                instances,
+                layouts,
+                &mut active_keys,
+                &mut active_colors,
+                height,
+                time,
+                speed,
+                midi,
+                state,
+                style,
+            ),
+        };
+
+        if style.keyboard_height > 0.0 {
+            keyboard::append_keyboard_instances(
+                layouts,
+                height,
+                style.keyboard_height,
+                &active_keys,
+                &active_colors,
+                instances,
             );
-            instances.append(&mut keys);
         }
-        instances
     }
 
     fn build_instances_time(
-        &self,
-        width: u32,
+        instances: &mut Vec<NoteInstance>,
+        layouts: &[(f32, f32)],
+        active_keys: &mut [bool; 128],
+        active_colors: &mut [[f32; 3]; 128],
         height: u32,
         time: f64,
         speed: f32,
         midi: &dyn NoteSource,
         state: &mut MidiRenderState,
         style: &RenderStyle,
-    ) -> Vec<NoteInstance> {
+    ) {
         let kh = (style.keyboard_height as f64).max(0.0);
         let effective_h = (height as f64 - kh).max(1.0);
         let pps = 200.0f64 * speed.max(0.01) as f64;
@@ -272,14 +311,10 @@ impl Renderer {
         let time_bottom = time;
 
         Self::advance_scan_indices(midi, state, time, 0.0, RenderMode::TimeBased);
-
-        let layouts = keyboard::compute_key_layouts(width, style.equal_key_width);
-        let mut instances = Vec::new();
-
-        for key in Self::iter_render_keys(style.equal_key_width) {
+        Self::for_each_render_key(style.equal_key_width, |key| {
             let notes = midi.key_notes(key);
             if notes.is_empty() {
-                continue;
+                return;
             }
             let scan = state.scan_indices[key as usize];
             let (x, w) = layouts[key as usize];
@@ -292,38 +327,45 @@ impl Renderer {
                     continue;
                 }
 
+                let trk = note.track as usize % 128;
+                let [r, g, b] = style.palette[trk];
+                if note.start <= time && time < note.end {
+                    active_keys[key as usize] = true;
+                    active_colors[key as usize] = [r, g, b];
+                }
+
                 let note_bottom = (screen_top - note.start * pps) as f32;
                 let note_top = (screen_top - note.end * pps) as f32;
                 let h = (note_bottom - note_top).max(1.0);
-
-                let trk = note.track as usize % 128;
-                let [r, g, b] = style.palette[trk];
                 instances.push(NoteInstance {
                     x,
                     y: note_top,
                     w,
                     h,
                     rgba_packed: pack_rgba(r, g, b, 1.0),
-                    props_packed: pack_props(style.rounding * f32::min(w, h), style.border_width * w / 2.0),
+                    props_packed: pack_props(
+                        style.rounding * f32::min(w, h),
+                        style.border_width * w / 2.0,
+                    ),
                     velocity: note.velocity as u32,
                     flags: 0,
                 });
             }
-        }
-
-        instances
+        });
     }
 
     fn build_instances_tick(
-        &self,
-        width: u32,
+        instances: &mut Vec<NoteInstance>,
+        layouts: &[(f32, f32)],
+        active_keys: &mut [bool; 128],
+        active_colors: &mut [[f32; 3]; 128],
         height: u32,
         time: f64,
         speed: f32,
         midi: &dyn NoteSource,
         state: &mut MidiRenderState,
         style: &RenderStyle,
-    ) -> Vec<NoteInstance> {
+    ) {
         let kh = (style.keyboard_height as f64).max(0.0);
         let effective_h = (height as f64 - kh).max(1.0);
         let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
@@ -336,14 +378,10 @@ impl Renderer {
         let screen_bottom = effective_h + scroll_tick * ppt;
 
         Self::advance_scan_indices(midi, state, time, scroll_tick, RenderMode::TickBased);
-
-        let layouts = keyboard::compute_key_layouts(width, style.equal_key_width);
-        let mut instances = Vec::new();
-
-        for key in Self::iter_render_keys(style.equal_key_width) {
+        Self::for_each_render_key(style.equal_key_width, |key| {
             let notes = midi.key_notes(key);
             if notes.is_empty() {
-                continue;
+                return;
             }
             let scan = state.scan_indices[key as usize];
             let (x, w) = layouts[key as usize];
@@ -356,26 +394,31 @@ impl Renderer {
                     continue;
                 }
 
+                let trk = note.track as usize % 128;
+                let [r, g, b] = style.palette[trk];
+                if note.start <= time && time < note.end {
+                    active_keys[key as usize] = true;
+                    active_colors[key as usize] = [r, g, b];
+                }
+
                 let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
                 let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
                 let h = (note_bottom - note_top).max(1.0);
-
-                let trk = note.track as usize % 128;
-                let [r, g, b] = style.palette[trk];
                 instances.push(NoteInstance {
                     x,
                     y: note_top,
                     w,
                     h,
                     rgba_packed: pack_rgba(r, g, b, 1.0),
-                    props_packed: pack_props(style.rounding * f32::min(w, h), style.border_width * w / 2.0),
+                    props_packed: pack_props(
+                        style.rounding * f32::min(w, h),
+                        style.border_width * w / 2.0,
+                    ),
                     velocity: note.velocity as u32,
                     flags: 0,
                 });
             }
-        }
-
-        instances
+        });
     }
 
     fn advance_scan_indices(
@@ -423,14 +466,33 @@ impl Renderer {
         }
     }
 
-    fn iter_render_keys(equal_key_width: bool) -> Vec<u8> {
+    fn for_each_render_key(equal_key_width: bool, mut f: impl FnMut(u8)) {
         if equal_key_width {
-            (0..128u8).collect()
+            for key in 0..128u8 {
+                f(key);
+            }
         } else {
-            (0..128u8)
-                .filter(|k| !keyboard::is_black_key(*k))
-                .chain((0..128u8).filter(|k| keyboard::is_black_key(*k)))
-                .collect()
+            for key in 0..128u8 {
+                if !keyboard::is_black_key(key) {
+                    f(key);
+                }
+            }
+            for key in 0..128u8 {
+                if keyboard::is_black_key(key) {
+                    f(key);
+                }
+            }
+        }
+    }
+
+    fn ensure_cached_key_layouts(&mut self, width: u32, equal_key_width: bool) {
+        if self.cached_layouts.is_empty()
+            || self.cached_layout_width != width
+            || self.cached_layout_equal_key_width != equal_key_width
+        {
+            self.cached_layouts = keyboard::compute_key_layouts(width, equal_key_width);
+            self.cached_layout_width = width;
+            self.cached_layout_equal_key_width = equal_key_width;
         }
     }
 }

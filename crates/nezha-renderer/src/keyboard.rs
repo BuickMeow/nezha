@@ -1,5 +1,3 @@
-use crate::source::NoteSource;
-use crate::state::MidiRenderState;
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
 pub(crate) use nezha_core::is_black_key;
 
@@ -56,46 +54,21 @@ pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f3
 }
 
 /// Build vertex instances for the on-screen piano keyboard.
-pub(crate) fn build_keyboard_instances(
-    width: u32,
+///
+/// `active_keys` / `active_colors` should reflect the top-most currently playing
+/// note per key, already resolved by the main waterfall scan.
+pub(crate) fn append_keyboard_instances(
+    layouts: &[(f32, f32)],
     height: u32,
-    time: f64,
-    midi: &dyn NoteSource,
     keyboard_height: f32,
-    equal_key_width: bool,
-    palette: &[[f32; 3]; 128],
-    state: &MidiRenderState,
-) -> Vec<NoteInstance> {
+    active_keys: &[bool; 128],
+    active_colors: &[[f32; 3]; 128],
+    out: &mut Vec<NoteInstance>,
+) {
     let kh = keyboard_height.max(1.0);
     let key_top = height as f32 - kh;
-    let layouts = compute_key_layouts(width, equal_key_width);
-
-    let mut active_keys = [false; 128];
-    let mut active_colors = [[0.0f32; 3]; 128];
-    for key in 0..128u8 {
-        let notes = midi.key_notes(key);
-        let scan = state.scan_indices[key as usize];
-        let mut color = None;
-        for note in notes[scan..].iter() {
-            if note.start > time {
-                break;
-            }
-            if time < note.end {
-                // Keep iterating: because notes are sorted by start time,
-                // the last matching note is the one with the largest start
-                // (i.e. the top-most note visually, closest to the keyboard).
-                let trk = note.track as usize % 128;
-                color = Some(palette[trk]);
-            }
-        }
-        if let Some(c) = color {
-            active_keys[key as usize] = true;
-            active_colors[key as usize] = c;
-        }
-    }
-
-    let mut instances = Vec::with_capacity(256);
     let black_h = kh * BLACK_KEY_HEIGHT_RATIO;
+    out.reserve(128);
 
     fn build_key_instance(
         key: u8,
@@ -144,7 +117,7 @@ pub(crate) fn build_keyboard_instances(
             &active_keys,
             &active_colors,
         ) {
-            instances.push(inst);
+            out.push(inst);
         }
     }
 
@@ -163,9 +136,7 @@ pub(crate) fn build_keyboard_instances(
             &active_keys,
             &active_colors,
         ) {
-            instances.push(inst);
+            out.push(inst);
         }
     }
-
-    instances
 }
