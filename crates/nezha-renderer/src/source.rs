@@ -1,7 +1,7 @@
 use nezha_core::MidiFile;
 
 /// Abstraction over a MIDI note source, decoupling the renderer from any specific format.
-pub trait NoteSource {
+pub trait NoteSource: Sync {
     fn key_notes(&self, key: u8) -> &[nezha_core::Note];
     fn duration(&self) -> f64;
     fn ticks_per_beat(&self) -> Option<u32> {
