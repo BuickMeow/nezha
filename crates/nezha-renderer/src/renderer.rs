@@ -104,7 +104,7 @@ pub struct Renderer {
     queue: Queue,
     render: RenderPipelineState,
     timer: GpuTimer,
-    instance_buffers: Vec<Buffer>,
+    instance_buffers: Vec<InstanceBufferSlot>,
     instance_scratch: Vec<NoteInstance>,
     cached_layouts: Vec<(f32, f32)>,
     cached_layout_width: u32,
@@ -116,6 +116,12 @@ pub struct Renderer {
 const MAX_INSTANCE_COUNT: usize = 6_000_000;
 const MAX_PARALLEL_KEY_GROUPS: usize = 16;
 const SEEK_INDEX_BLOCK_SIZE: usize = 256;
+const MIN_INSTANCE_BUFFER_CAPACITY: usize = 4_096;
+
+struct InstanceBufferSlot {
+    buffer: Buffer,
+    capacity_instances: usize,
+}
 
 struct KeyChunkBuildResult {
     instances: Vec<NoteInstance>,
@@ -242,17 +248,23 @@ impl Renderer {
             self.instance_buffers.pop();
         }
         while self.instance_buffers.len() < batches.len() {
-            let buf = self.device.create_buffer(&BufferDescriptor {
-                label: Some("instance_buffer"),
-                size: MAX_INSTANCE_COUNT as u64 * instance_size,
-                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.instance_buffers.push(buf);
+            self.instance_buffers.push(Self::create_instance_buffer_slot(
+                &self.device,
+                instance_size,
+                MIN_INSTANCE_BUFFER_CAPACITY,
+            ));
         }
         for (i, batch) in batches.iter().enumerate() {
+            let required_instances = batch.len().max(1);
+            if self.instance_buffers[i].capacity_instances < required_instances {
+                self.instance_buffers[i] = Self::create_instance_buffer_slot(
+                    &self.device,
+                    instance_size,
+                    Self::next_instance_capacity(required_instances),
+                );
+            }
             self.queue
-                .write_buffer(&self.instance_buffers[i], 0, bytemuck::cast_slice(batch));
+                .write_buffer(&self.instance_buffers[i].buffer, 0, bytemuck::cast_slice(batch));
         }
 
         if let Some(qs) = self.timer.query_set.as_ref() {
@@ -297,7 +309,7 @@ impl Renderer {
                 pass.set_pipeline(&self.render.pipeline);
                 pass.set_bind_group(0, &self.render.bind_group, &[]);
                 for (i, batch) in batches.iter().enumerate() {
-                    pass.set_vertex_buffer(0, self.instance_buffers[i].slice(..));
+                    pass.set_vertex_buffer(0, self.instance_buffers[i].buffer.slice(..));
                     pass.draw(0..6, 0..batch.len() as u32);
                 }
             }
@@ -430,11 +442,12 @@ impl Renderer {
         let screen_top = effective_h + time * pps;
         let time_top = time + effective_h / pps + 1.0;
         let time_bottom = time;
-        let chunk_results = render_keys
-            .par_chunks(Self::parallel_key_chunk_len())
-            .map(|keys| {
+        let key_groups = Self::build_parallel_key_groups(render_keys, scan_indices, midi);
+        let chunk_results = key_groups
+            .into_par_iter()
+            .map(|range| {
                 let mut result = KeyChunkBuildResult::new();
-                for &key in keys {
+                for &key in &render_keys[range] {
                     Self::append_key_instances_time(
                         &mut result,
                         key,
@@ -488,11 +501,12 @@ impl Renderer {
         let tick_at_top = scroll_tick + visible_ticks;
         let screen_bottom = effective_h + scroll_tick * ppt;
 
-        let chunk_results = render_keys
-            .par_chunks(Self::parallel_key_chunk_len())
-            .map(|keys| {
+        let key_groups = Self::build_parallel_key_groups(render_keys, scan_indices, midi);
+        let chunk_results = key_groups
+            .into_par_iter()
+            .map(|range| {
                 let mut result = KeyChunkBuildResult::new();
-                for &key in keys {
+                for &key in &render_keys[range] {
                     Self::append_key_instances_tick(
                         &mut result,
                         key,
@@ -642,11 +656,90 @@ impl Renderer {
         keys
     }
 
-    fn parallel_key_chunk_len() -> usize {
-        let groups = rayon::current_num_threads()
-            .max(1)
-            .min(MAX_PARALLEL_KEY_GROUPS);
-        128_usize.div_ceil(groups).max(1)
+    fn build_parallel_key_groups(
+        render_keys: &[u8; 128],
+        scan_indices: &[usize; 128],
+        midi: &dyn NoteSource,
+    ) -> Vec<std::ops::Range<usize>> {
+        let mut total_weight = 0usize;
+        let mut active_key_count = 0usize;
+        let mut weights = [0usize; 128];
+        for (i, &key) in render_keys.iter().enumerate() {
+            let notes = midi.key_notes(key);
+            let remaining = notes.len().saturating_sub(scan_indices[key as usize]);
+            let weight = remaining.max(1);
+            weights[i] = weight;
+            total_weight += weight;
+            if !notes.is_empty() {
+                active_key_count += 1;
+            }
+        }
+
+        if active_key_count <= 1 {
+            return vec![0..128];
+        }
+
+        let thread_budget = rayon::current_num_threads().max(1);
+        let desired_groups = if total_weight < 8_192 {
+            thread_budget
+        } else {
+            thread_budget.saturating_mul(2)
+        }
+        .min(MAX_PARALLEL_KEY_GROUPS)
+        .min(active_key_count)
+        .max(1);
+
+        let target_weight = total_weight.div_ceil(desired_groups);
+        let mut ranges = Vec::with_capacity(desired_groups);
+        let mut start = 0usize;
+        let mut acc = 0usize;
+
+        for i in 0..128usize {
+            let remaining_keys = 128usize - i;
+            let remaining_groups = desired_groups.saturating_sub(ranges.len());
+            if remaining_groups == 0 {
+                break;
+            }
+
+            acc += weights[i];
+            let should_split = acc >= target_weight && remaining_keys > remaining_groups;
+            if should_split {
+                ranges.push(start..(i + 1));
+                start = i + 1;
+                acc = 0;
+            }
+        }
+
+        if start < 128 {
+            ranges.push(start..128);
+        }
+        if ranges.is_empty() {
+            ranges.push(0..128);
+        }
+        ranges
+    }
+
+    fn next_instance_capacity(required_instances: usize) -> usize {
+        required_instances
+            .max(MIN_INSTANCE_BUFFER_CAPACITY)
+            .next_power_of_two()
+            .min(MAX_INSTANCE_COUNT)
+    }
+
+    fn create_instance_buffer_slot(
+        device: &Device,
+        instance_size: u64,
+        capacity_instances: usize,
+    ) -> InstanceBufferSlot {
+        InstanceBufferSlot {
+            buffer: device.create_buffer(&BufferDescriptor {
+                label: Some("instance_buffer"),
+                size: capacity_instances as u64 * instance_size,
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            capacity_instances,
+        }
     }
 
     fn append_key_instances_time(
