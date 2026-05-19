@@ -30,10 +30,17 @@ impl MidiParser {
 
     pub fn load_with_progress(
         path: impl AsRef<Path>,
-        mut progress: impl FnMut(LoadProgress),
+        progress: impl FnMut(LoadProgress),
     ) -> Result<MidiFile, MidiError> {
         let data = std::fs::read(path.as_ref())?;
-        let smf = midly::Smf::parse(&data)?;
+        Self::parse_bytes_with_progress(&data, progress)
+    }
+
+    pub fn parse_bytes_with_progress(
+        data: &[u8],
+        mut progress: impl FnMut(LoadProgress),
+    ) -> Result<MidiFile, MidiError> {
+        let smf = midly::Smf::parse(data)?;
 
         let ticks_per_beat = match smf.header.timing {
             midly::Timing::Metrical(t) => t.as_int() as u32,

@@ -1,0 +1,21 @@
+[package]
+name = "nezha-archive"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = "2.0.18"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+sevenz-rust = { version = "0.6.1", optional = true }
+tar = { version = "0.4.46", optional = true }
+flate2 = { version = "1.1.9", optional = true }
+lzma-rs = { version = "0.3.0", optional = true }
+
+[features]
+default = ["sevenz", "tar-gz", "tar-xz"]
+sevenz = ["dep:sevenz-rust"]
+tar-gz = ["dep:tar", "dep:flate2"]
+tar-xz = ["dep:tar", "dep:lzma-rs"]
+
+[dev-dependencies]
+tempfile = "3"

@@ -12,6 +12,7 @@ egui = { workspace = true }
 wgpu = { workspace = true }
 nezha-core = { path = "../nezha-core" }
 nezha-renderer = { path = "../nezha-renderer" }
+nezha-archive = { path = "../nezha-archive" }
 pollster = { workspace = true }
 rfd = "0.17.2"
 puffin = { workspace = true, optional = true }

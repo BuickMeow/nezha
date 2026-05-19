@@ -1,9 +1,9 @@
 use eframe::egui;
-pub mod project_state;
 mod loading;
 mod panels;
 mod playback;
 mod preview;
+pub mod project_state;
 mod render_context;
 mod ui_state;
 
@@ -17,6 +17,7 @@ pub struct App {
     pub project: ProjectState,
     pub ui: UiState,
     midi_loader: Option<MidiLoader>,
+    archive_picker: Option<loading::ArchivePickerState>,
 }
 
 impl App {
@@ -52,6 +53,7 @@ impl App {
             project: ProjectState::new(),
             ui: UiState::default(),
             midi_loader: None,
+            archive_picker: None,
         }
     }
 
@@ -103,6 +105,7 @@ impl eframe::App for App {
         });
 
         self.show_midi_loading(ui);
+        self.show_archive_picker(ui);
         self.show_error_toast(ui);
     }
 }

@@ -44,6 +44,17 @@ impl MidiFile {
         MidiParser::load_with_progress(path, progress)
     }
 
+    pub fn load_from_bytes(data: &[u8]) -> Result<Self, MidiError> {
+        MidiParser::parse_bytes_with_progress(data, |_| {})
+    }
+
+    pub fn load_from_bytes_with_progress(
+        data: &[u8],
+        progress: impl FnMut(LoadProgress),
+    ) -> Result<Self, MidiError> {
+        MidiParser::parse_bytes_with_progress(data, progress)
+    }
+
     /// 找到包含给定时间的 tempo segment。
     fn find_segment_at(&self, time: f64) -> Option<&TempoSegment> {
         if self.tempo_segments.is_empty() {

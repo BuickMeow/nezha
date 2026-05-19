@@ -78,7 +78,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
             }
 
             ui.add_space(8.0);
-            if ui.button("➕ 选择 MIDI 文件").clicked() {
+            if ui.button("➕ 选择 MIDI 文件 / 压缩包").clicked() {
                 action = Some(ConfigAction::SelectMidi);
             }
 
