@@ -77,6 +77,11 @@ pub fn show(
 
     let image_rect = egui::Rect::from_min_size(response.rect.min + top_left, scaled_size);
 
+    // 黑色背景：当渲染结果存在透明区域时（如底层 waterfall 的空隙），
+    // 预览窗口显示黑色而非 egui 默认的深色面板背景。
+    ui.painter_at(response.rect)
+        .rect_filled(image_rect, 0.0, egui::Color32::BLACK);
+
     ui.put(
         image_rect,
         egui::Image::new(egui::load::SizedTexture::new(texture_id, scaled_size)),

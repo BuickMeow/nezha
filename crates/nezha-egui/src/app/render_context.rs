@@ -103,6 +103,7 @@ impl RenderContext {
         width: u32,
         height: u32,
         style: &nezha_renderer::RenderStyle,
+        clear_background: bool,
     ) {
         self.ensure_preview_size(width, height);
         let mut dummy_state = nezha_renderer::MidiRenderState::default();
@@ -118,7 +119,7 @@ impl RenderContext {
             &mut dummy_state,
             None,
             style,
-            true,
+            clear_background,
         );
     }
 

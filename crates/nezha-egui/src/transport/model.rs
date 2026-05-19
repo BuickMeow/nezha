@@ -65,17 +65,6 @@ impl TrackClip {
             keyboard_height_percent: 0.0,
         }
     }
-
-    pub fn default_render_params() -> (f32, f32, usize, nezha_renderer::RenderMode, bool, f32) {
-        (
-            0.1,
-            0.0,
-            0,
-            nezha_renderer::RenderMode::TimeBased,
-            true,
-            0.15,
-        )
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -187,6 +176,7 @@ impl TimelineView {
 #[derive(Clone, Debug)]
 pub struct TimelineData {
     pub tracks: Vec<Track>,
+    pub next_track_id: usize,
 }
 
 impl Default for TimelineData {
@@ -195,7 +185,10 @@ impl Default for TimelineData {
         let mut video_track = Track::new_video("视频 1");
         video_track.clips.push(TrackClip::new_waterfall(1, None));
         tracks.push(video_track);
-        Self { tracks }
+        Self {
+            tracks,
+            next_track_id: 2,
+        }
     }
 }
 
@@ -252,20 +245,12 @@ impl TimelineState {
         }
     }
 
-    pub fn selected_clip(&self) -> Option<&TrackClip> {
-        let id = self.selected_clip_id?;
-        self.data
-            .tracks
-            .iter()
-            .flat_map(|track| track.clips.iter())
-            .find(|clip| clip.id == id)
-    }
-
     pub fn push_waterfall_clip(&mut self, midi_idx: Option<usize>, duration: f32) {
         let id = self.next_clip_id;
         self.next_clip_id += 1;
-        let track_len = self.data.tracks.len();
-        let mut track = Track::new_video(&format!("视频 {}", track_len + 1));
+        let track_id = self.data.next_track_id;
+        self.data.next_track_id += 1;
+        let mut track = Track::new_video(&format!("视频 {}", track_id));
         let mut clip = TrackClip::new_waterfall(id, midi_idx);
         clip.end = if duration > 0.0 { duration } else { 5.0 };
         track.clips.push(clip);
@@ -275,8 +260,9 @@ impl TimelineState {
     pub fn push_solid_color_clip(&mut self, color: egui::Color32, duration: f32) {
         let id = self.next_clip_id;
         self.next_clip_id += 1;
-        let track_len = self.data.tracks.len();
-        let mut track = Track::new_video(&format!("视频 {}", track_len + 1));
+        let track_id = self.data.next_track_id;
+        self.data.next_track_id += 1;
+        let mut track = Track::new_video(&format!("视频 {}", track_id));
         let mut clip = TrackClip::new_solid_color(id, color);
         clip.end = if duration > 0.0 { duration } else { 5.0 };
         track.clips.push(clip);
@@ -287,7 +273,9 @@ impl TimelineState {
         let Some(id) = self.selected_clip_id else {
             return;
         };
-        self.remove_clip_by_id(id);
+        for track in &mut self.data.tracks {
+            track.clips.retain(|clip| clip.id != id);
+        }
         self.selected_clip_id = None;
     }
 
@@ -336,12 +324,30 @@ impl TimelineState {
             return;
         };
 
-        if target_track_index < self.data.tracks.len()
-            && self.data.tracks[target_track_index].kind == TrackKind::Video
-        {
-            self.data.tracks[target_track_index].clips.push(clip);
-            self.data.tracks.retain(|track| !track.clips.is_empty());
+        let dest_index = if target_track_index < self.data.tracks.len() {
+            if self.data.tracks[target_track_index].kind == TrackKind::Video {
+                Some(target_track_index)
+            } else {
+                self.data
+                    .tracks
+                    .iter()
+                    .position(|t| t.kind == TrackKind::Video)
+            }
+        } else {
+            let name = format!("视频 {}", target_track_index + 1);
+            self.data.tracks.push(Track::new_video(&name));
+            Some(self.data.tracks.len() - 1)
+        };
+
+        if let Some(idx) = dest_index {
+            self.data.tracks[idx].clips.push(clip);
+        } else {
+            let mut track = Track::new_video("视频 1");
+            track.clips.push(clip);
+            self.data.tracks.push(track);
         }
+
+        self.data.tracks.retain(|track| !track.clips.is_empty());
     }
 
     fn frame_duration(&self) -> f32 {
@@ -355,13 +361,6 @@ impl TimelineState {
             }
         }
         None
-    }
-
-    fn remove_clip_by_id(&mut self, clip_id: usize) {
-        self.data.tracks.retain_mut(|track| {
-            track.clips.retain(|clip| clip.id != clip_id);
-            !track.clips.is_empty()
-        });
     }
 }
 

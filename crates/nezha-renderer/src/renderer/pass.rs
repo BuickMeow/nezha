@@ -21,7 +21,8 @@ impl Renderer {
     }
 
     pub(super) fn update_key_layouts(&mut self, width: u32, equal_key_width: bool) {
-        if width != self.cache.current_width || equal_key_width != self.cache.current_equal_key_width
+        if width != self.cache.current_width
+            || equal_key_width != self.cache.current_equal_key_width
         {
             Self::update_shared_key_layouts(
                 &self.queue,
@@ -93,7 +94,7 @@ impl Renderer {
         &self,
         encoder: &mut CommandEncoder,
         target: &TextureView,
-        has_notes: bool,
+        has_instances: bool,
         draw_keyboard: bool,
         background: [f64; 4],
         clear_background: bool,
@@ -135,7 +136,7 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-        if has_notes {
+        if has_instances {
             pass.set_pipeline(&self.render.pipeline);
             pass.set_bind_group(0, &self.render.bind_group, &[]);
             pass.set_vertex_buffer(0, self.compute.instance_buffer.slice(..));

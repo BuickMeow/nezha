@@ -17,11 +17,11 @@ mod tracks;
 
 pub use model::{
     ClipDragMode, ClipDragState, ClipKind, ScrollbarDrag, TimelineInteraction, TimelineState,
-    TimelineView, Track, TrackClip, TrackKind,
+    TimelineView, Track, TrackKind,
 };
 pub use theme::ThemeColors;
 
-use controller::{apply_timeline_commands, TimelineCommand};
+use controller::{TimelineCommand, apply_timeline_commands};
 use controls::draw_controls;
 use input::handle_input;
 use layout::{TimelineLayout, TimelineMetrics};
@@ -85,15 +85,7 @@ pub fn show(
     );
 
     // ── 轨道 ──
-    let y = draw_tracks(
-        ui,
-        &painter,
-        &c,
-        &layout,
-        &metrics,
-        state,
-        &mut commands,
-    );
+    let y = draw_tracks(ui, &painter, &c, &layout, &metrics, state, &mut commands);
 
     // 底部填充
     if y < layout.content_bottom {

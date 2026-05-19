@@ -125,10 +125,12 @@ impl Renderer {
         // Reset counter before compute
         encoder.clear_buffer(&self.compute.counter_buffer, 0, Some(4));
 
-        let has_notes = self.dispatch_compute_pass(encoder, note_data_id);
+        let has_instances;
 
-        if keyboard_changed {
-            if let Some(midi) = midi {
+        if let Some(midi) = midi {
+            has_instances = self.dispatch_compute_pass(encoder, note_data_id);
+
+            if keyboard_changed {
                 self.update_keyboard_instances(
                     width,
                     height,
@@ -139,12 +141,40 @@ impl Renderer {
                     render_state,
                 );
             }
+        } else {
+            // Solid color: write a single full-screen quad instance
+            let instance = crate::vertex::NoteInstance {
+                x: 0.0,
+                y: 0.0,
+                w: width as f32,
+                h: height as f32,
+                rgba_packed: crate::vertex::pack_rgba(
+                    style.background[0] as f32,
+                    style.background[1] as f32,
+                    style.background[2] as f32,
+                    style.background[3] as f32,
+                ),
+                props_packed: crate::vertex::pack_props(0.0, 0.0),
+                velocity: 0,
+                flags: 0,
+            };
+            self.queue.write_buffer(
+                &self.compute.instance_buffer,
+                0,
+                bytemuck::bytes_of(&instance),
+            );
+            self.queue.write_buffer(
+                &self.compute.indirect_draw_buffer,
+                4,
+                bytemuck::bytes_of(&1u32),
+            );
+            has_instances = true;
         }
 
         self.execute_render_pass(
             encoder,
             target,
-            has_notes,
+            has_instances,
             draw_keyboard,
             style.background,
             clear_background,
