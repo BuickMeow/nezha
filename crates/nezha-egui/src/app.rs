@@ -65,16 +65,39 @@ impl App {
 
         if let Some(path) = rfd::FileDialog::new()
             .add_filter(
-                "MIDI / 压缩包",
+                "MIDI / 压缩包 / DMS",
                 &[
-                    "mid", "midi", "zip", "7z", "tar", "tar.gz", "tgz", "tar.xz", "txz",
+                    "mid", "midi", "zip", "7z", "tar", "tar.gz", "tgz", "tar.xz", "txz", "dms",
                 ],
             )
             .pick_file()
         {
             let path_str = path.to_string_lossy().to_string();
 
-            if archive_picker::is_archive_file(&path_str) {
+            if path_str.to_lowercase().ends_with(".dms") {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn({
+                    let path = path_str.clone();
+                    move || match nezha_dms::DmsFile::load(&path) {
+                        Ok(midi) => {
+                            let _ = tx.send(loading::MidiLoadEvent::Complete(Ok(midi)));
+                        }
+                        Err(e) => {
+                            let err = std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("DMS 解析失败: {e}"),
+                            );
+                            let _ = tx.send(loading::MidiLoadEvent::Complete(Err(err.into())));
+                        }
+                    }
+                });
+
+                self.midi_loader = Some(MidiLoader {
+                    path: path_str,
+                    rx,
+                    current_progress: None,
+                });
+            } else if archive_picker::is_archive_file(&path_str) {
                 let (tx, rx) = std::sync::mpsc::channel();
                 std::thread::spawn({
                     let path = path_str.clone();
