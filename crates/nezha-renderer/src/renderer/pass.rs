@@ -1,5 +1,6 @@
 use wgpu::*;
 
+use crate::compute::GpuNoteChunk;
 use crate::vertex::Uniforms;
 
 use super::Renderer;
@@ -49,54 +50,50 @@ impl Renderer {
         );
     }
 
-    pub(super) fn dispatch_compute_pass(
+    pub(super) fn dispatch_chunk_compute_pass(
         &self,
         encoder: &mut CommandEncoder,
-        note_data_id: Option<usize>,
-    ) -> bool {
-        let bundle = note_data_id.and_then(|id| self.cache.note_bundles.get(&id));
-        match bundle {
-            Some(b) if !b.chunks.is_empty() => {
-                profile_scope!("compute_pass");
-                let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("compute_notes_pass"),
-                    timestamp_writes: self.timer.query_set.as_ref().map(|qs| {
-                        ComputePassTimestampWrites {
-                            query_set: qs,
-                            beginning_of_pass_write_index: Some(0),
-                            end_of_pass_write_index: Some(1),
-                        }
-                    }),
-                });
-                cpass.set_pipeline(&self.compute.pipeline);
-                for chunk in &b.chunks {
-                    cpass.set_bind_group(0, &chunk.bind_group, &[]);
-                    // workgroup_size(64): ceil(key_count / 64) workgroups
-                    cpass.dispatch_workgroups((chunk.key_count + 63) / 64, 1, 1);
-                }
-                drop(cpass);
+        chunk: &GpuNoteChunk,
+        begin_timestamp: bool,
+        end_timestamp: bool,
+    ) {
+        profile_scope!("compute_pass");
+        encoder.clear_buffer(&chunk.counter_buffer, 0, Some(4));
 
-                let mut finalize_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("finalize_counts_pass"),
-                    timestamp_writes: None,
-                });
-                finalize_pass.set_pipeline(&self.compute.finalize_pipeline);
-                finalize_pass.set_bind_group(0, &self.compute.finalize_bind_group, &[]);
-                finalize_pass.dispatch_workgroups(1, 1, 1);
-                true
-            }
-            _ => false,
-        }
+        let mut cpass = encoder.begin_compute_pass(&ComputePassDescriptor {
+            label: Some("compute_notes_pass"),
+            timestamp_writes: self.timer.query_set.as_ref().map(|qs| ComputePassTimestampWrites {
+                query_set: qs,
+                beginning_of_pass_write_index: begin_timestamp.then_some(0),
+                end_of_pass_write_index: end_timestamp.then_some(1),
+            }),
+        });
+        cpass.set_pipeline(&self.compute.pipeline);
+        cpass.set_bind_group(0, &chunk.bind_group, &[]);
+        // workgroup_size(64): ceil(key_count / 64) workgroups
+        cpass.dispatch_workgroups((chunk.key_count + 63) / 64, 1, 1);
+        drop(cpass);
+
+        let mut finalize_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+            label: Some("finalize_counts_pass"),
+            timestamp_writes: None,
+        });
+        finalize_pass.set_pipeline(&self.compute.finalize_pipeline);
+        finalize_pass.set_bind_group(0, &chunk.finalize_bind_group, &[]);
+        finalize_pass.dispatch_workgroups(1, 1, 1);
     }
 
     pub(super) fn execute_render_pass(
         &self,
         encoder: &mut CommandEncoder,
         target: &TextureView,
-        has_instances: bool,
+        indirect_draw_buffer: Option<&Buffer>,
+        direct_instance_count: Option<u32>,
         draw_keyboard: bool,
         background: [f64; 4],
         clear_background: bool,
+        begin_timestamp: bool,
+        end_timestamp: bool,
     ) {
         profile_scope!("render_pass");
 
@@ -114,12 +111,10 @@ impl Renderer {
         let mut pass =
             encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("render_pass"),
-                timestamp_writes: self.timer.query_set.as_ref().map(|qs| {
-                    RenderPassTimestampWrites {
-                        query_set: qs,
-                        beginning_of_pass_write_index: Some(2),
-                        end_of_pass_write_index: Some(3),
-                    }
+                timestamp_writes: self.timer.query_set.as_ref().map(|qs| RenderPassTimestampWrites {
+                    query_set: qs,
+                    beginning_of_pass_write_index: begin_timestamp.then_some(2),
+                    end_of_pass_write_index: end_timestamp.then_some(3),
                 }),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: target,
@@ -135,11 +130,15 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-        if has_instances {
+        if indirect_draw_buffer.is_some() || direct_instance_count.is_some() {
             pass.set_pipeline(&self.render.pipeline);
             pass.set_bind_group(0, &self.render.bind_group, &[]);
             pass.set_vertex_buffer(0, self.compute.instance_buffer.slice(..));
-            pass.draw_indirect(&self.compute.indirect_draw_buffer, 0);
+            if let Some(buffer) = indirect_draw_buffer {
+                pass.draw_indirect(buffer, 0);
+            } else if let Some(instance_count) = direct_instance_count {
+                pass.draw(0..6, 0..instance_count);
+            }
         }
 
         /// Number of vertices per quad (two triangles).

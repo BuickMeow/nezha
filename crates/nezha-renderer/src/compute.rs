@@ -51,6 +51,9 @@ pub(crate) struct GpuNoteChunk {
     pub(crate) notes_buf: Buffer,
     pub(crate) uniform_buf: Buffer,
     pub(crate) bind_group: BindGroup,
+    pub(crate) counter_buffer: Buffer,
+    pub(crate) indirect_draw_buffer: Buffer,
+    pub(crate) finalize_bind_group: BindGroup,
     pub(crate) key_offset: u32,
     pub(crate) key_count: u32,
 }

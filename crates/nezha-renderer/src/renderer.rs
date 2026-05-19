@@ -128,15 +128,9 @@ impl Renderer {
         self.update_key_layouts(width, style.equal_key_width);
         self.write_render_uniforms(time, width, height);
 
-        // Reset counter before compute
-        encoder.clear_buffer(&self.compute.counter_buffer, 0, Some(4));
         encoder.clear_buffer(&self.compute.overflow_buffer, 0, Some(4));
 
-        let has_instances;
-
         if let Some(midi) = midi {
-            has_instances = self.dispatch_compute_pass(encoder, note_data_id);
-
             if keyboard_changed {
                 self.update_keyboard_instances(
                     width,
@@ -146,6 +140,66 @@ impl Renderer {
                     midi,
                     style,
                     render_state,
+                );
+            }
+
+            let bundle = note_data_id.and_then(|id| self.cache.note_bundles.get(&id));
+            let note_pass_count = bundle.map(|b| b.chunks.len()).unwrap_or(0);
+            let total_render_passes = note_pass_count.max(1) + usize::from(draw_keyboard);
+
+            let mut render_pass_index = 0usize;
+            let mut cleared_target = false;
+
+            if let Some(bundle) = bundle {
+                let last_chunk_idx = bundle.chunks.len().saturating_sub(1);
+                for (i, chunk) in bundle.chunks.iter().enumerate() {
+                    self.dispatch_chunk_compute_pass(
+                        encoder,
+                        chunk,
+                        i == 0,
+                        i == last_chunk_idx,
+                    );
+                    self.execute_render_pass(
+                        encoder,
+                        target,
+                        Some(&chunk.indirect_draw_buffer),
+                        None,
+                        false,
+                        style.background,
+                        clear_background && !cleared_target,
+                        render_pass_index == 0,
+                        render_pass_index + 1 == total_render_passes,
+                    );
+                    cleared_target = true;
+                    render_pass_index += 1;
+                }
+            } else {
+                self.execute_render_pass(
+                    encoder,
+                    target,
+                    None,
+                    None,
+                    false,
+                    style.background,
+                    clear_background,
+                    render_pass_index == 0,
+                    render_pass_index + 1 == total_render_passes,
+                );
+                cleared_target = true;
+                render_pass_index += 1;
+            }
+
+            if draw_keyboard {
+                self.execute_render_pass(
+                    encoder,
+                    target,
+                    None,
+                    None,
+                    true,
+                    style.background,
+                    clear_background && !cleared_target,
+                    render_pass_index == 0,
+                    render_pass_index + 1 == total_render_passes,
                 );
             }
         } else {
@@ -170,22 +224,18 @@ impl Renderer {
                 0,
                 bytemuck::bytes_of(&instance),
             );
-            self.queue.write_buffer(
-                &self.compute.indirect_draw_buffer,
-                4,
-                bytemuck::bytes_of(&1u32),
+            self.execute_render_pass(
+                encoder,
+                target,
+                None,
+                Some(1),
+                false,
+                style.background,
+                clear_background,
+                true,
+                true,
             );
-            has_instances = true;
         }
-
-        self.execute_render_pass(
-            encoder,
-            target,
-            has_instances,
-            draw_keyboard,
-            style.background,
-            clear_background,
-        );
 
         encoder.copy_buffer_to_buffer(
             &self.compute.overflow_buffer,

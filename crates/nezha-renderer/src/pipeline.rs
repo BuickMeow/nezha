@@ -95,23 +95,21 @@ impl RenderPipelineState {
 pub struct ComputePipelineState {
     pub pipeline: ComputePipeline,
     pub bgl: BindGroupLayout,
+    pub finalize_bgl: BindGroupLayout,
     pub finalize_pipeline: ComputePipeline,
-    pub finalize_bind_group: BindGroup,
     pub shared_key_layouts_buf: Buffer,
     pub scan_buffer: Buffer,
     pub palette_buffer: Buffer,
     pub instance_buffer: Buffer,
     pub keyboard_buffer: Buffer,
-    pub counter_buffer: Buffer,
     pub overflow_buffer: Buffer,
     pub overflow_readback_buffer: Buffer,
-    pub indirect_draw_buffer: Buffer,
 }
 
 impl ComputePipelineState {
     pub fn new(
         device: &Device,
-        queue: &Queue,
+        _queue: &Queue,
         compute_shader: &ShaderModule,
         finalize_shader: &ShaderModule,
         instance_buffer_size: u64,
@@ -152,13 +150,6 @@ impl ComputePipelineState {
             mapped_at_creation: false,
         });
 
-        let counter_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("counter"),
-            size: 4,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         let overflow_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("instance_overflow"),
             size: 4,
@@ -172,19 +163,6 @@ impl ComputePipelineState {
             usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
-        let indirect_draw_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("indirect_draw"),
-            size: 16,
-            usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        queue.write_buffer(
-            &indirect_draw_buffer,
-            0,
-            bytemuck::bytes_of(&[6u32, 0u32, 0u32, 0u32]),
-        );
 
         let bgl = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("compute_bgl"),
@@ -332,21 +310,6 @@ impl ComputePipelineState {
             ],
         });
 
-        let finalize_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("finalize_counts_bg"),
-            layout: &finalize_bgl,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: counter_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: indirect_draw_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
         let finalize_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("finalize_counts_layout"),
             bind_group_layouts: &[Some(&finalize_bgl)],
@@ -365,17 +328,15 @@ impl ComputePipelineState {
         Self {
             pipeline,
             bgl,
+            finalize_bgl,
             finalize_pipeline,
-            finalize_bind_group,
             shared_key_layouts_buf,
             scan_buffer,
             palette_buffer,
             instance_buffer,
             keyboard_buffer,
-            counter_buffer,
             overflow_buffer,
             overflow_readback_buffer,
-            indirect_draw_buffer,
         }
     }
 }

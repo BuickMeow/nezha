@@ -63,6 +63,25 @@ impl Renderer {
             self.queue
                 .write_buffer(&notes_buf, 0, bytemuck::cast_slice(&chunk_notes));
 
+            let counter_buffer = self.device.create_buffer(&BufferDescriptor {
+                label: Some("chunk_counter"),
+                size: 4,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let indirect_draw_buffer = self.device.create_buffer(&BufferDescriptor {
+                label: Some("chunk_indirect_draw"),
+                size: 16,
+                usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue.write_buffer(
+                &indirect_draw_buffer,
+                0,
+                bytemuck::bytes_of(&[6u32, 0u32, 0u32, 0u32]),
+            );
+
             let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
                 label: Some("compute_bind_group"),
                 layout: &self.compute.bgl,
@@ -93,7 +112,7 @@ impl Renderer {
                     },
                     BindGroupEntry {
                         binding: 6,
-                        resource: self.compute.counter_buffer.as_entire_binding(),
+                        resource: counter_buffer.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 7,
@@ -106,11 +125,29 @@ impl Renderer {
                 ],
             });
 
+            let finalize_bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+                label: Some("finalize_counts_bg"),
+                layout: &self.compute.finalize_bgl,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: counter_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: indirect_draw_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+
             chunks.push(GpuNoteChunk {
                 key_info_buf,
                 notes_buf,
                 uniform_buf,
                 bind_group,
+                counter_buffer,
+                indirect_draw_buffer,
+                finalize_bind_group,
                 key_offset: chunk_start,
                 key_count,
             });
