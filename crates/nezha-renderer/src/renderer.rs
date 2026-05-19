@@ -51,6 +51,11 @@ impl Renderer {
             source: ShaderSource::Wgsl(include_str!("compute_notes.wgsl").into()),
         });
 
+        let finalize_shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("finalize_counts"),
+            source: ShaderSource::Wgsl(include_str!("finalize_counts.wgsl").into()),
+        });
+
         let render = RenderPipelineState::new(&device, format, &render_shader);
 
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
@@ -58,6 +63,7 @@ impl Renderer {
             &device,
             &queue,
             &compute_shader,
+            &finalize_shader,
             crate::compute::MAX_INSTANCE_COUNT as u64 * instance_size,
             128 * instance_size,
         );
@@ -124,6 +130,7 @@ impl Renderer {
 
         // Reset counter before compute
         encoder.clear_buffer(&self.compute.counter_buffer, 0, Some(4));
+        encoder.clear_buffer(&self.compute.overflow_buffer, 0, Some(4));
 
         let has_instances;
 
@@ -180,6 +187,14 @@ impl Renderer {
             clear_background,
         );
 
+        encoder.copy_buffer_to_buffer(
+            &self.compute.overflow_buffer,
+            0,
+            &self.compute.overflow_readback_buffer,
+            0,
+            4,
+        );
+
         self.timer.resolve(encoder);
     }
 
@@ -192,5 +207,36 @@ impl Renderer {
     /// Returns `(compute_ms, render_ms)` or `None` if unsupported or timed out.
     pub fn read_gpu_timings(&self) -> Option<(f64, f64)> {
         self.timer.read_timings(&self.device)
+    }
+
+    /// Read back whether the previous frame overflowed the instance output buffer.
+    pub fn read_instance_overflowed(&self) -> Option<bool> {
+        let readback_buf = &self.compute.overflow_readback_buffer;
+        let slice = readback_buf.slice(..);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let mut done = false;
+        while std::time::Instant::now() < deadline && !done {
+            let _ = self.device.poll(PollType::Poll);
+            done = rx.try_recv().is_ok();
+            if !done {
+                std::thread::yield_now();
+            }
+        }
+        if !done {
+            return None;
+        }
+
+        let data = slice.get_mapped_range();
+        let words: &[u32] = bytemuck::cast_slice(&data);
+        let overflowed = words.first().copied().unwrap_or(0) != 0;
+        drop(data);
+        readback_buf.unmap();
+        Some(overflowed)
     }
 }

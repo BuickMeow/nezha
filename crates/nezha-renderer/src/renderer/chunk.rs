@@ -99,6 +99,10 @@ impl Renderer {
                         binding: 7,
                         resource: self.compute.scan_buffer.as_entire_binding(),
                     },
+                    BindGroupEntry {
+                        binding: 8,
+                        resource: self.compute.overflow_buffer.as_entire_binding(),
+                    },
                 ],
             });
 

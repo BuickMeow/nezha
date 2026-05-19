@@ -42,6 +42,7 @@ struct KeyInfo {
 @group(0) @binding(5) var<storage, read_write> instances: array<NoteInstance>;
 @group(0) @binding(6) var<storage, read_write> instance_count: atomic<u32>;
 @group(0) @binding(7) var<storage> key_scans: array<u32, 128>;
+@group(0) @binding(8) var<storage, read_write> overflow_flag: atomic<u32>;
 
 const MAX_INSTANCES: u32 = 2700000u;
 
@@ -79,6 +80,10 @@ fn emit_note(x: f32, y: f32, w: f32, h: f32, track: u32, velocity: u32) {
     let border_px = u.border_width * w / 2.0;
     let rounding_radius = u.rounding * min(w, h);
     let idx = atomicAdd(&instance_count, 1u);
+    if idx >= MAX_INSTANCES {
+        atomicAdd(&overflow_flag, 1u);
+        return;
+    }
     write_instance(idx, x, y, w, h, track, rounding_radius, border_px, velocity);
 }
 

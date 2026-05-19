@@ -76,14 +76,13 @@ impl Renderer {
                 }
                 drop(cpass);
 
-                // Copy counter → indirect draw instance_count (offset 4)
-                encoder.copy_buffer_to_buffer(
-                    &self.compute.counter_buffer,
-                    0,
-                    &self.compute.indirect_draw_buffer,
-                    4,
-                    4,
-                );
+                let mut finalize_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                    label: Some("finalize_counts_pass"),
+                    timestamp_writes: None,
+                });
+                finalize_pass.set_pipeline(&self.compute.finalize_pipeline);
+                finalize_pass.set_bind_group(0, &self.compute.finalize_bind_group, &[]);
+                finalize_pass.dispatch_workgroups(1, 1, 1);
                 true
             }
             _ => false,
