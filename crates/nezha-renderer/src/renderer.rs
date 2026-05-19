@@ -1,6 +1,7 @@
 use wgpu::*;
 
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 use crate::gpu_timer::GpuTimer;
 use crate::keyboard;
@@ -21,6 +22,83 @@ macro_rules! profile_scope {
     ($name:literal) => {};
 }
 
+
+#[derive(Default)]
+struct KeySeekIndex {
+    block_prefix_max_end: Vec<f64>,
+    block_prefix_max_end_tick: Vec<u32>,
+}
+
+impl KeySeekIndex {
+    fn build(notes: &[nezha_core::Note]) -> Self {
+        let mut block_prefix_max_end =
+            Vec::with_capacity(notes.len().div_ceil(SEEK_INDEX_BLOCK_SIZE));
+        let mut block_prefix_max_end_tick =
+            Vec::with_capacity(notes.len().div_ceil(SEEK_INDEX_BLOCK_SIZE));
+        let mut max_end = f64::NEG_INFINITY;
+        let mut max_end_tick = 0u32;
+
+        for block in notes.chunks(SEEK_INDEX_BLOCK_SIZE) {
+            for note in block {
+                max_end = max_end.max(note.end);
+                max_end_tick = max_end_tick.max(note.end_tick);
+            }
+            block_prefix_max_end.push(max_end);
+            block_prefix_max_end_tick.push(max_end_tick);
+        }
+
+        Self {
+            block_prefix_max_end,
+            block_prefix_max_end_tick,
+        }
+    }
+
+    fn scan_index_for_time(&self, notes: &[nezha_core::Note], time: f64) -> usize {
+        if notes.is_empty() {
+            return 0;
+        }
+        let completed_blocks = self
+            .block_prefix_max_end
+            .partition_point(|&prefix_max_end| prefix_max_end <= time);
+        let mut scan = completed_blocks
+            .saturating_mul(SEEK_INDEX_BLOCK_SIZE)
+            .min(notes.len());
+        let local_end = (scan + SEEK_INDEX_BLOCK_SIZE).min(notes.len());
+        while scan < local_end && notes[scan].end <= time {
+            scan += 1;
+        }
+        scan
+    }
+
+    fn scan_index_for_tick(&self, notes: &[nezha_core::Note], scroll_tick: f64) -> usize {
+        if notes.is_empty() {
+            return 0;
+        }
+        let completed_blocks = self
+            .block_prefix_max_end_tick
+            .partition_point(|&prefix_max_end_tick| (prefix_max_end_tick as f64) <= scroll_tick);
+        let mut scan = completed_blocks
+            .saturating_mul(SEEK_INDEX_BLOCK_SIZE)
+            .min(notes.len());
+        let local_end = (scan + SEEK_INDEX_BLOCK_SIZE).min(notes.len());
+        while scan < local_end && (notes[scan].end_tick as f64) <= scroll_tick {
+            scan += 1;
+        }
+        scan
+    }
+}
+
+struct NoteSeekIndex {
+    per_key: [KeySeekIndex; 128],
+}
+
+impl NoteSeekIndex {
+    fn build(source: &dyn NoteSource) -> Self {
+        Self {
+            per_key: std::array::from_fn(|key| KeySeekIndex::build(source.key_notes(key as u8))),
+        }
+    }
+}
 pub struct Renderer {
     device: Device,
     queue: Queue,
@@ -31,11 +109,13 @@ pub struct Renderer {
     cached_layouts: Vec<(f32, f32)>,
     cached_layout_width: u32,
     cached_layout_equal_key_width: bool,
+    note_seek_indices: HashMap<usize, NoteSeekIndex>,
 }
 
 /// CPU path keeps multi-buffer batching to avoid a single hard cap per frame.
 const MAX_INSTANCE_COUNT: usize = 6_000_000;
 const MAX_PARALLEL_KEY_GROUPS: usize = 16;
+const SEEK_INDEX_BLOCK_SIZE: usize = 256;
 
 struct KeyChunkBuildResult {
     instances: Vec<NoteInstance>,
@@ -75,6 +155,7 @@ impl Renderer {
             cached_layouts: Vec::new(),
             cached_layout_width: 0,
             cached_layout_equal_key_width: false,
+            note_seek_indices: HashMap::new(),
         }
     }
 
@@ -128,6 +209,7 @@ impl Renderer {
                 speed,
                 m,
                 render_state,
+                _note_data_id.and_then(|id| self.note_seek_indices.get(&id)),
                 style,
             ),
             None => {
@@ -228,17 +310,24 @@ impl Renderer {
 
     pub fn upload_note_data(
         &mut self,
-        _id: usize,
-        _source: &dyn NoteSource,
+        id: usize,
+        source: &dyn NoteSource,
         _width: u32,
         _equal_key_width: bool,
     ) {
         profile_scope!("upload_note_data");
+        self.note_seek_indices
+            .entry(id)
+            .or_insert_with(|| NoteSeekIndex::build(source));
     }
 
-    pub fn remove_note_data(&mut self, _id: usize) {}
+    pub fn remove_note_data(&mut self, id: usize) {
+        self.note_seek_indices.remove(&id);
+    }
 
-    pub fn clear_note_data(&mut self) {}
+    pub fn clear_note_data(&mut self) {
+        self.note_seek_indices.clear();
+    }
 
     /// Whether GPU timestamp queries are supported on this device.
     pub fn gpu_timing_available(&self) -> bool {
@@ -263,13 +352,21 @@ impl Renderer {
         speed: f32,
         midi: &dyn NoteSource,
         state: &mut MidiRenderState,
+        seek_index: Option<&NoteSeekIndex>,
         style: &RenderStyle,
     ) {
         let mut active_keys = [false; 128];
         let mut active_colors = [[0.0f32; 3]; 128];
 
         let scroll_tick = Self::scroll_tick_for_mode(midi, time, style);
-        Self::advance_scan_indices(midi, state, time, scroll_tick, style.render_mode);
+        Self::advance_scan_indices(
+            midi,
+            state,
+            time,
+            scroll_tick,
+            style.render_mode,
+            seek_index,
+        );
         let scan_indices = state.scan_indices;
         let render_keys = Self::build_render_key_order(style.equal_key_width);
 
@@ -431,53 +528,81 @@ impl Renderer {
         time: f64,
         scroll_tick: f64,
         mode: RenderMode,
+        seek_index: Option<&NoteSeekIndex>,
     ) {
         match mode {
             RenderMode::TimeBased => {
-                if time < state.last_time {
-                    state.scan_indices = [0; 128];
-                }
+                let rewound = time < state.last_time;
                 state.last_time = time;
-                state
-                    .scan_indices
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(key, scan_slot)| {
-                        let notes = midi.key_notes(key as u8);
-                        if notes.is_empty() {
-                            *scan_slot = 0;
-                            return;
-                        }
+                if let Some(seek_index) = seek_index {
+                    state
+                        .scan_indices
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(key, scan_slot)| {
+                            let notes = midi.key_notes(key as u8);
+                            *scan_slot = seek_index.per_key[key].scan_index_for_time(notes, time);
+                        });
+                } else {
+                    if rewound {
+                        state.scan_indices = [0; 128];
+                    }
+                    state
+                        .scan_indices
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(key, scan_slot)| {
+                            let notes = midi.key_notes(key as u8);
+                            if notes.is_empty() {
+                                *scan_slot = 0;
+                                return;
+                            }
 
-                        let mut scan = (*scan_slot).min(notes.len());
-                        while scan < notes.len() && notes[scan].end <= time {
-                            scan += 1;
-                        }
-                        *scan_slot = scan;
-                    });
+                            let mut scan = (*scan_slot).min(notes.len());
+                            while scan < notes.len() && notes[scan].end <= time {
+                                scan += 1;
+                            }
+                            *scan_slot = scan;
+                        });
+                }
             }
             RenderMode::TickBased => {
-                if scroll_tick < state.last_scroll_tick {
-                    state.scan_indices = [0; 128];
-                }
+                let rewound = scroll_tick < state.last_scroll_tick;
                 state.last_scroll_tick = scroll_tick;
-                state
-                    .scan_indices
-                    .par_iter_mut()
-                    .enumerate()
-                    .for_each(|(key, scan_slot)| {
-                        let notes = midi.key_notes(key as u8);
-                        if notes.is_empty() {
-                            *scan_slot = 0;
-                            return;
-                        }
+                if let Some(seek_index) = seek_index {
+                    state
+                        .scan_indices
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(key, scan_slot)| {
+                            let notes = midi.key_notes(key as u8);
+                            *scan_slot =
+                                seek_index.per_key[key].scan_index_for_tick(notes, scroll_tick);
+                        });
+                } else {
+                    if rewound {
+                        state.scan_indices = [0; 128];
+                    }
+                    state
+                        .scan_indices
+                        .par_iter_mut()
+                        .enumerate()
+                        .for_each(|(key, scan_slot)| {
+                            let notes = midi.key_notes(key as u8);
+                            if notes.is_empty() {
+                                *scan_slot = 0;
+                                return;
+                            }
 
-                        let mut scan = (*scan_slot).min(notes.len());
-                        while scan < notes.len() && (notes[scan].end_tick as f64) <= scroll_tick {
-                            scan += 1;
-                        }
-                        *scan_slot = scan;
-                    });
+                            let mut scan = (*scan_slot).min(notes.len());
+                            while scan < notes.len()
+                                && (notes[scan].end_tick as f64) <= scroll_tick
+                            {
+                                scan += 1;
+                            }
+                            *scan_slot = scan;
+                        });
+                }
             }
         }
     }
