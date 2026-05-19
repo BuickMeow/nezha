@@ -1,4 +1,5 @@
 use eframe::egui;
+mod archive_picker;
 mod loading;
 mod panels;
 mod playback;
@@ -17,7 +18,7 @@ pub struct App {
     pub project: ProjectState,
     pub ui: UiState,
     midi_loader: Option<MidiLoader>,
-    archive_picker: Option<loading::ArchivePickerState>,
+    archive_picker: Option<archive_picker::ArchivePickerState>,
 }
 
 impl App {
@@ -54,6 +55,59 @@ impl App {
             ui: UiState::default(),
             midi_loader: None,
             archive_picker: None,
+        }
+    }
+
+    pub fn pick_midi_file(&mut self) {
+        if self.midi_loader.is_some() || self.archive_picker.is_some() {
+            return;
+        }
+
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter(
+                "MIDI / 压缩包",
+                &[
+                    "mid", "midi", "zip", "7z", "tar", "tar.gz", "tgz", "tar.xz", "txz",
+                ],
+            )
+            .pick_file()
+        {
+            let path_str = path.to_string_lossy().to_string();
+
+            if archive_picker::is_archive_file(&path_str) {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn({
+                    let path = path_str.clone();
+                    move || {
+                        let result = nezha_archive::Archive::open(&path).map(|archive| {
+                            let entries = archive.list_midi_files();
+                            (archive, entries)
+                        });
+                        let _ = tx.send(result.map_err(|e| e.to_string()));
+                    }
+                });
+
+                self.archive_picker =
+                    Some(archive_picker::ArchivePickerState::Opening { path: path_str, rx });
+            } else {
+                let (tx, rx) = std::sync::mpsc::channel();
+
+                std::thread::spawn({
+                    let path = path_str.clone();
+                    move || {
+                        let result = nezha_core::MidiFile::load_with_progress(&path, |progress| {
+                            let _ = tx.send(loading::MidiLoadEvent::Progress(progress));
+                        });
+                        let _ = tx.send(loading::MidiLoadEvent::Complete(result));
+                    }
+                });
+
+                self.midi_loader = Some(MidiLoader {
+                    path: path_str,
+                    rx,
+                    current_progress: None,
+                });
+            }
         }
     }
 
