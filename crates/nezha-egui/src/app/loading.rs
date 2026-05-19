@@ -3,7 +3,10 @@ use eframe::egui;
 use std::sync::mpsc;
 
 pub(super) enum MidiLoadEvent {
+    /// 解析音轨的进度。
     Progress(nezha_core::LoadProgress),
+    /// 自定义状态文本（用于 DMS 解压等非音轨阶段）。
+    Status(String),
     Complete(Result<nezha_core::MidiFile, nezha_core::MidiError>),
 }
 
@@ -11,6 +14,7 @@ pub(super) struct MidiLoader {
     pub(super) path: String,
     pub(super) rx: mpsc::Receiver<MidiLoadEvent>,
     pub(super) current_progress: Option<nezha_core::LoadProgress>,
+    pub(super) status_message: Option<String>,
 }
 
 impl App {
@@ -19,7 +23,13 @@ impl App {
             let mut done = false;
             while let Ok(event) = loader.rx.try_recv() {
                 match event {
-                    MidiLoadEvent::Progress(progress) => loader.current_progress = Some(progress),
+                    MidiLoadEvent::Progress(progress) => {
+                        loader.current_progress = Some(progress);
+                    }
+                    MidiLoadEvent::Status(msg) => {
+                        loader.status_message = Some(msg);
+                        loader.current_progress = None;
+                    }
                     MidiLoadEvent::Complete(result) => {
                         match result {
                             Ok(midi) => {
@@ -70,6 +80,9 @@ impl App {
                         let ratio =
                             progress.current_track as f32 / progress.total_tracks.max(1) as f32;
                         ui.add(egui::ProgressBar::new(ratio).show_percentage());
+                    } else if let Some(msg) = &loader.status_message {
+                        ui.label(msg);
+                        ui.add(egui::Spinner::new());
                     } else {
                         ui.label("正在读取文件...");
                         ui.add(egui::Spinner::new());

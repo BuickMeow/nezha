@@ -78,17 +78,42 @@ impl App {
                 let (tx, rx) = std::sync::mpsc::channel();
                 std::thread::spawn({
                     let path = path_str.clone();
-                    move || match nezha_dms::DmsFile::load(&path) {
-                        Ok(midi) => {
-                            let _ = tx.send(loading::MidiLoadEvent::Complete(Ok(midi)));
-                        }
-                        Err(e) => {
-                            let err = std::io::Error::new(
+                    move || {
+                        let data = match std::fs::read(&path) {
+                            Ok(d) => d,
+                            Err(e) => {
+                                let _ = tx.send(loading::MidiLoadEvent::Complete(Err(e.into())));
+                                return;
+                            }
+                        };
+                        let result = nezha_dms::DmsFile::from_bytes_with_progress(&data, |p| {
+                            let ev = match p {
+                                nezha_dms::DmsLoadProgress::Decompressing => {
+                                    loading::MidiLoadEvent::Status("正在解压 DMS...".into())
+                                }
+                                nezha_dms::DmsLoadProgress::ParsingTree => {
+                                    loading::MidiLoadEvent::Status("正在解析 DMS 结构...".into())
+                                }
+                                nezha_dms::DmsLoadProgress::ExtractingEvents {
+                                    current_track,
+                                    total_tracks,
+                                } => loading::MidiLoadEvent::Progress(nezha_core::LoadProgress {
+                                    current_track,
+                                    total_tracks,
+                                }),
+                                nezha_dms::DmsLoadProgress::GeneratingSmf => {
+                                    loading::MidiLoadEvent::Status("正在生成 SMF...".into())
+                                }
+                            };
+                            let _ = tx.send(ev);
+                        });
+                        let _ = tx.send(loading::MidiLoadEvent::Complete(result.map_err(|e| {
+                            std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 format!("DMS 解析失败: {e}"),
-                            );
-                            let _ = tx.send(loading::MidiLoadEvent::Complete(Err(err.into())));
-                        }
+                            )
+                            .into()
+                        })));
                     }
                 });
 
@@ -96,6 +121,7 @@ impl App {
                     path: path_str,
                     rx,
                     current_progress: None,
+                    status_message: Some("正在读取 DMS 文件...".into()),
                 });
             } else if archive_picker::is_archive_file(&path_str) {
                 let (tx, rx) = std::sync::mpsc::channel();
@@ -129,6 +155,7 @@ impl App {
                     path: path_str,
                     rx,
                     current_progress: None,
+                    status_message: None,
                 });
             }
         }

@@ -70,6 +70,7 @@ impl App {
                                         path: display_path,
                                         rx,
                                         current_progress: None,
+                                        status_message: None,
                                     });
                                 }
                                 Err(e) => {
@@ -364,6 +365,7 @@ impl App {
                                 path: display_path,
                                 rx,
                                 current_progress: None,
+                                status_message: None,
                             });
                         }
                         Err(e) => {
