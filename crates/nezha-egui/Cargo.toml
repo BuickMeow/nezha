@@ -14,6 +14,7 @@ nezha-core = { path = "../nezha-core" }
 nezha-renderer = { path = "../nezha-renderer" }
 nezha-archive = { path = "../nezha-archive" }
 nezha-dms = { path = "../nezha-dms" }
+nezha-encoder = { path = "../nezha-encoder" }
 pollster = { workspace = true }
 rfd = "0.17.2"
 puffin = { workspace = true, optional = true }

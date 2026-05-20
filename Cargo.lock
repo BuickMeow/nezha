@@ -2077,6 +2077,7 @@ dependencies = [
  "nezha-archive",
  "nezha-core",
  "nezha-dms",
+ "nezha-encoder",
  "nezha-renderer",
  "pollster",
  "puffin",
@@ -2084,6 +2085,10 @@ dependencies = [
  "rfd",
  "wgpu",
 ]
+
+[[package]]
+name = "nezha-encoder"
+version = "0.1.0"
 
 [[package]]
 name = "nezha-renderer"

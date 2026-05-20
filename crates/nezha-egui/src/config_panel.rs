@@ -30,6 +30,7 @@ pub enum ConfigAction {
     AddWaterfall,
     AddSolidColor,
     RemoveMidi(usize),
+    StartExport,
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> {
@@ -167,7 +168,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
 
             ui.add_space(12.0);
             if ui.button("开始导出").clicked() {
-                // TODO: 开始导出
+                action = Some(ConfigAction::StartExport);
             }
         }
         SidebarTab::Settings => {

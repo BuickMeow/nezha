@@ -126,4 +126,89 @@ impl RenderContext {
     pub fn reset_midi_state(&mut self) {
         self.midi_cache.clear(&mut self.renderer);
     }
+
+    /// 将当前预览画面的内容读回到 CPU 内存。
+    ///
+    /// 返回的 buffer 按行优先、每像素 4 字节 BGRA 排列，无行尾 padding。
+    /// 若 GPU 映射超时则返回空 Vec。
+    pub fn read_frame_bytes(&self) -> Vec<u8> {
+        let device = &self.wgpu_state.device;
+        let queue = &self.wgpu_state.queue;
+        let width = self.preview.width();
+        let height = self.preview.height();
+
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+
+        let buffer_size = (padded_bytes_per_row * height) as u64;
+
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame_readback"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("frame_copy_encoder"),
+        });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: self.preview.texture(),
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut done = false;
+        while std::time::Instant::now() < deadline && !done {
+            let _ = device.poll(wgpu::PollType::Poll);
+            done = rx.try_recv().is_ok();
+            if !done {
+                std::thread::yield_now();
+            }
+        }
+
+        if !done {
+            return Vec::new();
+        }
+
+        let data = slice.get_mapped_range();
+        let mut result = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+        for row in 0..height {
+            let start = (row * padded_bytes_per_row) as usize;
+            let end = start + unpadded_bytes_per_row as usize;
+            result.extend_from_slice(&data[start..end]);
+        }
+        drop(data);
+        buffer.unmap();
+
+        result
+    }
 }

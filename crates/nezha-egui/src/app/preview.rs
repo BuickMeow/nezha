@@ -50,16 +50,11 @@ impl App {
         }
     }
 
-    pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {
-        self.update_playback();
-
-        let available = ui.available_size();
+    /// 渲染指定时间点的画面到预览目标（不显示到 UI）。
+    pub(super) fn render_frame_for_export(&mut self, time: f32) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
-        let aspect = render_width as f32 / render_height as f32;
-        let current_time = self.project.playback.current_time as f32;
-
-        let layers = self.collect_visible_layers(current_time);
+        let layers = self.collect_visible_layers(time);
         let default_style = self.default_style();
 
         let mut is_first = true;
@@ -67,9 +62,6 @@ impl App {
             let clear_background = is_first;
             is_first = false;
 
-            // 每个 clip 独立 begin/end pass，
-            // 确保 queue.write_buffer 的资源更新在对应 render pass 之前执行，
-            // 避免多个 clip 共用 buffer 导致数据相互覆盖。
             self.render_ctx.begin_pass();
 
             match clip.kind {
@@ -100,7 +92,7 @@ impl App {
                         continue;
                     };
 
-                    let clip_time = (current_time - clip.clip_start).max(0.0) as f64;
+                    let clip_time = (time - clip.clip_start).max(0.0) as f64;
                     let keyboard_height_px = render_height as f32 * clip.keyboard_height_percent;
                     let clip_style = nezha_renderer::RenderStyle {
                         render_mode: clip.render_mode,
@@ -108,7 +100,7 @@ impl App {
                         rounding: clip.rounding,
                         track_index: 0,
                         palette: default_style.palette,
-                        background: [0.0, 0.0, 0.0, 0.0], // 透明背景，空隙处可见下层
+                        background: [0.0, 0.0, 0.0, 0.0],
                         equal_key_width: clip.equal_key_width,
                         keyboard_height: keyboard_height_px,
                     };
@@ -128,6 +120,20 @@ impl App {
 
             self.render_ctx.end_pass();
         }
+    }
+
+    pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {
+        // 导出期间由 export_step 控制画面渲染，此处仅做显示
+        if self.export_state.is_none() {
+            self.update_playback();
+            let current_time = self.project.playback.current_time as f32;
+            self.render_frame_for_export(current_time);
+        }
+
+        let available = ui.available_size();
+        let render_width = self.project.render.width;
+        let render_height = self.project.render.height;
+        let aspect = render_width as f32 / render_height as f32;
 
         self.ui.zoom = piano_view::show(
             ui,

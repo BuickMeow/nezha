@@ -27,6 +27,9 @@ impl App {
                 self.project.remove_midi(idx);
                 self.render_ctx.reset_midi_state();
             }
+            config_panel::ConfigAction::StartExport => {
+                self.start_export();
+            }
         }
     }
 

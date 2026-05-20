@@ -1,5 +1,6 @@
 use eframe::egui;
 mod archive_picker;
+mod export;
 mod loading;
 mod panels;
 mod playback;
@@ -17,6 +18,7 @@ pub struct App {
     pub render_ctx: RenderContext,
     pub project: ProjectState,
     pub ui: UiState,
+    pub export_state: Option<export::ExportState>,
     midi_loader: Option<MidiLoader>,
     archive_picker: Option<archive_picker::ArchivePickerState>,
 }
@@ -53,6 +55,7 @@ impl App {
             render_ctx: RenderContext::new(cc, 1920, 1080),
             project: ProjectState::new(),
             ui: UiState::default(),
+            export_state: None,
             midi_loader: None,
             archive_picker: None,
         }
@@ -198,6 +201,11 @@ impl eframe::App for App {
         self.ui.theme_mode.apply(ui.ctx());
         self.handle_input(ui);
 
+        // 如果正在导出，每帧推进一帧视频渲染
+        if self.export_state.is_some() {
+            self.export_step();
+        }
+
         egui::CentralPanel::default().show_inside(ui, |ui| {
             self.render_side_panels(ui);
 
@@ -211,5 +219,6 @@ impl eframe::App for App {
         self.show_midi_loading(ui);
         self.show_archive_picker(ui);
         self.show_error_toast(ui);
+        self.show_export_overlay(ui);
     }
 }

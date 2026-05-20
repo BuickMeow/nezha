@@ -1,0 +1,210 @@
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+use crate::config::{ExportConfig, VideoCodec};
+
+#[derive(Debug)]
+pub enum EncoderError {
+    Io(std::io::Error),
+    FfmpegFailed(Option<i32>),
+    FfmpegNotFound,
+}
+
+impl std::fmt::Display for EncoderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EncoderError::Io(e) => write!(f, "IO error: {}", e),
+            EncoderError::FfmpegFailed(code) => {
+                write!(f, "ffmpeg exited with code {:?}", code)
+            }
+            EncoderError::FfmpegNotFound => write!(f, "ffmpeg not found"),
+        }
+    }
+}
+
+impl std::error::Error for EncoderError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            EncoderError::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for EncoderError {
+    fn from(e: std::io::Error) -> Self {
+        EncoderError::Io(e)
+    }
+}
+
+impl Drop for FfmpegEncoder {
+    fn drop(&mut self) {
+        // 若尚未等待子进程结束（例如用户取消导出），强制终止
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+    }
+}
+
+#[derive(Debug)]
+pub struct FfmpegEncoder {
+    process: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+}
+
+impl FfmpegEncoder {
+    pub fn new(config: &ExportConfig) -> Result<Self, EncoderError> {
+        let ffmpeg = ffmpeg_path();
+
+        // 如果指向一个具体的 sidecar 路径且文件不存在，报错
+        let is_bundled_path = ffmpeg
+            .file_name()
+            .map_or(false, |n| n == "ffmpeg" || n == "ffmpeg.exe")
+            && ffmpeg.parent().map_or(false, |p| p != PathBuf::from(""));
+        if is_bundled_path && !ffmpeg.exists() {
+            return Err(EncoderError::FfmpegNotFound);
+        }
+
+        let args = build_ffmpeg_args(config);
+
+        let mut process = Command::new(&ffmpeg)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stdin = process.stdin.take();
+        Ok(Self { process, stdin })
+    }
+
+    pub fn write_frame(&mut self, frame_data: &[u8]) -> Result<(), EncoderError> {
+        if let Some(stdin) = self.stdin.as_mut() {
+            stdin.write_all(frame_data)?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<(), EncoderError> {
+        drop(self.stdin.take());
+        let status = self.process.wait()?;
+        if !status.success() {
+            let stderr = self
+                .process
+                .stderr
+                .as_mut()
+                .and_then(|s| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    s.read_to_string(&mut buf).ok()?;
+                    Some(buf)
+                })
+                .unwrap_or_default();
+            if !stderr.is_empty() {
+                eprintln!("ffmpeg stderr:\n{}", stderr);
+            }
+            return Err(EncoderError::FfmpegFailed(status.code()));
+        }
+        Ok(())
+    }
+}
+
+/// 返回 ffmpeg 可执行文件的绝对路径。
+///
+/// 查找顺序：
+/// 1. 当前可执行文件所在目录的 sidecar（ffmpeg / ffmpeg.exe）
+/// 2. PATH 中的 ffmpeg
+pub fn ffmpeg_path() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let name = if cfg!(target_os = "windows") {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            };
+            let bundled = dir.join(name);
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+    }
+
+    if cfg!(target_os = "windows") {
+        PathBuf::from("ffmpeg.exe")
+    } else {
+        PathBuf::from("ffmpeg")
+    }
+}
+
+fn build_ffmpeg_args(config: &ExportConfig) -> Vec<String> {
+    let mut args = Vec::new();
+
+    // 输入：从 stdin 读取 rawvideo（BGRA，与 wgpu Bgra8UnormSrgb 一致）
+    args.push("-f".to_string());
+    args.push("rawvideo".to_string());
+    args.push("-pix_fmt".to_string());
+    args.push("bgra".to_string());
+    args.push("-s".to_string());
+    args.push(format!("{}x{}", config.width, config.height));
+    args.push("-r".to_string());
+    args.push(format!("{:.3}", config.fps));
+    args.push("-thread_queue_size".to_string());
+    args.push("512".to_string());
+    args.push("-i".to_string());
+    args.push("-".to_string());
+
+    // 编码器
+    args.push("-c:v".to_string());
+    args.push(config.codec.ffmpeg_encoder().to_string());
+
+    // 质量与像素格式设置
+    match &config.codec {
+        VideoCodec::H264 | VideoCodec::H265 => {
+            args.push("-crf".to_string());
+            args.push(config.quality.crf().to_string());
+            args.push("-preset".to_string());
+            args.push(config.quality.preset().to_string());
+            args.push("-pix_fmt".to_string());
+            args.push("yuv420p".to_string());
+
+            if config.codec == VideoCodec::H264 {
+                // 提升兼容性
+                args.push("-movflags".to_string());
+                args.push("+faststart".to_string());
+            }
+        }
+        VideoCodec::Vp9 => {
+            args.push("-crf".to_string());
+            args.push(config.quality.crf().to_string());
+            args.push("-b:v".to_string());
+            args.push("0".to_string());
+            args.push("-pix_fmt".to_string());
+            args.push("yuv420p".to_string());
+        }
+        VideoCodec::Av1 => {
+            args.push("-crf".to_string());
+            args.push(config.quality.crf().to_string());
+            args.push("-pix_fmt".to_string());
+            args.push("yuv420p".to_string());
+        }
+        VideoCodec::ProRes => {
+            args.push("-profile:v".to_string());
+            args.push("3".to_string()); // 422
+            args.push("-pix_fmt".to_string());
+            args.push("yuv422p".to_string());
+            args.push("-qscale:v".to_string());
+            args.push("9".to_string());
+        }
+    }
+
+    // 容器格式
+    args.push("-f".to_string());
+    args.push(config.container.ffmpeg_muxer().to_string());
+
+    // 覆盖输出文件
+    args.push("-y".to_string());
+
+    // 输出路径
+    args.push(config.output_path.to_string_lossy().to_string());
+
+    args
+}

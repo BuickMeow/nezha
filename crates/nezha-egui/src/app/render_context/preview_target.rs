@@ -28,7 +28,9 @@ impl PreviewTarget {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -65,5 +67,17 @@ impl PreviewTarget {
 
     pub(super) fn texture_id(&self) -> egui::TextureId {
         self.texture_id
+    }
+
+    pub(super) fn texture(&self) -> &wgpu::Texture {
+        &self._texture
+    }
+
+    pub(super) fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub(super) fn height(&self) -> u32 {
+        self.height
     }
 }
