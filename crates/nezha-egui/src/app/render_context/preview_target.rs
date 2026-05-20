@@ -72,12 +72,4 @@ impl PreviewTarget {
     pub(super) fn texture(&self) -> &wgpu::Texture {
         &self._texture
     }
-
-    pub(super) fn width(&self) -> u32 {
-        self.width
-    }
-
-    pub(super) fn height(&self) -> u32 {
-        self.height
-    }
 }

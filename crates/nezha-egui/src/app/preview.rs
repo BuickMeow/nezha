@@ -129,6 +129,7 @@ impl App {
     /// 将所有图层渲染 + 纹理拷贝合并到单个 CommandEncoder，
     /// 使用 triple buffering ring 的单槽快速路径。
     /// 返回 BGRA 像素数据。
+    #[allow(dead_code)]
     pub(super) fn render_frame_combined(&mut self, time: f32) -> Vec<u8> {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;

@@ -151,6 +151,7 @@ impl StagingRing {
     }
 
     /// 阻塞等待最早提交的缓冲区就绪。
+    #[allow(dead_code)]
     fn wait_read(&mut self) -> Vec<u8> {
         if self.inflight == 0 {
             return Vec::new();
@@ -182,11 +183,19 @@ impl StagingRing {
         let buf = slot.buffer.as_ref().expect("slot has buffer");
 
         let data = buf.buffer.slice(..).get_mapped_range();
-        let mut result = Vec::with_capacity((buf.unpadded_bytes_per_row * buf.height) as usize);
-        for row in 0..buf.height {
-            let start = (row * buf.padded_bytes_per_row) as usize;
-            let end = start + buf.unpadded_bytes_per_row as usize;
-            result.extend_from_slice(&data[start..end]);
+        let total_unpadded = (buf.unpadded_bytes_per_row * buf.height) as usize;
+        let mut result = Vec::with_capacity(total_unpadded);
+
+        // 快速路径：无行尾 padding 时直接整块复制
+        if buf.padded_bytes_per_row == buf.unpadded_bytes_per_row {
+            result.extend_from_slice(&data[..total_unpadded]);
+        } else {
+            // 慢速路径：逐行跳过 padding
+            for row in 0..buf.height {
+                let start = (row * buf.padded_bytes_per_row) as usize;
+                let end = start + buf.unpadded_bytes_per_row as usize;
+                result.extend_from_slice(&data[start..end]);
+            }
         }
         drop(data);
         buf.buffer.unmap();
@@ -384,6 +393,7 @@ impl RenderContext {
     /// 阻塞等待最早提交的 staging buffer 就绪并读回。
     ///
     /// 若 GPU 超时（5s）则返回空 Vec。
+    #[allow(dead_code)]
     pub fn wait_read_staging(&mut self) -> Vec<u8> {
         self.staging_ring.wait_read()
     }
