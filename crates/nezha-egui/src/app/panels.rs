@@ -63,10 +63,15 @@ impl App {
             });
 
         egui::Panel::left("config_panel")
-            .default_size(260.0)
-            .min_size(180.0)
-            .resizable(true)
+            .exact_size(260.0)
+            .min_size(260.0)
+            .max_size(260.0)
+            .resizable(false)
             .show_inside(ui, |ui| {
+                // 强制内容宽度 = 可用宽度
+                ui.set_max_width(ui.available_width());
+                ui.set_min_width(ui.available_width());
+
                 let mut state = config_panel::ConfigState {
                     active_tab: self.ui.active_tab,
                     midi_files: &self.project.midi.entries,
@@ -86,10 +91,15 @@ impl App {
             });
 
         egui::Panel::right("properties_panel")
-            .default_size(220.0)
-            .min_size(160.0)
-            .resizable(true)
+            .exact_size(220.0)
+            .min_size(220.0)
+            .max_size(220.0)
+            .resizable(false)
             .show_inside(ui, |ui| {
+                // 强制内容宽度 = 可用宽度
+                ui.set_max_width(ui.available_width());
+                ui.set_min_width(ui.available_width());
+
                 properties_panel::show(
                     ui,
                     &mut self.project.timeline_state,

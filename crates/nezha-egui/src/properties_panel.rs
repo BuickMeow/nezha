@@ -1,5 +1,5 @@
 use crate::app::project_state::MidiEntry;
-use crate::config_panel::truncate_str;
+use crate::config_panel::truncate_path;
 use crate::transport::{ClipKind, TimelineState};
 use eframe::egui;
 use nezha_renderer::RenderMode;
@@ -69,7 +69,7 @@ pub fn show(
                                         .and_then(|n| n.to_str())
                                 })
                                 .unwrap_or("（已删除）");
-                            let current_display = truncate_str(current_name, 20);
+                            let current_display = truncate_path(current_name, 18);
 
                             egui::ComboBox::from_id_salt(format!("midi_source_{}", clip_id))
                                 .selected_text(current_display)

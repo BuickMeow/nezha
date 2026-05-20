@@ -3,11 +3,45 @@ use crate::app::project_state::MidiEntry;
 use crate::sidebar::SidebarTab;
 use eframe::egui;
 
-pub(crate) fn truncate_str(s: &str, max_chars: usize) -> String {
+/// Truncate a path string by keeping the filename intact and
+/// truncating the directory portion with an ellipsis in the middle.
+/// e.g. "/very/long/directory/structure/file.mid" → "/very/.../file.mid"
+pub(crate) fn truncate_path(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
+        return s.to_string();
+    }
+    // Use the standard path separator to split
+    let path = std::path::Path::new(s);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("");
+
+    if file_name.is_empty() {
+        // Fallback: simple end-truncation
         s.chars().take(max_chars - 1).collect::<String>() + "…"
+    } else if parent.is_empty() {
+        // No parent directory, just truncate the filename
+        let keep = max_chars.saturating_sub(1);
+        if file_name.chars().count() <= keep {
+            file_name.to_string()
+        } else {
+            file_name.chars().take(keep - 1).collect::<String>() + "…"
+        }
+    } else {
+        // Reserve space for: "…/" + file_name
+        let suffix_len = file_name.chars().count() + 2; // "…/" + filename
+        if suffix_len >= max_chars {
+            // Not enough room, just truncate filename
+            let keep = max_chars.saturating_sub(1);
+            if file_name.chars().count() <= keep {
+                file_name.to_string()
+            } else {
+                file_name.chars().take(keep - 1).collect::<String>() + "…"
+            }
+        } else {
+            let prefix_len = max_chars - suffix_len;
+            let prefix: String = parent.chars().take(prefix_len).collect();
+            format!("{}…/{}", prefix, file_name)
+        }
     }
 }
 
@@ -53,8 +87,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or(&entry.path);
-                    // 截断显示，避免撑开面板
-                    let display = truncate_str(raw_name, 24);
+                    let full_path = &entry.path;
+                    let display = truncate_path(raw_name, 22);
                     let text = if is_highlighted {
                         format!("▶ {}", display)
                     } else {
@@ -64,10 +98,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                         let response = ui
                             .add(
                                 egui::Label::new(text)
+                                    .truncate()
                                     .selectable(false)
                                     .sense(egui::Sense::click()),
                             )
-                            .on_hover_text(raw_name);
+                            .on_hover_text(full_path);
                         if response.clicked() {
                             *state.highlighted_midi_idx = Some(idx);
                         }
@@ -152,10 +187,16 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                     });
             });
 
+            ui.label("导出位置:");
             ui.horizontal(|ui| {
-                ui.label("导出位置:");
                 if let Some(path) = state.export_path {
-                    ui.label(path.as_str());
+                    let display = truncate_path(path, 28);
+                    ui.add(
+                        egui::Label::new(display)
+                            .truncate()
+                            .sense(egui::Sense::hover()),
+                    )
+                    .on_hover_text(path.as_str());
                 } else {
                     ui.label("未选择");
                 }
