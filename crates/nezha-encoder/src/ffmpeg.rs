@@ -67,7 +67,7 @@ impl FfmpegEncoder {
             .spawn()?;
 
         let mut stdin = process.stdin.take().expect("ffmpeg stdin piped");
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
 
         let join_handle = std::thread::spawn(move || {
             for frame_data in rx {

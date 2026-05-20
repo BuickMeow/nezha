@@ -51,6 +51,8 @@ impl App {
     }
 
     /// 渲染指定时间点的画面到预览目标（不显示到 UI）。
+    ///
+    /// 用于预览路径，每层单独 begin_pass/end_pass。
     pub(super) fn render_frame_for_export(&mut self, time: f32) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
@@ -120,6 +122,86 @@ impl App {
 
             self.render_ctx.end_pass();
         }
+    }
+
+    /// 渲染一帧并立即读回像素数据（用于导出）。
+    ///
+    /// 将所有图层渲染 + 纹理拷贝合并到单个 CommandEncoder，
+    /// 仅一次 GPU submit，消除原方案中每层一次 submit + 拷贝单独 submit 的开销。
+    /// 返回 BGRA 像素数据。
+    pub(super) fn render_frame_combined(&mut self, time: f32) -> Vec<u8> {
+        let render_width = self.project.render.width;
+        let render_height = self.project.render.height;
+        let layers = self.collect_visible_layers(time);
+        let default_style = self.default_style();
+
+        // 单次 begin_pass：所有图层 + copy 共用同一 encoder
+        self.render_ctx.begin_pass();
+
+        let mut is_first = true;
+        for clip in &layers {
+            let clear_background = is_first;
+            is_first = false;
+
+            match clip.kind {
+                ClipKind::SolidColor => {
+                    let style = nezha_renderer::RenderStyle {
+                        background: [
+                            clip.color.r() as f64 / 255.0,
+                            clip.color.g() as f64 / 255.0,
+                            clip.color.b() as f64 / 255.0,
+                            1.0,
+                        ],
+                        ..default_style.clone()
+                    };
+                    self.render_ctx.render_background(
+                        render_width,
+                        render_height,
+                        &style,
+                        clear_background,
+                    );
+                }
+                ClipKind::Waterfall => {
+                    let Some(midi_idx) = clip.midi_idx else {
+                        continue;
+                    };
+                    let Some(entry) = self.project.midi.entries.get(midi_idx) else {
+                        continue;
+                    };
+
+                    let clip_time = (time - clip.clip_start).max(0.0) as f64;
+                    let keyboard_height_px = render_height as f32 * clip.keyboard_height_percent;
+                    let clip_style = nezha_renderer::RenderStyle {
+                        render_mode: clip.render_mode,
+                        border_width: clip.border_width,
+                        rounding: clip.rounding,
+                        track_index: 0,
+                        palette: default_style.palette,
+                        background: [0.0, 0.0, 0.0, 0.0],
+                        equal_key_width: clip.equal_key_width,
+                        keyboard_height: keyboard_height_px,
+                    };
+
+                    self.render_ctx.render_layer(
+                        render_width,
+                        render_height,
+                        clip_time,
+                        clip.speed,
+                        midi_idx,
+                        &entry.file,
+                        &clip_style,
+                        clear_background,
+                    );
+                }
+            }
+        }
+
+        // 使用同一 encoder 追加纹理拷贝命令（无需单独 submit）
+        self.render_ctx
+            .copy_frame_to_staging(render_width, render_height);
+
+        // 一次 submit 提交所有渲染 + 拷贝，然后读回
+        self.render_ctx.submit_and_read_staging()
     }
 
     pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {

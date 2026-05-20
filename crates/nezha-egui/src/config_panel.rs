@@ -201,8 +201,30 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                     ui.label("未选择");
                 }
                 if ui.button("浏览...").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().save_file() {
-                        *state.export_path = Some(path.to_string_lossy().to_string());
+                    // 自动填入 MIDI 文件名 + 正确后缀
+                    let default_name = state
+                        .midi_files
+                        .first()
+                        .and_then(|entry| {
+                            std::path::Path::new(&entry.path)
+                                .file_stem()
+                                .and_then(|n| n.to_str())
+                        })
+                        .unwrap_or("output");
+                    let ext = state.export_format.to_lowercase();
+                    let default_filename = format!("{}.{}", default_name, ext);
+
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_file_name(&default_filename)
+                        .save_file()
+                    {
+                        let mut path_str = path.to_string_lossy().to_string();
+                        // 如果没有后缀名，自动补上
+                        let expected_ext = format!(".{}", ext);
+                        if !path_str.to_lowercase().ends_with(&expected_ext) {
+                            path_str.push_str(&expected_ext);
+                        }
+                        *state.export_path = Some(path_str);
                     }
                 }
             });
