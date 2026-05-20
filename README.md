@@ -1,5 +1,7 @@
 # Nezha — GPU-Accelerated MIDI Visualizer
 
+[![zh-CN](https://img.shields.io/badge/中文-简体-red)](README.zh-CN.md)
+
 Nezha（哪吒）is a cross-platform, GPU-accelerated MIDI visualizer built with **Rust**, **wgpu**, and **egui**. It renders waterfall / piano-roll style animations in real time, handling millions of notes with smooth performance.
 
 ![Rust](https://img.shields.io/badge/rust-2024%20edition-orange?logo=rust)
