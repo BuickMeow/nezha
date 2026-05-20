@@ -345,6 +345,15 @@ impl App {
 
     pub(super) fn show_export_overlay(&mut self, ui: &mut egui::Ui) {
         let mut dismiss = false;
+        let mut force_finish = false;
+        // 提前提取 Finalizing 的统计信息（避免 borrow 冲突）
+        let finalizing_stats = match &self.export_state {
+            Some(ExportState::Finalizing { .. }) => {
+                self.export_state.as_ref().and_then(|s| s.stats())
+            }
+            _ => None,
+        };
+
         if let Some(status) = &self.export_state {
             let screen_rect = ui.ctx().content_rect();
             ui.ctx()
@@ -374,12 +383,20 @@ impl App {
                         }
                     }
                     ExportState::Finalizing { .. } => {
-                        if let Some(stats) = status.stats() {
+                        if let Some(stats) = &finalizing_stats {
                             ui.label("⏳ 正在完成编码...");
                             ui.separator();
-                            Self::render_export_progress(ui, &stats, self.project.render.fps);
+                            Self::render_export_progress(ui, stats, self.project.render.fps);
+                            ui.separator();
+                            ui.label("(ffmpeg 正在封装文件，请稍候)");
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("✅ 强制完成").clicked() {
+                                    force_finish = true;
+                                }
+                                ui.label("视频已可用，跳过等待");
+                            });
                         }
-                        ui.label("(ffmpeg 正在封装文件，请稍候)");
                     }
                     ExportState::Completed {
                         total_frames,
@@ -418,7 +435,15 @@ impl App {
                     }
                 });
         }
-        if dismiss {
+        if force_finish {
+            if let Some(stats) = finalizing_stats {
+                self.export_state = Some(ExportState::Completed {
+                    total_frames: stats.total_frames,
+                    elapsed: stats.elapsed,
+                    avg_fps: stats.current_fps,
+                });
+            }
+        } else if dismiss {
             self.export_state = None;
         }
     }

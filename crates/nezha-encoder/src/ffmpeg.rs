@@ -197,9 +197,9 @@ fn build_ffmpeg_args(config: &ExportConfig) -> Vec<String> {
             args.push("yuv420p".to_string());
 
             if config.codec == VideoCodec::H264 {
-                // 提升兼容性
-                args.push("-movflags".to_string());
-                args.push("+faststart".to_string());
+                // 不启用 faststart（需二次处理，大文件耗时数分钟）。
+                // 用户如需 web 渐进式下载，可事后运行：
+                //   ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4
             }
         }
         VideoCodec::Vp9 => {
