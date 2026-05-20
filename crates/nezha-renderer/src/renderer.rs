@@ -1,7 +1,6 @@
 use wgpu::*;
 
 use rayon::prelude::*;
-use std::collections::HashMap;
 
 use crate::gpu_timer::GpuTimer;
 use crate::keyboard;
@@ -22,8 +21,8 @@ macro_rules! profile_scope {
     ($name:literal) => {};
 }
 
-#[derive(Default)]
-struct KeySeekIndex {
+#[derive(Default, Clone)]
+pub struct KeySeekIndex {
     block_prefix_max_end: Vec<f64>,
     block_prefix_max_end_tick: Vec<u32>,
 }
@@ -87,12 +86,13 @@ impl KeySeekIndex {
     }
 }
 
-struct NoteSeekIndex {
-    per_key: [KeySeekIndex; 128],
+#[derive(Clone)]
+pub struct NoteSeekIndex {
+    pub per_key: [KeySeekIndex; 128],
 }
 
 impl NoteSeekIndex {
-    fn build(source: &dyn NoteSource) -> Self {
+    pub fn build(source: &dyn NoteSource) -> Self {
         Self {
             per_key: std::array::from_fn(|key| KeySeekIndex::build(source.key_notes(key as u8))),
         }
@@ -108,8 +108,9 @@ pub struct Renderer {
     cached_layouts: Vec<(f32, f32)>,
     cached_layout_width: u32,
     cached_layout_equal_key_width: bool,
-    note_seek_indices: HashMap<usize, NoteSeekIndex>,
     current_batch_counts: Vec<usize>,
+    pub state: MidiRenderState,
+    pub seek_index: Option<NoteSeekIndex>,
 }
 
 /// CPU path keeps multi-buffer batching to avoid a single hard cap per frame.
@@ -161,8 +162,9 @@ impl Renderer {
             cached_layouts: Vec::new(),
             cached_layout_width: 0,
             cached_layout_equal_key_width: false,
-            note_seek_indices: HashMap::new(),
             current_batch_counts: Vec::new(),
+            state: MidiRenderState::default(),
+            seek_index: None,
         }
     }
 
@@ -184,8 +186,6 @@ impl Renderer {
         time: f64,
         speed: f32,
         midi: Option<&dyn NoteSource>,
-        render_state: &mut MidiRenderState,
-        note_data_id: Option<usize>,
         style: &RenderStyle,
     ) {
         profile_scope!("prepare");
@@ -214,8 +214,8 @@ impl Renderer {
                 time,
                 speed,
                 m,
-                render_state,
-                note_data_id.and_then(|id| self.note_seek_indices.get(&id)),
+                &mut self.state,
+                self.seek_index.as_ref(),
                 style,
             ),
             None => {
@@ -328,22 +328,11 @@ impl Renderer {
         time: f64,
         speed: f32,
         midi: Option<&dyn NoteSource>,
-        render_state: &mut MidiRenderState,
-        _note_data_id: Option<usize>,
         style: &RenderStyle,
         clear_background: bool,
     ) {
         profile_scope!("render");
-        self.prepare(
-            width,
-            height,
-            time,
-            speed,
-            midi,
-            render_state,
-            _note_data_id,
-            style,
-        );
+        self.prepare(width, height, time, speed, midi, style);
 
         if let Some(qs) = self.timer.query_set.as_ref() {
             encoder.write_timestamp(qs, 0);
@@ -365,25 +354,14 @@ impl Renderer {
         self.timer.resolve(encoder);
     }
 
-    pub fn upload_note_data(
-        &mut self,
-        id: usize,
-        source: &dyn NoteSource,
-        _width: u32,
-        _equal_key_width: bool,
-    ) {
+    pub fn upload_note_data(&mut self, source: &dyn NoteSource) {
         profile_scope!("upload_note_data");
-        self.note_seek_indices
-            .entry(id)
-            .or_insert_with(|| NoteSeekIndex::build(source));
-    }
-
-    pub fn remove_note_data(&mut self, id: usize) {
-        self.note_seek_indices.remove(&id);
+        self.seek_index = Some(NoteSeekIndex::build(source));
     }
 
     pub fn clear_note_data(&mut self) {
-        self.note_seek_indices.clear();
+        self.seek_index = None;
+        self.state.reset();
     }
 
     /// Whether GPU timestamp queries are supported on this device.

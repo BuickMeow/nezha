@@ -1,11 +1,10 @@
 use eframe::egui;
 mod frame_encoder;
-mod midi_cache;
 mod preview_target;
 
 use frame_encoder::FrameEncoder;
-use midi_cache::MidiRenderCache;
 use preview_target::PreviewTarget;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// GPU→CPU 读回缓冲区。
@@ -208,11 +207,11 @@ impl StagingRing {
 
 pub struct RenderContext {
     wgpu_state: Arc<eframe::egui_wgpu::RenderState>,
-    renderer: nezha_renderer::Renderer,
     preview: PreviewTarget,
-    midi_cache: MidiRenderCache,
     frame_encoder: FrameEncoder,
     staging_ring: StagingRing,
+    waterfall_renderers: HashMap<usize, nezha_renderer::Renderer>,
+    seek_indices: HashMap<usize, nezha_renderer::NoteSeekIndex>,
 }
 
 impl RenderContext {
@@ -220,8 +219,6 @@ impl RenderContext {
         let wgpu_state = cc.wgpu_render_state.clone().expect("wgpu backend required");
         let device = wgpu_state.device.clone();
         let format = wgpu_state.target_format;
-        let renderer =
-            nezha_renderer::Renderer::new(device.clone(), wgpu_state.queue.clone(), format);
 
         let preview = PreviewTarget::new(
             &device,
@@ -233,11 +230,11 @@ impl RenderContext {
 
         Self {
             wgpu_state: wgpu_state.into(),
-            renderer,
             preview,
-            midi_cache: MidiRenderCache::default(),
             frame_encoder: FrameEncoder::default(),
             staging_ring: StagingRing::new(&device, width, height),
+            waterfall_renderers: HashMap::new(),
+            seek_indices: HashMap::new(),
         }
     }
 
@@ -274,14 +271,6 @@ impl RenderContext {
         self.wgpu_state.target_format
     }
 
-    pub fn renderer(&self) -> &nezha_renderer::Renderer {
-        &self.renderer
-    }
-
-    pub fn renderer_mut(&mut self) -> &mut nezha_renderer::Renderer {
-        &mut self.renderer
-    }
-
     pub fn preview_view(&self) -> &wgpu::TextureView {
         self.preview.view()
     }
@@ -290,19 +279,29 @@ impl RenderContext {
         self.frame_encoder.encoder_mut()
     }
 
-    pub fn ensure_midi_uploaded(
+    pub fn get_or_create_renderer(
         &mut self,
-        width: u32,
+        clip_id: usize,
         midi_idx: usize,
         midi: &dyn nezha_renderer::NoteSource,
-        equal_key_width: bool,
-    ) {
-        self.midi_cache
-            .ensure_uploaded(&mut self.renderer, width, midi_idx, midi, equal_key_width);
-    }
+        _width: u32,
+        _equal_key_width: bool,
+    ) -> &mut nezha_renderer::Renderer {
+        // Ensure seek index is built (shared across clips using the same MIDI)
+        if !self.seek_indices.contains_key(&midi_idx) {
+            self.seek_indices
+                .insert(midi_idx, nezha_renderer::NoteSeekIndex::build(midi));
+        }
+        let seek_index = self.seek_indices.get(&midi_idx).cloned();
 
-    pub fn midi_state_mut(&mut self, midi_idx: usize) -> &mut nezha_renderer::MidiRenderState {
-        self.midi_cache.state_mut(midi_idx)
+        self.waterfall_renderers.entry(clip_id).or_insert_with(|| {
+            let device = self.wgpu_state.device.clone();
+            let queue = self.wgpu_state.queue.clone();
+            let format = self.wgpu_state.target_format;
+            let mut renderer = nezha_renderer::Renderer::new(device, queue, format);
+            renderer.seek_index = seek_index;
+            renderer
+        })
     }
 
     pub fn render_waterfall(
@@ -311,30 +310,27 @@ impl RenderContext {
         height: u32,
         time: f64,
         speed: f32,
+        clip_id: usize,
         midi_idx: usize,
         midi: &dyn nezha_renderer::NoteSource,
         style: &nezha_renderer::RenderStyle,
         target: &wgpu::TextureView,
         load_op: wgpu::LoadOp<wgpu::Color>,
     ) {
-        self.ensure_midi_uploaded(width, midi_idx, midi, style.equal_key_width);
-        let state = self.midi_cache.state_mut(midi_idx);
-        self.renderer.prepare(
-            width,
-            height,
-            time,
-            speed,
-            Some(midi),
-            state,
-            Some(midi_idx),
-            style,
-        );
+        self.get_or_create_renderer(clip_id, midi_idx, midi, width, style.equal_key_width)
+            .prepare(width, height, time, speed, Some(midi), style);
         let encoder = self.frame_encoder.encoder_mut();
-        self.renderer.draw(encoder, target, load_op);
+        self.waterfall_renderers
+            .get_mut(&clip_id)
+            .unwrap()
+            .draw(encoder, target, load_op);
     }
 
     pub fn reset_midi_state(&mut self) {
-        self.midi_cache.clear(&mut self.renderer);
+        for renderer in self.waterfall_renderers.values_mut() {
+            renderer.clear_note_data();
+        }
+        self.seek_indices.clear();
     }
 
     // ========================================================================

@@ -9,7 +9,7 @@ mod style;
 mod vertex;
 
 pub use palette::{hsv_to_rgb, random_palette};
-pub use renderer::Renderer;
+pub use renderer::{KeySeekIndex, NoteSeekIndex, Renderer};
 pub use source::NoteSource;
 pub use state::MidiRenderState;
 pub use style::{RenderMode, RenderStyle};

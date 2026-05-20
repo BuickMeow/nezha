@@ -7,6 +7,7 @@ use nezha_compositor::Compositor;
 /// 图层渲染所需数据（复制自 TrackClip，避免持有 self 的引用）。
 #[derive(Clone)]
 struct LayerData {
+    clip_id: usize,
     kind: ClipKind,
     midi_idx: Option<usize>,
     speed: f32,
@@ -27,6 +28,7 @@ impl App {
             for clip in &track.clips {
                 if time >= clip.start && time < clip.end {
                     layers.push(LayerData {
+                        clip_id: clip.id,
                         kind: clip.kind,
                         midi_idx: clip.midi_idx,
                         speed: clip.speed,
@@ -57,6 +59,7 @@ impl App {
     pub(super) fn render_frame_for_export(&mut self, time: f32) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
+        self.render_ctx.begin_pass();
         self.render_all_layers(time, render_width, render_height);
         self.render_ctx.end_pass();
     }
@@ -109,17 +112,6 @@ impl App {
         let mut is_first = true;
 
         for clip in &layers {
-            let load_op = if is_first {
-                wgpu::LoadOp::Clear(wgpu::Color {
-                    r: clip.color.r() as f64 / 255.0,
-                    g: clip.color.g() as f64 / 255.0,
-                    b: clip.color.b() as f64 / 255.0,
-                    a: 1.0,
-                })
-            } else {
-                wgpu::LoadOp::Load
-            };
-
             match clip.kind {
                 ClipKind::SolidColor => {
                     let color = [
@@ -128,6 +120,16 @@ impl App {
                         clip.color.b() as f64 / 255.0,
                         1.0,
                     ];
+                    let load_op = if is_first {
+                        wgpu::LoadOp::Clear(wgpu::Color {
+                            r: color[0],
+                            g: color[1],
+                            b: color[2],
+                            a: color[3],
+                        })
+                    } else {
+                        wgpu::LoadOp::Load
+                    };
                     let mut solid = nezha_compositor::SolidColorLayer::new(
                         self.render_ctx.device(),
                         self.render_ctx.queue(),
@@ -144,14 +146,13 @@ impl App {
                         time as f64,
                         load_op,
                     );
+                    is_first = false;
                 }
                 ClipKind::Waterfall => {
                     let Some(midi_idx) = clip.midi_idx else {
-                        is_first = false;
                         continue;
                     };
                     let Some(entry) = self.project.midi.entries.get(midi_idx) else {
-                        is_first = false;
                         continue;
                     };
 
@@ -168,20 +169,32 @@ impl App {
                         keyboard_height: keyboard_height_px,
                     };
 
+                    let load_op = if is_first {
+                        wgpu::LoadOp::Clear(wgpu::Color {
+                            r: clip_style.background[0],
+                            g: clip_style.background[1],
+                            b: clip_style.background[2],
+                            a: clip_style.background[3],
+                        })
+                    } else {
+                        wgpu::LoadOp::Load
+                    };
+
                     self.render_ctx.render_waterfall(
                         render_width,
                         render_height,
                         clip_time,
                         clip.speed,
+                        clip.clip_id,
                         midi_idx,
                         &entry.file,
                         &clip_style,
                         &preview_view,
                         load_op,
                     );
+                    is_first = false;
                 }
             }
-            is_first = false;
         }
     }
 
