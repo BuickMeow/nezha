@@ -287,7 +287,11 @@ impl Renderer {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
         load_op: wgpu::LoadOp<wgpu::Color>,
+        // _blend_mode: not used — Renderer has a single pipeline with ALPHA_BLENDING
+        rect: (f32, f32, f32, f32),
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("waterfall_pass"),
@@ -305,6 +309,12 @@ impl Renderer {
             multiview_mask: None,
             timestamp_writes: None,
         });
+
+        let sx = (rect.0 * width as f32).clamp(0.0, width as f32) as u32;
+        let sy = (rect.1 * height as f32).clamp(0.0, height as f32) as u32;
+        let sw = (rect.2 * width as f32).clamp(1.0, (width - sx) as f32) as u32;
+        let sh = (rect.3 * height as f32).clamp(1.0, (height - sy) as f32) as u32;
+        pass.set_scissor_rect(sx, sy, sw, sh);
 
         if !self.instance_buffers.is_empty() && !self.current_batch_counts.is_empty() {
             pass.set_pipeline(&self.render.pipeline);
@@ -350,7 +360,14 @@ impl Renderer {
             LoadOp::Load
         };
 
-        self.draw(encoder, target, load_op);
+        self.draw(
+            encoder,
+            target,
+            width,
+            height,
+            load_op,
+            (0.0, 0.0, 1.0, 1.0),
+        );
         self.timer.resolve(encoder);
     }
 

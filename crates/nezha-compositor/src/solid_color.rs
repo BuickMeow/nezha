@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use wgpu::*;
 
-use crate::layer::LayerRenderer;
+use crate::layer::{BlendMode, LayerRenderer};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -8,9 +10,39 @@ struct SolidColorUniforms {
     color: [f32; 4],
 }
 
-/// A layer that fills the entire screen with a solid color.
+fn blend_state_for(mode: BlendMode) -> BlendState {
+    match mode {
+        BlendMode::Normal => BlendState::ALPHA_BLENDING,
+        BlendMode::Add => BlendState {
+            color: BlendComponent {
+                src_factor: BlendFactor::One,
+                dst_factor: BlendFactor::One,
+                operation: BlendOperation::Add,
+            },
+            alpha: BlendComponent {
+                src_factor: BlendFactor::One,
+                dst_factor: BlendFactor::One,
+                operation: BlendOperation::Add,
+            },
+        },
+        BlendMode::Multiply => BlendState {
+            color: BlendComponent {
+                src_factor: BlendFactor::Dst,
+                dst_factor: BlendFactor::Zero,
+                operation: BlendOperation::Add,
+            },
+            alpha: BlendComponent {
+                src_factor: BlendFactor::One,
+                dst_factor: BlendFactor::One,
+                operation: BlendOperation::Add,
+            },
+        },
+    }
+}
+
+/// A layer that fills a rectangle with a solid color.
 pub struct SolidColorLayer {
-    pipeline: RenderPipeline,
+    pipelines: HashMap<BlendMode, RenderPipeline>,
     bind_group: BindGroup,
     uniform_buffer: Buffer,
 }
@@ -58,37 +90,41 @@ impl SolidColorLayer {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("solid_color_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: PipelineCompilationOptions::default(),
-            },
-            fragment: Some(FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(ColorTargetState {
-                    format,
-                    blend: Some(BlendState::REPLACE),
-                    write_mask: ColorWrites::ALL,
-                })],
-                compilation_options: PipelineCompilationOptions::default(),
-            }),
-            primitive: PrimitiveState {
-                topology: PrimitiveTopology::TriangleList,
-                ..PrimitiveState::default()
-            },
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let mut pipelines = HashMap::new();
+        for mode in [BlendMode::Normal, BlendMode::Add, BlendMode::Multiply] {
+            let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some(&format!("solid_color_pipeline_{:?}", mode)),
+                layout: Some(&pipeline_layout),
+                vertex: VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: PipelineCompilationOptions::default(),
+                },
+                fragment: Some(FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(ColorTargetState {
+                        format,
+                        blend: Some(blend_state_for(mode)),
+                        write_mask: ColorWrites::ALL,
+                    })],
+                    compilation_options: PipelineCompilationOptions::default(),
+                }),
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::TriangleList,
+                    ..PrimitiveState::default()
+                },
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+            pipelines.insert(mode, pipeline);
+        }
 
         let layer = Self {
-            pipeline,
+            pipelines,
             bind_group,
             uniform_buffer,
         };
@@ -119,10 +155,12 @@ impl LayerRenderer for SolidColorLayer {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         target: &wgpu::TextureView,
-        _width: u32,
-        _height: u32,
+        width: u32,
+        height: u32,
         _time: f64,
         load_op: wgpu::LoadOp<wgpu::Color>,
+        blend_mode: BlendMode,
+        rect: (f32, f32, f32, f32),
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("solid_color_pass"),
@@ -141,7 +179,18 @@ impl LayerRenderer for SolidColorLayer {
             timestamp_writes: None,
         });
 
-        pass.set_pipeline(&self.pipeline);
+        let sx = (rect.0 * width as f32).clamp(0.0, width as f32) as u32;
+        let sy = (rect.1 * height as f32).clamp(0.0, height as f32) as u32;
+        let sw = (rect.2 * width as f32).clamp(1.0, (width - sx) as f32) as u32;
+        let sh = (rect.3 * height as f32).clamp(1.0, (height - sy) as f32) as u32;
+        pass.set_scissor_rect(sx, sy, sw, sh);
+
+        let pipeline = self.pipelines.get(&blend_mode).unwrap_or_else(|| {
+            self.pipelines
+                .get(&BlendMode::Normal)
+                .expect("Normal pipeline always exists")
+        });
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }

@@ -2,7 +2,33 @@ use super::App;
 use crate::piano_view;
 use crate::transport::ClipKind;
 use eframe::egui;
-use nezha_compositor::Compositor;
+use nezha_compositor::{Compositor, LayerRenderer};
+
+/// Wrapper to adapt [`nezha_renderer::Renderer`] for the compositor's [`LayerRenderer`] trait.
+struct WaterfallLayer<'a> {
+    renderer: &'a nezha_renderer::Renderer,
+}
+
+impl LayerRenderer for WaterfallLayer<'_> {
+    fn prepare(&mut self, _width: u32, _height: u32, _time: f64) {
+        // Preparation is done externally before wrapping.
+    }
+
+    fn render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        _time: f64,
+        load_op: wgpu::LoadOp<wgpu::Color>,
+        _blend_mode: nezha_compositor::BlendMode,
+        rect: (f32, f32, f32, f32),
+    ) {
+        self.renderer
+            .draw(encoder, target, width, height, load_op, rect);
+    }
+}
 
 /// 图层渲染所需数据（复制自 TrackClip，避免持有 self 的引用）。
 #[derive(Clone)]
@@ -145,6 +171,8 @@ impl App {
                         render_height,
                         time as f64,
                         load_op,
+                        nezha_compositor::BlendMode::Normal,
+                        (0.0, 0.0, 1.0, 1.0),
                     );
                     is_first = false;
                 }
@@ -180,18 +208,38 @@ impl App {
                         wgpu::LoadOp::Load
                     };
 
-                    self.render_ctx.render_waterfall(
-                        render_width,
-                        render_height,
-                        clip_time,
-                        clip.speed,
-                        clip.clip_id,
-                        midi_idx,
-                        &entry.file,
-                        &clip_style,
-                        &preview_view,
-                        load_op,
-                    );
+                    self.render_ctx
+                        .get_or_create_renderer(
+                            clip.clip_id,
+                            midi_idx,
+                            &entry.file,
+                            render_width,
+                            clip.equal_key_width,
+                        )
+                        .prepare(
+                            render_width,
+                            render_height,
+                            clip_time,
+                            clip.speed,
+                            Some(&entry.file),
+                            &clip_style,
+                        );
+
+                    self.render_ctx
+                        .with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
+                            let mut wrapper = WaterfallLayer { renderer };
+                            compositor.render_layer(
+                                encoder,
+                                &mut wrapper,
+                                &preview_view,
+                                render_width,
+                                render_height,
+                                clip_time,
+                                load_op,
+                                nezha_compositor::BlendMode::Normal,
+                                (0.0, 0.0, 1.0, 1.0),
+                            );
+                        });
                     is_first = false;
                 }
             }

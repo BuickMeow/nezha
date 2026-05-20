@@ -1,4 +1,4 @@
-use crate::layer::{Layer, LayerRenderer};
+use crate::layer::{BlendMode, Layer, LayerRenderer};
 
 /// Orchestrates rendering of multiple layers onto a single output target.
 #[derive(Default)]
@@ -22,16 +22,18 @@ impl Compositor {
         height: u32,
         time: f64,
         load_op: wgpu::LoadOp<wgpu::Color>,
+        blend_mode: BlendMode,
+        rect: (f32, f32, f32, f32),
     ) {
         renderer.prepare(width, height, time);
-        renderer.render(encoder, target, width, height, time, load_op);
+        renderer.render(
+            encoder, target, width, height, time, load_op, blend_mode, rect,
+        );
     }
 
     /// Render multiple layers in batch.
     ///
     /// This is the future-facing API for full layer compositing.
-    /// Currently limited by lifetime constraints when multiple layers need
-    /// mutable access to shared renderers (e.g. multiple Waterfall clips).
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -57,6 +59,8 @@ impl Compositor {
                 height,
                 time,
                 load_op,
+                layer.blend_mode,
+                layer.rect,
             );
         }
     }

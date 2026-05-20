@@ -304,26 +304,17 @@ impl RenderContext {
         })
     }
 
-    pub fn render_waterfall(
+    /// 提供对指定 clip 的 waterfall renderer 和当前 encoder 的可变引用。
+    ///
+    /// 用于将 waterfall 渲染接入 [`nezha_compositor::Compositor`] 的统一接口。
+    pub fn with_waterfall_renderer(
         &mut self,
-        width: u32,
-        height: u32,
-        time: f64,
-        speed: f32,
         clip_id: usize,
-        midi_idx: usize,
-        midi: &dyn nezha_renderer::NoteSource,
-        style: &nezha_renderer::RenderStyle,
-        target: &wgpu::TextureView,
-        load_op: wgpu::LoadOp<wgpu::Color>,
+        f: impl FnOnce(&mut nezha_renderer::Renderer, &mut wgpu::CommandEncoder),
     ) {
-        self.get_or_create_renderer(clip_id, midi_idx, midi, width, style.equal_key_width)
-            .prepare(width, height, time, speed, Some(midi), style);
         let encoder = self.frame_encoder.encoder_mut();
-        self.waterfall_renderers
-            .get_mut(&clip_id)
-            .unwrap()
-            .draw(encoder, target, load_op);
+        let renderer = self.waterfall_renderers.get_mut(&clip_id).unwrap();
+        f(renderer, encoder);
     }
 
     pub fn reset_midi_state(&mut self) {
