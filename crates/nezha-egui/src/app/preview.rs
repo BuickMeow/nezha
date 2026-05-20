@@ -85,6 +85,8 @@ impl App {
     pub(super) fn render_frame_for_export(&mut self, time: f32) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
+        self.render_ctx
+            .ensure_preview_size(render_width, render_height);
         self.render_ctx.begin_pass();
         self.render_all_layers(time, render_width, render_height);
         self.render_ctx.end_pass();
@@ -99,6 +101,8 @@ impl App {
     pub(super) fn render_frame_combined(&mut self, time: f32) -> Vec<u8> {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
+        self.render_ctx
+            .ensure_preview_size(render_width, render_height);
 
         // 单次 begin_pass：所有图层 + copy 共用同一 encoder
         self.render_ctx.begin_pass();
@@ -118,6 +122,8 @@ impl App {
     pub(super) fn render_frame_pipelined(&mut self, time: f32) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
+        self.render_ctx
+            .ensure_preview_size(render_width, render_height);
 
         self.render_ctx.begin_pass();
         self.render_all_layers(time, render_width, render_height);

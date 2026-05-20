@@ -238,7 +238,7 @@ impl RenderContext {
         }
     }
 
-    fn ensure_preview_size(&mut self, width: u32, height: u32) {
+    pub fn ensure_preview_size(&mut self, width: u32, height: u32) {
         let format = self.wgpu_state.target_format;
         let device = &self.wgpu_state.device;
         let mut egui_renderer = self.wgpu_state.renderer.write();
