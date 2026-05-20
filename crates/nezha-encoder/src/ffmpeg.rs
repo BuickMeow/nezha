@@ -38,18 +38,11 @@ impl From<std::io::Error> for EncoderError {
     }
 }
 
-impl Drop for FfmpegEncoder {
-    fn drop(&mut self) {
-        // 若尚未等待子进程结束（例如用户取消导出），强制终止
-        let _ = self.process.kill();
-        let _ = self.process.wait();
-    }
-}
-
 #[derive(Debug)]
 pub struct FfmpegEncoder {
     process: std::process::Child,
-    stdin: Option<std::process::ChildStdin>,
+    sender: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
+    join_handle: Option<std::thread::JoinHandle<Result<(), EncoderError>>>,
 }
 
 impl FfmpegEncoder {
@@ -73,19 +66,44 @@ impl FfmpegEncoder {
             .stderr(Stdio::piped())
             .spawn()?;
 
-        let stdin = process.stdin.take();
-        Ok(Self { process, stdin })
+        let mut stdin = process.stdin.take().expect("ffmpeg stdin piped");
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4);
+
+        let join_handle = std::thread::spawn(move || {
+            for frame_data in rx {
+                stdin.write_all(&frame_data)?;
+            }
+            Ok(())
+        });
+
+        Ok(Self {
+            process,
+            sender: Some(tx),
+            join_handle: Some(join_handle),
+        })
     }
 
-    pub fn write_frame(&mut self, frame_data: &[u8]) -> Result<(), EncoderError> {
-        if let Some(stdin) = self.stdin.as_mut() {
-            stdin.write_all(frame_data)?;
+    pub fn write_frame(&mut self, frame_data: Vec<u8>) -> Result<(), EncoderError> {
+        if let Some(sender) = &self.sender {
+            sender
+                .send(frame_data)
+                .map_err(|_| EncoderError::FfmpegFailed(None))?;
         }
         Ok(())
     }
 
     pub fn finish(mut self) -> Result<(), EncoderError> {
-        drop(self.stdin.take());
+        // 关闭 sender，后台线程的 rx 会结束，stdin 被关闭
+        self.sender.take();
+
+        // 等待后台线程把所有剩余数据写入 ffmpeg stdin
+        if let Some(handle) = self.join_handle.take() {
+            handle
+                .join()
+                .map_err(|_| EncoderError::FfmpegFailed(None))??;
+        }
+
+        // 等待 ffmpeg 子进程结束
         let status = self.process.wait()?;
         if !status.success() {
             let stderr = self
@@ -105,6 +123,18 @@ impl FfmpegEncoder {
             return Err(EncoderError::FfmpegFailed(status.code()));
         }
         Ok(())
+    }
+}
+
+impl Drop for FfmpegEncoder {
+    fn drop(&mut self) {
+        // 如果用户取消导出，强制终止 ffmpeg 子进程
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+        // 等待后台线程退出（pipe broken 后自然结束）
+        if let Some(handle) = self.join_handle.take() {
+            let _ = handle.join();
+        }
     }
 }
 

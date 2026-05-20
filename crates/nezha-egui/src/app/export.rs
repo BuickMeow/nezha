@@ -83,87 +83,56 @@ impl App {
         }
     }
 
-    /// 批量导出视频帧。
+    /// 导出单帧视频。
     ///
-    /// 每帧 UI update 会在一个时间预算内（约 50ms）尽可能多地渲染视频帧，
-    /// 低负载时大幅加速，高负载时自然降速，不会阻塞 UI。
+    /// 由后台线程负责向 ffmpeg 写入数据，主线程只需渲染并推送帧数据。
+    /// 每轮 UI 只推进一帧，配合 request_repaint() 实现无上限连续渲染。
     pub(super) fn export_step(&mut self) {
-        let budget = std::time::Duration::from_millis(50);
-        let start = std::time::Instant::now();
-
-        loop {
-            match self.export_state.take() {
-                Some(ExportState::Exporting {
-                    mut encoder,
-                    current_frame,
-                    total_frames,
-                }) => {
-                    if current_frame >= total_frames {
-                        // 所有帧已写入，关闭编码器
-                        match encoder.finish() {
-                            Ok(()) => {
-                                self.export_state = Some(ExportState::Completed);
-                            }
-                            Err(e) => {
-                                self.export_state =
-                                    Some(ExportState::Error(format!("编码器收尾失败: {}", e)));
-                            }
-                        }
-                        return;
-                    }
-
-                    let time = current_frame as f64 / self.project.render.fps as f64;
-                    self.render_frame_for_export(time as f32);
-                    let bytes = self.render_ctx.read_frame_bytes();
-                    if bytes.is_empty() {
-                        self.export_state =
-                            Some(ExportState::Error("GPU 帧读取失败或超时".to_string()));
-                        return;
-                    }
-
-                    match encoder.write_frame(&bytes) {
+        match self.export_state.take() {
+            Some(ExportState::Exporting {
+                mut encoder,
+                current_frame,
+                total_frames,
+            }) => {
+                if current_frame >= total_frames {
+                    // 所有帧已写入，关闭编码器
+                    match encoder.finish() {
                         Ok(()) => {
-                            let next_frame = current_frame + 1;
-                            if next_frame >= total_frames {
-                                // 本轮已写完最后一帧，下一轮循环会进入收尾逻辑
-                                self.export_state = Some(ExportState::Exporting {
-                                    encoder,
-                                    current_frame: next_frame,
-                                    total_frames,
-                                });
-                                // 继续循环以立即完成收尾，避免多等一帧 UI
-                                continue;
-                            }
-
-                            if start.elapsed() < budget {
-                                // 时间预算还有剩余，继续渲染下一帧
-                                self.export_state = Some(ExportState::Exporting {
-                                    encoder,
-                                    current_frame: next_frame,
-                                    total_frames,
-                                });
-                                continue;
-                            }
-
-                            // 时间预算用完，等下一帧 UI 再继续
-                            self.export_state = Some(ExportState::Exporting {
-                                encoder,
-                                current_frame: next_frame,
-                                total_frames,
-                            });
-                            return;
+                            self.export_state = Some(ExportState::Completed);
                         }
                         Err(e) => {
                             self.export_state =
-                                Some(ExportState::Error(format!("写入视频帧失败: {}", e)));
-                            return;
+                                Some(ExportState::Error(format!("编码器收尾失败: {}", e)));
                         }
                     }
-                }
-                other => {
-                    self.export_state = other;
                     return;
                 }
+
+                let time = current_frame as f64 / self.project.render.fps as f64;
+                self.render_frame_for_export(time as f32);
+                let bytes = self.render_ctx.read_frame_bytes();
+                if bytes.is_empty() {
+                    self.export_state =
+                        Some(ExportState::Error("GPU 帧读取失败或超时".to_string()));
+                    return;
+                }
+
+                match encoder.write_frame(bytes) {
+                    Ok(()) => {
+                        self.export_state = Some(ExportState::Exporting {
+                            encoder,
+                            current_frame: current_frame + 1,
+                            total_frames,
+                        });
+                    }
+                    Err(e) => {
+                        self.export_state =
+                            Some(ExportState::Error(format!("写入视频帧失败: {}", e)));
+                    }
+                }
+            }
+            other => {
+                self.export_state = other;
             }
         }
     }
