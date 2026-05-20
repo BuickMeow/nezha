@@ -7,10 +7,10 @@ use crate::DmsError;
 // ------------------------------------------------------------------
 
 const MAGIC: &[u8] = b"PortalSequenceData";
-pub(crate) const MAGIC_LEN: usize = 18;
+pub const MAGIC_LEN: usize = 18;
 
 /// 读取 DMS 文件头，ZLib 解压，返回原始树形数据。
-pub(crate) fn decompress(data: &[u8]) -> Result<Vec<u8>, DmsError> {
+pub fn decompress(data: &[u8]) -> Result<Vec<u8>, DmsError> {
     if data.len() < MAGIC_LEN + 4 {
         return Err(DmsError::InvalidDms);
     }
@@ -42,7 +42,7 @@ pub(crate) fn decompress(data: &[u8]) -> Result<Vec<u8>, DmsError> {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub(crate) struct DmsNode {
+pub struct DmsNode {
     pub type_id: u16,
     pub computed_type: u64,
     pub children: Vec<DmsNode>,
@@ -51,7 +51,7 @@ pub(crate) struct DmsNode {
 
 /// C# DmsReader 会把整个数据包在一个虚拟的 type=0 wrapper 里，
 /// 然后它的 children 才是文件中的实际节点。
-pub(crate) fn parse_root(data: &[u8]) -> Result<DmsNode, DmsError> {
+pub fn parse_root(data: &[u8]) -> Result<DmsNode, DmsError> {
     let mut slice = data;
     let mut children = Vec::new();
     while !slice.is_empty() {
@@ -114,42 +114,42 @@ fn parse_node(data: &mut &[u8], layer: i32, parent_type: u64) -> Result<DmsNode,
 // 节点类型常量
 // ------------------------------------------------------------------
 
-pub(crate) const NODE_ROOT: u64 = 0x0000;
-pub(crate) const NODE_SONG_PPQN: u64 = 1002;
-pub(crate) const NODE_TRACK: u64 = 1003;
+pub const NODE_ROOT: u64 = 0x0000;
+pub const NODE_SONG_PPQN: u64 = 1002;
+pub const NODE_TRACK: u64 = 1003;
 
-pub(crate) const NODE_TRACK_CHANNEL: u64 = 1001 | (NODE_TRACK << 16);
-pub(crate) const NODE_TRACK_NAME: u64 = 1002 | (NODE_TRACK << 16);
+pub const NODE_TRACK_CHANNEL: u64 = 1001 | (NODE_TRACK << 16);
+pub const NODE_TRACK_NAME: u64 = 1002 | (NODE_TRACK << 16);
 
-pub(crate) const NODE_NOTE_EVENT: u64 = 2001 | (NODE_TRACK << 16);
-pub(crate) const NODE_PROGRAM_CHANGE_EVENT: u64 = 2002 | (NODE_TRACK << 16);
-pub(crate) const NODE_CONTROL_EVENT: u64 = 2003 | (NODE_TRACK << 16);
-pub(crate) const NODE_TEMPO_EVENT: u64 = 2008 | (NODE_TRACK << 16);
-pub(crate) const NODE_END_OF_TRACK_EVENT: u64 = 2009 | (NODE_TRACK << 16);
-pub(crate) const NODE_LYRICS_EVENT: u64 = 2011 | (NODE_TRACK << 16);
-pub(crate) const NODE_TIME_SIG_EVENT: u64 = 2015 | (NODE_TRACK << 16);
-pub(crate) const NODE_KEY_SIG_EVENT: u64 = 2016 | (NODE_TRACK << 16);
-pub(crate) const NODE_MARKER_EVENT: u64 = 2017 | (NODE_TRACK << 16);
+pub const NODE_NOTE_EVENT: u64 = 2001 | (NODE_TRACK << 16);
+pub const NODE_PROGRAM_CHANGE_EVENT: u64 = 2002 | (NODE_TRACK << 16);
+pub const NODE_CONTROL_EVENT: u64 = 2003 | (NODE_TRACK << 16);
+pub const NODE_TEMPO_EVENT: u64 = 2008 | (NODE_TRACK << 16);
+pub const NODE_END_OF_TRACK_EVENT: u64 = 2009 | (NODE_TRACK << 16);
+pub const NODE_LYRICS_EVENT: u64 = 2011 | (NODE_TRACK << 16);
+pub const NODE_TIME_SIG_EVENT: u64 = 2015 | (NODE_TRACK << 16);
+pub const NODE_KEY_SIG_EVENT: u64 = 2016 | (NODE_TRACK << 16);
+pub const NODE_MARKER_EVENT: u64 = 2017 | (NODE_TRACK << 16);
 
-pub(crate) const NODE_ABS_TICK_POS: u64 = (1001u64) | ((1003u64) << 32);
+pub const NODE_ABS_TICK_POS: u64 = (1001u64) | ((1003u64) << 32);
 
-pub(crate) const NODE_NOTE_KEY_NUMBER: u64 = 2001 | (NODE_NOTE_EVENT << 16);
-pub(crate) const NODE_NOTE_VELOCITY: u64 = 2002 | (NODE_NOTE_EVENT << 16);
-pub(crate) const NODE_NOTE_GATE: u64 = 2003 | (NODE_NOTE_EVENT << 16);
+pub const NODE_NOTE_KEY_NUMBER: u64 = 2001 | (NODE_NOTE_EVENT << 16);
+pub const NODE_NOTE_VELOCITY: u64 = 2002 | (NODE_NOTE_EVENT << 16);
+pub const NODE_NOTE_GATE: u64 = 2003 | (NODE_NOTE_EVENT << 16);
 
-pub(crate) const NODE_TEMPO_VALUE: u64 = 2001 | (NODE_TEMPO_EVENT << 16);
-pub(crate) const NODE_TEMPO_BASE_GATE: u64 = 2002 | (NODE_TEMPO_EVENT << 16);
+pub const NODE_TEMPO_VALUE: u64 = 2001 | (NODE_TEMPO_EVENT << 16);
+pub const NODE_TEMPO_BASE_GATE: u64 = 2002 | (NODE_TEMPO_EVENT << 16);
 
-pub(crate) const NODE_TIME_SIG_NUMERATOR: u64 = 2001 | (NODE_TIME_SIG_EVENT << 16);
-pub(crate) const NODE_TIME_SIG_DENOMINATOR: u64 = 2002 | (NODE_TIME_SIG_EVENT << 16);
+pub const NODE_TIME_SIG_NUMERATOR: u64 = 2001 | (NODE_TIME_SIG_EVENT << 16);
+pub const NODE_TIME_SIG_DENOMINATOR: u64 = 2002 | (NODE_TIME_SIG_EVENT << 16);
 
-pub(crate) const NODE_KEY_SIG_INDEX: u64 = 2001 | (NODE_KEY_SIG_EVENT << 16);
+pub const NODE_KEY_SIG_INDEX: u64 = 2001 | (NODE_KEY_SIG_EVENT << 16);
 
-pub(crate) const NODE_CONTROL_TYPE: u64 = 2001 | (NODE_CONTROL_EVENT << 16);
-pub(crate) const NODE_CONTROL_VALUE: u64 = 2003 | (NODE_CONTROL_EVENT << 16);
+pub const NODE_CONTROL_TYPE: u64 = 2001 | (NODE_CONTROL_EVENT << 16);
+pub const NODE_CONTROL_VALUE: u64 = 2003 | (NODE_CONTROL_EVENT << 16);
 
-pub(crate) const NODE_LYRICS_LYRICS: u64 = 2001 | (NODE_LYRICS_EVENT << 16);
-pub(crate) const NODE_MARKER_NAME: u64 = 2001 | (NODE_MARKER_EVENT << 16);
+pub const NODE_LYRICS_LYRICS: u64 = 2001 | (NODE_LYRICS_EVENT << 16);
+pub const NODE_MARKER_NAME: u64 = 2001 | (NODE_MARKER_EVENT << 16);
 
 // Composite node 判断
 fn is_composite_node(node_type: u64) -> bool {
@@ -209,15 +209,16 @@ fn compute_node_type(type_id: u16, _layer: i32, parent_type: u64) -> u64 {
 // 辅助解析函数
 // ------------------------------------------------------------------
 
-pub(crate) fn parse_integer(data: &[u8]) -> i64 {
+pub fn parse_integer(data: &[u8]) -> i64 {
     let mut result: i64 = 0;
-    for (i, &b) in data.iter().enumerate() {
+    let n = data.len().min(8);
+    for (i, &b) in data[..n].iter().enumerate() {
         result |= (b as i64) << (i * 8);
     }
     result
 }
 
-pub(crate) fn parse_float(data: &[u8]) -> Option<f64> {
+pub fn parse_float(data: &[u8]) -> Option<f64> {
     if data.len() >= 10 && u16::from_le_bytes([data[0], data[1]]) == 0 {
         let len = u32::from_le_bytes([data[2], data[3], data[4], data[5]]);
         if len == 4 && data.len() >= 10 {
@@ -233,6 +234,6 @@ pub(crate) fn parse_float(data: &[u8]) -> Option<f64> {
     None
 }
 
-pub(crate) fn parse_gbk_string(data: &[u8]) -> String {
+pub fn parse_gbk_string(data: &[u8]) -> String {
     encoding_rs::GB18030.decode(data).0.into_owned()
 }

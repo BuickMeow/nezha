@@ -3,7 +3,7 @@ use std::path::Path;
 
 mod converter;
 mod model;
-mod parser;
+pub mod parser;
 
 // ------------------------------------------------------------------
 // 错误类型

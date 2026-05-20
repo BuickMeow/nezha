@@ -181,7 +181,11 @@ impl DmsDocument {
         for child in &node.children {
             match child.computed_type {
                 NODE_TEMPO_VALUE => bpm = parse_float(&child.data)?,
-                NODE_TEMPO_BASE_GATE => base_gate = parse_integer(&child.data) as u32,
+                NODE_TEMPO_BASE_GATE => {
+                    if let Some(v) = parse_float(&child.data) {
+                        base_gate = v as u32;
+                    }
+                }
                 _ => {}
             }
         }
