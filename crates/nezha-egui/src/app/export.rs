@@ -4,6 +4,7 @@ use nezha_encoder::{
     Container, EncoderError, ExportConfig, FfmpegEncoder, QualityPreset, VideoCodec,
 };
 use std::path::PathBuf;
+use std::sync::mpsc::TryRecvError;
 use std::time::{Duration, Instant};
 
 /// 导出统计信息，用于 UI 展示。
@@ -19,13 +20,23 @@ pub struct ExportStats {
 pub enum ExportState {
     Exporting {
         encoder: FfmpegEncoder,
-        current_frame: u64,
+        /// 已提交 GPU 渲染的帧序号
+        rendered_frame: u64,
+        /// 已写入 ffmpeg 的帧序号
+        written_frame: u64,
         total_frames: u64,
         started_at: Instant,
-        /// 用于平滑 FPS 计算的滑动窗口
         last_stat_time: Instant,
         frames_since_stat: u64,
         smoothed_fps: f64,
+    },
+    /// ffmpeg 正在后台收尾（不再渲染新帧）
+    Finalizing {
+        started_at: Instant,
+        total_frames: u64,
+        written_frame: u64,
+        smoothed_fps: f64,
+        finish_rx: std::sync::mpsc::Receiver<Result<(), EncoderError>>,
     },
     Completed {
         total_frames: u64,
@@ -39,7 +50,7 @@ impl ExportState {
     pub fn stats(&self) -> Option<ExportStats> {
         match self {
             ExportState::Exporting {
-                current_frame,
+                written_frame,
                 total_frames,
                 started_at,
                 smoothed_fps,
@@ -47,7 +58,22 @@ impl ExportState {
             } => {
                 let elapsed = started_at.elapsed();
                 Some(ExportStats {
-                    current_frame: *current_frame,
+                    current_frame: *written_frame,
+                    total_frames: *total_frames,
+                    elapsed,
+                    current_fps: *smoothed_fps,
+                })
+            }
+            ExportState::Finalizing {
+                total_frames,
+                written_frame,
+                started_at,
+                smoothed_fps,
+                ..
+            } => {
+                let elapsed = started_at.elapsed();
+                Some(ExportStats {
+                    current_frame: *written_frame,
                     total_frames: *total_frames,
                     elapsed,
                     current_fps: *smoothed_fps,
@@ -115,7 +141,8 @@ impl App {
                 let now = Instant::now();
                 self.export_state = Some(ExportState::Exporting {
                     encoder,
-                    current_frame: 0,
+                    rendered_frame: 0,
+                    written_frame: 0,
                     total_frames,
                     started_at: now,
                     last_stat_time: now,
@@ -140,88 +167,87 @@ impl App {
         }
     }
 
-    /// 自适应时间预算批处理渲染。
+    /// 自适应时间预算 + 流水线渲染。
     ///
-    /// 每轮 UI 在 MAX_BATCH_DURATION 内尽可能多地渲染帧，
-    /// 达到时间上限后主动 yield 给 UI 事件循环，
-    /// 兼顾渲染吞吐量与 UI 响应速度。
+    /// GPU 渲染和 CPU 读回通过 triple buffering 流水线并行：
+    ///   - render_frame_pipelined() 提交 GPU 工作后立即返回
+    ///   - try_read_staging() 非阻塞读取已完成的帧
+    ///   - 当 ring 满（3 帧在飞行中）时，必须 wait_read_staging() 释放槽位
     const MAX_BATCH_DURATION_MS: u64 = 20;
-
-    /// FPS 统计刷新间隔
     const STAT_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
 
     pub(super) fn export_step(&mut self) {
         match self.export_state.take() {
             Some(ExportState::Exporting {
                 mut encoder,
-                current_frame,
+                mut rendered_frame,
+                mut written_frame,
                 total_frames,
                 started_at,
                 mut last_stat_time,
                 mut frames_since_stat,
                 mut smoothed_fps,
             }) => {
-                if current_frame >= total_frames {
-                    let elapsed = started_at.elapsed();
-                    let avg_fps = if elapsed.as_secs_f64() > 0.0 {
-                        total_frames as f64 / elapsed.as_secs_f64()
-                    } else {
-                        0.0
-                    };
-                    match encoder.finish() {
-                        Ok(()) => {
-                            self.export_state = Some(ExportState::Completed {
-                                total_frames,
-                                elapsed,
-                                avg_fps,
-                            });
-                        }
-                        Err(e) => {
-                            self.export_state =
-                                Some(ExportState::Error(format!("编码器收尾失败: {}", e)));
-                        }
-                    }
-                    return;
-                }
-
                 let fps = self.project.render.fps as f64;
                 let batch_deadline =
                     Instant::now() + Duration::from_millis(Self::MAX_BATCH_DURATION_MS);
 
-                let mut frame = current_frame;
-
                 loop {
-                    if frame >= total_frames {
-                        break;
+                    // —— 阶段 1：尝试读回已完成的帧并写入 ffmpeg ——
+                    while let Some(data) = self.render_ctx.try_read_staging() {
+                        match encoder.write_frame(data) {
+                            Ok(()) => {
+                                written_frame += 1;
+                                frames_since_stat += 1;
+                            }
+                            Err(e) => {
+                                self.export_state =
+                                    Some(ExportState::Error(format!("写入视频帧失败: {}", e)));
+                                return;
+                            }
+                        }
                     }
 
-                    let time = frame as f64 / fps;
-                    let bytes = self.render_frame_combined(time as f32);
-                    if bytes.is_empty() {
-                        self.export_state =
-                            Some(ExportState::Error("GPU 帧读取失败或超时".to_string()));
+                    // —— 阶段 2：渲染新帧（如果有剩余帧且 ring 有空位） ——
+                    if rendered_frame < total_frames && self.render_ctx.staging_can_write() {
+                        let time = rendered_frame as f64 / fps;
+                        self.render_frame_pipelined(time as f32);
+                        rendered_frame += 1;
+                        continue; // 尝试继续渲染/读回
+                    }
+
+                    // —— 阶段 3：判断终止条件 ——
+                    let all_rendered = rendered_frame >= total_frames;
+                    let all_written = written_frame >= total_frames;
+
+                    if all_rendered && all_written {
+                        // 所有帧已提交且已写入，转入后台 Finalizing
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        std::thread::spawn(move || {
+                            let result = encoder.finish();
+                            let _ = tx.send(result);
+                        });
+                        self.export_state = Some(ExportState::Finalizing {
+                            started_at,
+                            total_frames,
+                            written_frame,
+                            smoothed_fps,
+                            finish_rx: rx,
+                        });
                         return;
                     }
 
-                    match encoder.write_frame(bytes) {
-                        Ok(()) => {
-                            frame += 1;
-                            frames_since_stat += 1;
-                        }
-                        Err(e) => {
-                            self.export_state =
-                                Some(ExportState::Error(format!("写入视频帧失败: {}", e)));
-                            return;
-                        }
+                    if all_rendered && self.render_ctx.staging_has_pending() {
+                        // 所有帧已提交，还有未读回的：yield 给 UI，GPU 正在完成
+                        break;
                     }
 
-                    // 定期刷新 FPS 统计（滑动平均）
+                    // —— 阶段 4：FPS 统计（每 500ms） ——
                     let now = Instant::now();
                     let since_stat = now.duration_since(last_stat_time);
                     if since_stat >= Self::STAT_UPDATE_INTERVAL {
                         let instant_fps =
                             frames_since_stat as f64 / since_stat.as_secs_f64().max(0.001);
-                        // 指数平滑：新值权重 0.4，旧值权重 0.6
                         if smoothed_fps == 0.0 {
                             smoothed_fps = instant_fps;
                         } else {
@@ -231,13 +257,18 @@ impl App {
                         frames_since_stat = 0;
                     }
 
-                    // 时间预算耗尽，yield 给 UI
+                    // —— 阶段 5：时间预算耗尽，yield 给 UI ——
                     if now >= batch_deadline {
                         break;
                     }
+
+                    // —— 阶段 6：无法继续推进 ——
+                    // ring 满且无就绪数据（GPU 还在处理最早提交的帧）
+                    // → yield 给 UI，让 GPU 有时间完成
+                    break;
                 }
 
-                // 最终更新一次 FPS（避免小批次永远不刷新统计）
+                // 批次结束前最后一次 FPS 更新
                 if frames_since_stat > 0 {
                     let since_stat = Instant::now().duration_since(last_stat_time);
                     if since_stat.as_secs_f64() > 0.0 {
@@ -249,20 +280,63 @@ impl App {
                             smoothed_fps = smoothed_fps * 0.6 + instant_fps * 0.4;
                         }
                     }
-                    last_stat_time = Instant::now();
-                    frames_since_stat = 0;
                 }
 
                 self.export_state = Some(ExportState::Exporting {
                     encoder,
-                    current_frame: frame,
+                    rendered_frame,
+                    written_frame,
                     total_frames,
                     started_at,
-                    last_stat_time,
-                    frames_since_stat,
+                    last_stat_time: Instant::now(),
+                    frames_since_stat: 0,
                     smoothed_fps,
                 });
             }
+
+            // —— Finalizing：等待后台 ffmpeg 收尾完成 ——
+            Some(ExportState::Finalizing {
+                started_at,
+                total_frames,
+                written_frame,
+                smoothed_fps,
+                finish_rx,
+            }) => {
+                match finish_rx.try_recv() {
+                    Ok(Ok(())) => {
+                        let elapsed = started_at.elapsed();
+                        let avg_fps = if elapsed.as_secs_f64() > 0.0 {
+                            total_frames as f64 / elapsed.as_secs_f64()
+                        } else {
+                            0.0
+                        };
+                        self.export_state = Some(ExportState::Completed {
+                            total_frames,
+                            elapsed,
+                            avg_fps,
+                        });
+                    }
+                    Ok(Err(e)) => {
+                        self.export_state =
+                            Some(ExportState::Error(format!("编码器收尾失败: {}", e)));
+                    }
+                    Err(TryRecvError::Empty) => {
+                        // 仍在处理中
+                        self.export_state = Some(ExportState::Finalizing {
+                            started_at,
+                            total_frames,
+                            written_frame,
+                            smoothed_fps,
+                            finish_rx,
+                        });
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        self.export_state =
+                            Some(ExportState::Error("编码器线程异常退出".to_string()));
+                    }
+                }
+            }
+
             other => {
                 self.export_state = other;
             }
@@ -293,62 +367,19 @@ impl App {
                 .show(ui.ctx(), |ui| match status {
                     ExportState::Exporting { .. } => {
                         if let Some(stats) = status.stats() {
-                            let progress =
-                                stats.current_frame as f32 / stats.total_frames.max(1) as f32;
-
-                            // 帧进度
-                            ui.label(format!(
-                                "帧: {} / {}",
-                                stats.current_frame, stats.total_frames
-                            ));
-
-                            // 时间进度
-                            let fps = self.project.render.fps as f64;
-                            let current_secs = stats.current_frame as f64 / fps.max(1.0);
-                            let total_secs = stats.total_frames as f64 / fps.max(1.0);
-                            ui.label(format!(
-                                "时间: {} / {}",
-                                format_duration(current_secs),
-                                format_duration(total_secs)
-                            ));
-
-                            ui.add(egui::ProgressBar::new(progress).show_percentage());
-
-                            ui.separator();
-
-                            // 实时渲染速度
-                            ui.label(format!("渲染速度: {:.0} fps", stats.current_fps));
-
-                            // 速度倍率
-                            let speed = if stats.elapsed.as_secs_f64() > 0.0 && fps > 0.0 {
-                                let rendered_duration = stats.current_frame as f64 / fps;
-                                rendered_duration / stats.elapsed.as_secs_f64()
-                            } else {
-                                0.0
-                            };
-                            ui.label(format!("速度: {:.1}x 原速", speed));
-
-                            // 已用时间 / 预估剩余
-                            let elapsed = stats.elapsed;
-                            if stats.current_frame > 0 && stats.current_fps > 0.0 {
-                                let remaining_frames = stats.total_frames - stats.current_frame;
-                                let remaining_secs = remaining_frames as f64 / stats.current_fps;
-                                ui.label(format!(
-                                    "已用: {} / 剩余: {}",
-                                    format_duration(elapsed.as_secs_f64()),
-                                    format_duration(remaining_secs)
-                                ));
-                            } else {
-                                ui.label(format!(
-                                    "已用: {}",
-                                    format_duration(elapsed.as_secs_f64())
-                                ));
-                            }
+                            Self::render_export_progress(ui, &stats, self.project.render.fps);
                         }
-
                         if ui.button("取消").clicked() {
                             dismiss = true;
                         }
+                    }
+                    ExportState::Finalizing { .. } => {
+                        if let Some(stats) = status.stats() {
+                            ui.label("⏳ 正在完成编码...");
+                            ui.separator();
+                            Self::render_export_progress(ui, &stats, self.project.render.fps);
+                        }
+                        ui.label("(ffmpeg 正在封装文件，请稍候)");
                     }
                     ExportState::Completed {
                         total_frames,
@@ -391,9 +422,53 @@ impl App {
             self.export_state = None;
         }
     }
+
+    fn render_export_progress(ui: &mut egui::Ui, stats: &ExportStats, fps: u32) {
+        let progress = stats.current_frame as f32 / stats.total_frames.max(1) as f32;
+        let fps_f = fps as f64;
+
+        ui.label(format!(
+            "帧: {} / {}",
+            stats.current_frame, stats.total_frames
+        ));
+
+        let current_secs = stats.current_frame as f64 / fps_f.max(1.0);
+        let total_secs = stats.total_frames as f64 / fps_f.max(1.0);
+        ui.label(format!(
+            "时间: {} / {}",
+            format_duration(current_secs),
+            format_duration(total_secs)
+        ));
+
+        ui.add(egui::ProgressBar::new(progress).show_percentage());
+
+        ui.separator();
+
+        ui.label(format!("渲染速度: {:.0} fps", stats.current_fps));
+
+        let speed = if stats.elapsed.as_secs_f64() > 0.0 && fps_f > 0.0 {
+            let rendered_duration = stats.current_frame as f64 / fps_f;
+            rendered_duration / stats.elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        ui.label(format!("速度: {:.1}x 原速", speed));
+
+        let elapsed = stats.elapsed;
+        if stats.current_frame > 0 && stats.current_fps > 0.0 {
+            let remaining_frames = stats.total_frames - stats.current_frame;
+            let remaining_secs = remaining_frames as f64 / stats.current_fps;
+            ui.label(format!(
+                "已用: {} / 剩余: {}",
+                format_duration(elapsed.as_secs_f64()),
+                format_duration(remaining_secs)
+            ));
+        } else {
+            ui.label(format!("已用: {}", format_duration(elapsed.as_secs_f64())));
+        }
+    }
 }
 
-/// 格式化秒数为 mm:ss.s 或 hh:mm:ss
 fn format_duration(secs: f64) -> String {
     if secs <= 0.0 {
         return "0:00.0".to_string();

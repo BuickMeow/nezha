@@ -124,19 +124,47 @@ impl App {
         }
     }
 
-    /// 渲染一帧并立即读回像素数据（用于导出）。
+    /// 渲染一帧并立即同步读回像素数据。
     ///
     /// 将所有图层渲染 + 纹理拷贝合并到单个 CommandEncoder，
-    /// 仅一次 GPU submit，消除原方案中每层一次 submit + 拷贝单独 submit 的开销。
+    /// 使用 triple buffering ring 的单槽快速路径。
     /// 返回 BGRA 像素数据。
     pub(super) fn render_frame_combined(&mut self, time: f32) -> Vec<u8> {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
-        let layers = self.collect_visible_layers(time);
-        let default_style = self.default_style();
 
         // 单次 begin_pass：所有图层 + copy 共用同一 encoder
         self.render_ctx.begin_pass();
+        self.render_all_layers(time, render_width, render_height);
+
+        // 使用 ring API：copy → submit+map → wait_read
+        let slot = self
+            .render_ctx
+            .copy_frame_to_staging_ring(render_width, render_height);
+        self.render_ctx.submit_and_map_staging(slot);
+        self.render_ctx.wait_read_staging()
+    }
+
+    /// 将当前帧渲染并推入 staging ring（不阻塞等待读回）。
+    ///
+    /// 用于流水线导出：调用后可通过 try_read_staging / wait_read_staging 获取数据。
+    pub(super) fn render_frame_pipelined(&mut self, time: f32) {
+        let render_width = self.project.render.width;
+        let render_height = self.project.render.height;
+
+        self.render_ctx.begin_pass();
+        self.render_all_layers(time, render_width, render_height);
+
+        let slot = self
+            .render_ctx
+            .copy_frame_to_staging_ring(render_width, render_height);
+        self.render_ctx.submit_and_map_staging(slot);
+    }
+
+    /// 渲染所有可见图层到当前 frame encoder（不创建/提交 encoder）。
+    fn render_all_layers(&mut self, time: f32, render_width: u32, render_height: u32) {
+        let layers = self.collect_visible_layers(time);
+        let default_style = self.default_style();
 
         let mut is_first = true;
         for clip in &layers {
@@ -195,13 +223,6 @@ impl App {
                 }
             }
         }
-
-        // 使用同一 encoder 追加纹理拷贝命令（无需单独 submit）
-        self.render_ctx
-            .copy_frame_to_staging(render_width, render_height);
-
-        // 一次 submit 提交所有渲染 + 拷贝，然后读回
-        self.render_ctx.submit_and_read_staging()
     }
 
     pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {
