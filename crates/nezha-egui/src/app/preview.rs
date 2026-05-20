@@ -2,6 +2,7 @@ use super::App;
 use crate::piano_view;
 use crate::transport::ClipKind;
 use eframe::egui;
+use nezha_compositor::Compositor;
 
 /// 图层渲染所需数据（复制自 TrackClip，避免持有 self 的引用）。
 #[derive(Clone)]
@@ -56,72 +57,8 @@ impl App {
     pub(super) fn render_frame_for_export(&mut self, time: f32) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
-        let layers = self.collect_visible_layers(time);
-        let default_style = self.default_style();
-
-        let mut is_first = true;
-        for clip in &layers {
-            let clear_background = is_first;
-            is_first = false;
-
-            self.render_ctx.begin_pass();
-
-            match clip.kind {
-                ClipKind::SolidColor => {
-                    let style = nezha_renderer::RenderStyle {
-                        background: [
-                            clip.color.r() as f64 / 255.0,
-                            clip.color.g() as f64 / 255.0,
-                            clip.color.b() as f64 / 255.0,
-                            1.0,
-                        ],
-                        ..default_style.clone()
-                    };
-                    self.render_ctx.render_background(
-                        render_width,
-                        render_height,
-                        &style,
-                        clear_background,
-                    );
-                }
-                ClipKind::Waterfall => {
-                    let Some(midi_idx) = clip.midi_idx else {
-                        self.render_ctx.end_pass();
-                        continue;
-                    };
-                    let Some(entry) = self.project.midi.entries.get(midi_idx) else {
-                        self.render_ctx.end_pass();
-                        continue;
-                    };
-
-                    let clip_time = (time - clip.clip_start).max(0.0) as f64;
-                    let keyboard_height_px = render_height as f32 * clip.keyboard_height_percent;
-                    let clip_style = nezha_renderer::RenderStyle {
-                        render_mode: clip.render_mode,
-                        border_width: clip.border_width,
-                        rounding: clip.rounding,
-                        track_index: 0,
-                        palette: default_style.palette,
-                        background: [0.0, 0.0, 0.0, 0.0],
-                        equal_key_width: clip.equal_key_width,
-                        keyboard_height: keyboard_height_px,
-                    };
-
-                    self.render_ctx.render_layer(
-                        render_width,
-                        render_height,
-                        clip_time,
-                        clip.speed,
-                        midi_idx,
-                        &entry.file,
-                        &clip_style,
-                        clear_background,
-                    );
-                }
-            }
-
-            self.render_ctx.end_pass();
-        }
+        self.render_all_layers(time, render_width, render_height);
+        self.render_ctx.end_pass();
     }
 
     /// 渲染一帧并立即同步读回像素数据。
@@ -167,34 +104,54 @@ impl App {
         let layers = self.collect_visible_layers(time);
         let default_style = self.default_style();
 
+        let mut compositor = Compositor::new();
+        let preview_view = self.render_ctx.preview_view().clone();
         let mut is_first = true;
+
         for clip in &layers {
-            let clear_background = is_first;
-            is_first = false;
+            let load_op = if is_first {
+                wgpu::LoadOp::Clear(wgpu::Color {
+                    r: clip.color.r() as f64 / 255.0,
+                    g: clip.color.g() as f64 / 255.0,
+                    b: clip.color.b() as f64 / 255.0,
+                    a: 1.0,
+                })
+            } else {
+                wgpu::LoadOp::Load
+            };
 
             match clip.kind {
                 ClipKind::SolidColor => {
-                    let style = nezha_renderer::RenderStyle {
-                        background: [
-                            clip.color.r() as f64 / 255.0,
-                            clip.color.g() as f64 / 255.0,
-                            clip.color.b() as f64 / 255.0,
-                            1.0,
-                        ],
-                        ..default_style.clone()
-                    };
-                    self.render_ctx.render_background(
+                    let color = [
+                        clip.color.r() as f64 / 255.0,
+                        clip.color.g() as f64 / 255.0,
+                        clip.color.b() as f64 / 255.0,
+                        1.0,
+                    ];
+                    let mut solid = nezha_compositor::SolidColorLayer::new(
+                        self.render_ctx.device(),
+                        self.render_ctx.queue(),
+                        self.render_ctx.target_format(),
+                        color,
+                    );
+                    let encoder = self.render_ctx.encoder_mut();
+                    compositor.render_layer(
+                        encoder,
+                        &mut solid,
+                        &preview_view,
                         render_width,
                         render_height,
-                        &style,
-                        clear_background,
+                        time as f64,
+                        load_op,
                     );
                 }
                 ClipKind::Waterfall => {
                     let Some(midi_idx) = clip.midi_idx else {
+                        is_first = false;
                         continue;
                     };
                     let Some(entry) = self.project.midi.entries.get(midi_idx) else {
+                        is_first = false;
                         continue;
                     };
 
@@ -211,7 +168,7 @@ impl App {
                         keyboard_height: keyboard_height_px,
                     };
 
-                    self.render_ctx.render_layer(
+                    self.render_ctx.render_waterfall(
                         render_width,
                         render_height,
                         clip_time,
@@ -219,10 +176,12 @@ impl App {
                         midi_idx,
                         &entry.file,
                         &clip_style,
-                        clear_background,
+                        &preview_view,
+                        load_op,
                     );
                 }
             }
+            is_first = false;
         }
     }
 

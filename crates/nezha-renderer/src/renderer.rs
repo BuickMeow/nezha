@@ -22,7 +22,6 @@ macro_rules! profile_scope {
     ($name:literal) => {};
 }
 
-
 #[derive(Default)]
 struct KeySeekIndex {
     block_prefix_max_end: Vec<f64>,
@@ -110,6 +109,7 @@ pub struct Renderer {
     cached_layout_width: u32,
     cached_layout_equal_key_width: bool,
     note_seek_indices: HashMap<usize, NoteSeekIndex>,
+    current_batch_counts: Vec<usize>,
 }
 
 /// CPU path keeps multi-buffer batching to avoid a single hard cap per frame.
@@ -162,6 +162,7 @@ impl Renderer {
             cached_layout_width: 0,
             cached_layout_equal_key_width: false,
             note_seek_indices: HashMap::new(),
+            current_batch_counts: Vec::new(),
         }
     }
 
@@ -173,22 +174,21 @@ impl Renderer {
         &self.queue
     }
 
-    /// Render one frame.
-    pub fn render(
+    /// Prepare rendering data (CPU computation + buffer uploads).
+    ///
+    /// Call this before [`Self::draw`].
+    pub fn prepare(
         &mut self,
-        encoder: &mut CommandEncoder,
-        target: &TextureView,
         width: u32,
         height: u32,
         time: f64,
         speed: f32,
         midi: Option<&dyn NoteSource>,
         render_state: &mut MidiRenderState,
-        _note_data_id: Option<usize>,
+        note_data_id: Option<usize>,
         style: &RenderStyle,
-        clear_background: bool,
     ) {
-        profile_scope!("render");
+        profile_scope!("prepare");
         let uniforms = Uniforms {
             time: time as f32,
             width: width as f32,
@@ -215,7 +215,7 @@ impl Renderer {
                 speed,
                 m,
                 render_state,
-                _note_data_id.and_then(|id| self.note_seek_indices.get(&id)),
+                note_data_id.and_then(|id| self.note_seek_indices.get(&id)),
                 style,
             ),
             None => {
@@ -244,15 +244,21 @@ impl Renderer {
             instances.chunks(MAX_INSTANCE_COUNT).collect()
         };
 
+        self.current_batch_counts.clear();
+        for batch in &batches {
+            self.current_batch_counts.push(batch.len());
+        }
+
         while self.instance_buffers.len() > batches.len() {
             self.instance_buffers.pop();
         }
         while self.instance_buffers.len() < batches.len() {
-            self.instance_buffers.push(Self::create_instance_buffer_slot(
-                &self.device,
-                instance_size,
-                MIN_INSTANCE_BUFFER_CAPACITY,
-            ));
+            self.instance_buffers
+                .push(Self::create_instance_buffer_slot(
+                    &self.device,
+                    instance_size,
+                    MIN_INSTANCE_BUFFER_CAPACITY,
+                ));
         }
         for (i, batch) in batches.iter().enumerate() {
             let required_instances = batch.len().max(1);
@@ -263,9 +269,81 @@ impl Renderer {
                     Self::next_instance_capacity(required_instances),
                 );
             }
-            self.queue
-                .write_buffer(&self.instance_buffers[i].buffer, 0, bytemuck::cast_slice(batch));
+            self.queue.write_buffer(
+                &self.instance_buffers[i].buffer,
+                0,
+                bytemuck::cast_slice(batch),
+            );
         }
+
+        instances.clear();
+        self.instance_scratch = instances;
+    }
+
+    /// Draw the prepared instances into the given target.
+    ///
+    /// Must be preceded by a call to [`Self::prepare`].
+    pub fn draw(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        load_op: wgpu::LoadOp<wgpu::Color>,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("waterfall_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: load_op,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+            timestamp_writes: None,
+        });
+
+        if !self.instance_buffers.is_empty() && !self.current_batch_counts.is_empty() {
+            pass.set_pipeline(&self.render.pipeline);
+            pass.set_bind_group(0, &self.render.bind_group, &[]);
+            for (i, &count) in self.current_batch_counts.iter().enumerate() {
+                pass.set_vertex_buffer(0, self.instance_buffers[i].buffer.slice(..));
+                pass.draw(0..6, 0..count as u32);
+            }
+        }
+    }
+
+    /// Render one frame (legacy API).
+    ///
+    /// Prefer using [`Self::prepare`] + [`Self::draw`] for compositor integration.
+    pub fn render(
+        &mut self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        width: u32,
+        height: u32,
+        time: f64,
+        speed: f32,
+        midi: Option<&dyn NoteSource>,
+        render_state: &mut MidiRenderState,
+        _note_data_id: Option<usize>,
+        style: &RenderStyle,
+        clear_background: bool,
+    ) {
+        profile_scope!("render");
+        self.prepare(
+            width,
+            height,
+            time,
+            speed,
+            midi,
+            render_state,
+            _note_data_id,
+            style,
+        );
 
         if let Some(qs) = self.timer.query_set.as_ref() {
             encoder.write_timestamp(qs, 0);
@@ -283,40 +361,7 @@ impl Renderer {
             LoadOp::Load
         };
 
-        {
-            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("render_pass"),
-                timestamp_writes: self.timer.query_set.as_ref().map(|qs| RenderPassTimestampWrites {
-                    query_set: qs,
-                    beginning_of_pass_write_index: Some(2),
-                    end_of_pass_write_index: Some(3),
-                }),
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: Operations {
-                        load: load_op,
-                        store: StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            if !batches.is_empty() {
-                pass.set_pipeline(&self.render.pipeline);
-                pass.set_bind_group(0, &self.render.bind_group, &[]);
-                for (i, batch) in batches.iter().enumerate() {
-                    pass.set_vertex_buffer(0, self.instance_buffers[i].buffer.slice(..));
-                    pass.draw(0..6, 0..batch.len() as u32);
-                }
-            }
-        }
-
-        instances.clear();
-        self.instance_scratch = instances;
+        self.draw(encoder, target, load_op);
         self.timer.resolve(encoder);
     }
 
@@ -609,8 +654,7 @@ impl Renderer {
                             }
 
                             let mut scan = (*scan_slot).min(notes.len());
-                            while scan < notes.len()
-                                && (notes[scan].end_tick as f64) <= scroll_tick
+                            while scan < notes.len() && (notes[scan].end_tick as f64) <= scroll_tick
                             {
                                 scan += 1;
                             }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/nezha-core", "crates/nezha-renderer", "crates/nezha-egui", "crates/nezha-archive", "crates/nezha-dms", "crates/nezha-encoder"]
+members = ["crates/nezha-core", "crates/nezha-compositor", "crates/nezha-renderer", "crates/nezha-egui", "crates/nezha-archive", "crates/nezha-dms", "crates/nezha-encoder"]
 resolver = "2"
 
 [workspace.dependencies]

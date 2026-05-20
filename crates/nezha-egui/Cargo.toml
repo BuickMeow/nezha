@@ -11,6 +11,7 @@ eframe = { workspace = true }
 egui = { workspace = true }
 wgpu = { workspace = true }
 nezha-core = { path = "../nezha-core" }
+nezha-compositor = { path = "../nezha-compositor" }
 nezha-renderer = { path = "../nezha-renderer" }
 nezha-archive = { path = "../nezha-archive" }
 nezha-dms = { path = "../nezha-dms" }

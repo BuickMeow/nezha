@@ -262,8 +262,50 @@ impl RenderContext {
         self.frame_encoder.finish(&self.wgpu_state.queue);
     }
 
-    /// 渲染单个图层（使用当前 frame encoder）
-    pub fn render_layer(
+    pub fn device(&self) -> &wgpu::Device {
+        &self.wgpu_state.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.wgpu_state.queue
+    }
+
+    pub fn target_format(&self) -> wgpu::TextureFormat {
+        self.wgpu_state.target_format
+    }
+
+    pub fn renderer(&self) -> &nezha_renderer::Renderer {
+        &self.renderer
+    }
+
+    pub fn renderer_mut(&mut self) -> &mut nezha_renderer::Renderer {
+        &mut self.renderer
+    }
+
+    pub fn preview_view(&self) -> &wgpu::TextureView {
+        self.preview.view()
+    }
+
+    pub fn encoder_mut(&mut self) -> &mut wgpu::CommandEncoder {
+        self.frame_encoder.encoder_mut()
+    }
+
+    pub fn ensure_midi_uploaded(
+        &mut self,
+        width: u32,
+        midi_idx: usize,
+        midi: &dyn nezha_renderer::NoteSource,
+        equal_key_width: bool,
+    ) {
+        self.midi_cache
+            .ensure_uploaded(&mut self.renderer, width, midi_idx, midi, equal_key_width);
+    }
+
+    pub fn midi_state_mut(&mut self, midi_idx: usize) -> &mut nezha_renderer::MidiRenderState {
+        self.midi_cache.state_mut(midi_idx)
+    }
+
+    pub fn render_waterfall(
         &mut self,
         width: u32,
         height: u32,
@@ -272,21 +314,12 @@ impl RenderContext {
         midi_idx: usize,
         midi: &dyn nezha_renderer::NoteSource,
         style: &nezha_renderer::RenderStyle,
-        clear_background: bool,
+        target: &wgpu::TextureView,
+        load_op: wgpu::LoadOp<wgpu::Color>,
     ) {
-        self.ensure_preview_size(width, height);
-        self.midi_cache.ensure_uploaded(
-            &mut self.renderer,
-            width,
-            midi_idx,
-            midi,
-            style.equal_key_width,
-        );
-        let encoder = self.frame_encoder.encoder_mut();
+        self.ensure_midi_uploaded(width, midi_idx, midi, style.equal_key_width);
         let state = self.midi_cache.state_mut(midi_idx);
-        self.renderer.render(
-            encoder,
-            self.preview.view(),
+        self.renderer.prepare(
             width,
             height,
             time,
@@ -295,33 +328,9 @@ impl RenderContext {
             state,
             Some(midi_idx),
             style,
-            clear_background,
         );
-    }
-
-    pub fn render_background(
-        &mut self,
-        width: u32,
-        height: u32,
-        style: &nezha_renderer::RenderStyle,
-        clear_background: bool,
-    ) {
-        self.ensure_preview_size(width, height);
-        let mut dummy_state = nezha_renderer::MidiRenderState::default();
         let encoder = self.frame_encoder.encoder_mut();
-        self.renderer.render(
-            encoder,
-            self.preview.view(),
-            width,
-            height,
-            0.0,
-            1.0,
-            None,
-            &mut dummy_state,
-            None,
-            style,
-            clear_background,
-        );
+        self.renderer.draw(encoder, target, load_op);
     }
 
     pub fn reset_midi_state(&mut self) {
