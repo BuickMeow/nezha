@@ -45,6 +45,9 @@ pub fn show(
     let available = ui.available_size();
     let response = ui.allocate_response(available, egui::Sense::click_and_drag());
     let rect = response.rect;
+    let track_area_height =
+        (rect.height() - metrics.ruler_height - metrics.controls_height - metrics.scrollbar_height)
+            .max(1.0);
     let painter = ui.painter_at(rect);
     let timeline_rect = rect;
     let layout = TimelineLayout::new(timeline_rect, &state.view, &metrics);
@@ -86,6 +89,12 @@ pub fn show(
 
     // ── 轨道 ──
     let y = draw_tracks(ui, &painter, &c, &layout, &metrics, state, &mut commands);
+
+    // 限制垂直滚动不超出底部
+    let total_track_height = (y - layout.ruler_rect.max.y).max(0.0);
+    state
+        .view
+        .clamp_scroll_y(track_area_height, total_track_height);
 
     // 底部填充
     if y < layout.content_bottom {

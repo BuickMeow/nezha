@@ -1,4 +1,4 @@
-use crate::transport::{ClipKind, TimelineState};
+use crate::transport::{ClipKind, TimelineState, Track, TrackClip, TrackKind};
 use nezha_core::MidiFile;
 
 /// 一个已加载的 MIDI 条目。
@@ -33,7 +33,12 @@ impl MidiStore {
             .map(|entry| &entry.file)
     }
 
-    pub fn insert(&mut self, path: String, midi: MidiFile, timeline_state: &mut TimelineState) -> usize {
+    pub fn insert(
+        &mut self,
+        path: String,
+        midi: MidiFile,
+        timeline_state: &mut TimelineState,
+    ) -> usize {
         if self.entries.len() >= Self::MAX_MIDI_FILES {
             self.entries.remove(0);
             self.adjust_highlight_after_removal(0);
@@ -71,7 +76,11 @@ impl MidiStore {
         };
     }
 
-    fn remap_clip_indices_after_removal(&mut self, removed_idx: usize, timeline_state: &mut TimelineState) {
+    fn remap_clip_indices_after_removal(
+        &mut self,
+        removed_idx: usize,
+        timeline_state: &mut TimelineState,
+    ) {
         for track in &mut timeline_state.data.tracks {
             for clip in &mut track.clips {
                 match clip.midi_idx {
@@ -84,12 +93,48 @@ impl MidiStore {
     }
 
     fn bind_unassigned_waterfalls(&mut self, midi_idx: usize, timeline_state: &mut TimelineState) {
+        // 获取 MIDI 文件的真实长度
+        let midi_duration = self
+            .entries
+            .get(midi_idx)
+            .map(|e| e.file.duration as f32)
+            .unwrap_or(5.0);
+
+        // 先尝试绑定已有的未分配 MIDI 的水瀑布 clip
         for track in &mut timeline_state.data.tracks {
             for clip in &mut track.clips {
                 if clip.kind == ClipKind::Waterfall && clip.midi_idx.is_none() {
                     clip.midi_idx = Some(midi_idx);
+                    clip.end = midi_duration;
+                    return;
                 }
             }
+        }
+
+        // 没有未绑定的 clip → 在首个视频轨道上新建一个
+        let id = timeline_state.next_clip_id;
+        timeline_state.next_clip_id += 1;
+        let mut clip = TrackClip::new_waterfall(id, Some(midi_idx));
+        clip.end = midi_duration;
+
+        if let Some(track) = timeline_state
+            .data
+            .tracks
+            .iter_mut()
+            .find(|t| t.kind == TrackKind::Video)
+        {
+            track.clips.push(clip);
+        } else if timeline_state.data.tracks.is_empty() {
+            let mut track = Track::new_video("视频 1");
+            track.clips.push(clip);
+            timeline_state.data.tracks.push(track);
+            timeline_state.data.next_track_id = 2;
+        } else {
+            let name = format!("视频 {}", timeline_state.data.next_track_id);
+            timeline_state.data.next_track_id += 1;
+            let mut track = Track::new_video(&name);
+            track.clips.push(clip);
+            timeline_state.data.tracks.push(track);
         }
     }
 }

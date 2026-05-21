@@ -109,6 +109,8 @@ pub struct Renderer {
     cached_layout_width: u32,
     cached_layout_equal_key_width: bool,
     current_batch_counts: Vec<usize>,
+    /// 当前帧的音符实例数（不含键盘琴键）。
+    current_note_count: usize,
     pub state: MidiRenderState,
     pub seek_index: Option<NoteSeekIndex>,
 }
@@ -163,6 +165,7 @@ impl Renderer {
             cached_layout_width: 0,
             cached_layout_equal_key_width: false,
             current_batch_counts: Vec::new(),
+            current_note_count: 0,
             state: MidiRenderState::default(),
             seek_index: None,
         }
@@ -206,7 +209,7 @@ impl Renderer {
         self.ensure_cached_key_layouts(width, style.equal_key_width);
         let layouts = &self.cached_layouts;
 
-        match midi {
+        self.current_note_count = match midi {
             Some(m) => Self::build_instances(
                 &mut instances,
                 layouts,
@@ -234,8 +237,9 @@ impl Renderer {
                     velocity: 0,
                     flags: 0,
                 });
+                0
             }
-        }
+        };
 
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let batches: Vec<&[NoteInstance]> = if instances.is_empty() {
@@ -396,11 +400,12 @@ impl Renderer {
         Some(false)
     }
 
-    /// Total number of note instances prepared for the current frame.
+    /// Total number of note instances prepared for the current frame（不含键盘琴键）。
     pub fn total_instances(&self) -> usize {
-        self.current_batch_counts.iter().sum()
+        self.current_note_count
     }
 
+    /// 返回音符实例数（不含键盘琴键）。
     fn build_instances(
         instances: &mut Vec<NoteInstance>,
         layouts: &[(f32, f32)],
@@ -411,7 +416,7 @@ impl Renderer {
         state: &mut MidiRenderState,
         seek_index: Option<&NoteSeekIndex>,
         style: &RenderStyle,
-    ) {
+    ) -> usize {
         let mut active_keys = [false; 128];
         let mut active_colors = [[0.0f32; 3]; 128];
 
@@ -456,6 +461,7 @@ impl Renderer {
             ),
         };
 
+        let note_count = instances.len();
         if style.keyboard_height > 0.0 {
             keyboard::append_keyboard_instances(
                 layouts,
@@ -466,6 +472,7 @@ impl Renderer {
                 instances,
             );
         }
+        note_count
     }
 
     fn build_instances_time(

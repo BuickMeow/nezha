@@ -10,8 +10,12 @@ impl App {
         match action {
             config_panel::ConfigAction::SelectMidi => self.pick_midi_file(),
             config_panel::ConfigAction::AddWaterfall => {
-                let duration = self.project.duration() as f32;
                 let midi_idx = self.project.midi.highlighted_idx;
+                // 如果有选中的 MIDI，使用其真实长度；否则使用时间线总长度
+                let duration = midi_idx
+                    .and_then(|idx| self.project.midi.entries.get(idx))
+                    .map(|e| e.file.duration as f32)
+                    .unwrap_or_else(|| self.project.duration() as f32);
                 self.project
                     .timeline_state
                     .push_waterfall_clip(midi_idx, duration);

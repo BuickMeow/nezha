@@ -43,6 +43,7 @@ struct LayerData {
     equal_key_width: bool,
     clip_start: f32,
     color: egui::Color32,
+    text_color: egui::Color32,
     keyboard_height_percent: f32,
     /// 计数器：字号
     font_size: u32,
@@ -68,6 +69,7 @@ impl App {
                         equal_key_width: clip.equal_key_width,
                         clip_start: clip.start,
                         color: clip.color,
+                        text_color: clip.text_color,
                         keyboard_height_percent: clip.keyboard_height_percent,
                         font_size: clip.font_size,
                         common: clip.common.clone(),
@@ -289,9 +291,9 @@ impl App {
             let text = format!("{:.2}s | Notes: {}", time, total_notes);
             let opacity = counter.common.opacity;
             let color_f = [
-                counter.color.r() as f32 / 255.0,
-                counter.color.g() as f32 / 255.0,
-                counter.color.b() as f32 / 255.0,
+                counter.text_color.r() as f32 / 255.0,
+                counter.text_color.g() as f32 / 255.0,
+                counter.text_color.b() as f32 / 255.0,
                 opacity,
             ];
 

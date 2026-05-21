@@ -56,6 +56,8 @@ pub struct TrackClip {
     pub start: f32,
     pub end: f32,
     pub color: egui::Color32,
+    /// 渲染图层时使用的文字颜色（仅 Counter 等文字图层生效）。
+    pub text_color: egui::Color32,
     pub speed: f32,
     pub border_width: f32,
     pub rounding: f32,
@@ -78,6 +80,7 @@ impl TrackClip {
             start: 0.0,
             end: 0.0,
             color: egui::Color32::from_rgb(80, 150, 220),
+            text_color: egui::Color32::WHITE,
             speed: 1.0,
             border_width: 0.1,
             rounding: 0.0,
@@ -98,6 +101,7 @@ impl TrackClip {
             start: 0.0,
             end: 0.0,
             color,
+            text_color: egui::Color32::WHITE,
             speed: 1.0,
             border_width: 0.0,
             rounding: 0.0,
@@ -117,7 +121,8 @@ impl TrackClip {
             kind: ClipKind::Counter,
             start: 0.0,
             end: 0.0,
-            color: egui::Color32::WHITE,
+            color: egui::Color32::from_rgb(0xBB, 0xB0, 0x94),
+            text_color: egui::Color32::WHITE,
             speed: 1.0,
             border_width: 0.0,
             rounding: 0.0,
@@ -180,12 +185,15 @@ pub struct ClipDragState {
     pub anchor_pointer_time: f32,
     pub anchor_start: f32,
     pub anchor_end: f32,
+    /// 本次拖拽中是否已新建过轨道（避免每帧重复创建）。
+    pub track_was_inserted: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct TimelineView {
     pub zoom: f32,
     pub scroll_offset: f32,
+    pub scroll_y: f32,
     pub track_height: f32,
     pub header_width: f32,
 }
@@ -195,6 +203,7 @@ impl Default for TimelineView {
         Self {
             zoom: 50.0,
             scroll_offset: 0.0,
+            scroll_y: 0.0,
             track_height: 36.0,
             header_width: 100.0,
         }
@@ -239,6 +248,11 @@ impl TimelineView {
     pub fn clamp_scroll(&mut self) {
         self.scroll_offset = self.scroll_offset.max(0.0);
     }
+
+    pub fn clamp_scroll_y(&mut self, track_area_height: f32, total_track_height: f32) {
+        let max_scroll = (total_track_height - track_area_height).max(0.0);
+        self.scroll_y = self.scroll_y.clamp(0.0, max_scroll);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -249,10 +263,7 @@ pub struct TimelineData {
 
 impl Default for TimelineData {
     fn default() -> Self {
-        let mut tracks = Vec::new();
-        let mut video_track = Track::new_video("视频 1");
-        video_track.clips.push(TrackClip::new_waterfall(1, None));
-        tracks.push(video_track);
+        let tracks = vec![Track::new_video("视频 1")];
         Self {
             tracks,
             next_track_id: 2,
@@ -285,7 +296,7 @@ impl Default for TimelineState {
             interaction: TimelineInteraction::default(),
             fps: 60,
             selected_clip_id: None,
-            next_clip_id: 2,
+            next_clip_id: 1,
         }
     }
 }
@@ -357,6 +368,21 @@ impl TimelineState {
             track.clips.retain(|clip| clip.id != id);
         }
         self.selected_clip_id = None;
+        self.recompute_next_clip_id();
+    }
+
+    /// 根据当前所有 clip 的 ID 重新计算下一个可用 ID。
+    /// 确保删除全部 clip 后新建的 clip 从 1 开始。
+    fn recompute_next_clip_id(&mut self) {
+        let max_id = self
+            .data
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .map(|c| c.id)
+            .max()
+            .unwrap_or(0);
+        self.next_clip_id = max_id + 1;
     }
 
     pub fn select_clip(&mut self, clip_id: usize) {
@@ -392,11 +418,15 @@ impl TimelineState {
     }
 
     pub fn move_clip_to_track(&mut self, clip_id: usize, target_track_index: usize) {
+        let mut src_track_idx = None;
         let mut clip_to_move = None;
-        for track in &mut self.data.tracks {
-            if let Some(pos) = track.clips.iter().position(|clip| clip.id == clip_id) {
-                clip_to_move = Some(track.clips.remove(pos));
-                break;
+        'outer: for (i, track) in self.data.tracks.iter_mut().enumerate() {
+            for (j, clip) in track.clips.iter().enumerate() {
+                if clip.id == clip_id {
+                    clip_to_move = Some(track.clips.remove(j));
+                    src_track_idx = Some(i);
+                    break 'outer;
+                }
             }
         }
 
@@ -404,7 +434,41 @@ impl TimelineState {
             return;
         };
 
-        let dest_index = if target_track_index < self.data.tracks.len() {
+        // 检查本次拖拽是否已经新建过轨道，避免每帧重复插入
+        let track_already_inserted = self
+            .interaction
+            .clip_drag
+            .map(|d| d.track_was_inserted)
+            .unwrap_or(false);
+
+        let dest_index = if target_track_index == 0 {
+            if src_track_idx == Some(0) && !track_already_inserted {
+                // 从第一个轨道拖到上方 → 插入新轨道在位置 0
+                let video_count = self
+                    .data
+                    .tracks
+                    .iter()
+                    .filter(|t| t.kind == TrackKind::Video)
+                    .count();
+                let name = format!("视频 {}", video_count + 1);
+                self.data.tracks.insert(0, Track::new_video(&name));
+                // 标记已插入，后续帧不再重复建轨道
+                if let Some(ref mut drag) = self.interaction.clip_drag {
+                    drag.track_was_inserted = true;
+                }
+                Some(0)
+            } else {
+                // 从其他轨道拖到轨道 0 → 移到已有轨道 0
+                if self.data.tracks[0].kind == TrackKind::Video {
+                    Some(0)
+                } else {
+                    self.data
+                        .tracks
+                        .iter()
+                        .position(|t| t.kind == TrackKind::Video)
+                }
+            }
+        } else if target_track_index < self.data.tracks.len() {
             if self.data.tracks[target_track_index].kind == TrackKind::Video {
                 Some(target_track_index)
             } else {
@@ -414,20 +478,27 @@ impl TimelineState {
                     .position(|t| t.kind == TrackKind::Video)
             }
         } else {
-            let name = format!("视频 {}", target_track_index + 1);
-            self.data.tracks.push(Track::new_video(&name));
-            Some(self.data.tracks.len() - 1)
+            // 超出范围 → 放回来源轨道（不做跨轨道移动）
+            src_track_idx
         };
 
         if let Some(idx) = dest_index {
             self.data.tracks[idx].clips.push(clip);
-        } else {
-            let mut track = Track::new_video("视频 1");
+        } else if src_track_idx.is_none() {
+            // 既无目标也无来源，兜底建新轨道
+            let name = format!(
+                "视频 {}",
+                self.data
+                    .tracks
+                    .iter()
+                    .filter(|t| t.kind == TrackKind::Video)
+                    .count()
+                    + 1
+            );
+            let mut track = Track::new_video(&name);
             track.clips.push(clip);
             self.data.tracks.push(track);
         }
-
-        self.data.tracks.retain(|track| !track.clips.is_empty());
     }
 
     fn frame_duration(&self) -> f32 {

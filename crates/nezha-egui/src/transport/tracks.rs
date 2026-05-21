@@ -28,7 +28,7 @@ pub fn draw_tracks(
         .iter()
         .any(|track| track.kind == TrackKind::Audio);
 
-    let mut y = layout.ruler_rect.max.y;
+    let mut y = layout.ruler_rect.max.y - state.view.scroll_y;
     let view = &state.view;
     let selected_id = state.selected_clip_id;
     let tracks = &state.data.tracks;
@@ -255,6 +255,7 @@ fn draw_track_row(
                         anchor_pointer_time: pointer_time,
                         anchor_start: clip_start,
                         anchor_end: clip_end,
+                        track_was_inserted: false,
                     };
                     active_clip_drag = Some(drag_state);
                     commands.push(TimelineCommand::SetClipDrag(Some(drag_state)));
@@ -298,6 +299,7 @@ fn draw_track_row(
                         anchor_pointer_time: pointer_time,
                         anchor_start: clip_start,
                         anchor_end: clip_end,
+                        track_was_inserted: false,
                     };
                     active_clip_drag = Some(drag_state);
                     commands.push(TimelineCommand::SetClipDrag(Some(drag_state)));
@@ -348,6 +350,7 @@ fn draw_track_row(
                             anchor_pointer_time: pointer_time,
                             anchor_start: clip_start,
                             anchor_end: clip_end,
+                            track_was_inserted: false,
                         };
                         active_clip_drag = Some(drag_state);
                         commands.push(TimelineCommand::SetClipDrag(Some(drag_state)));
@@ -370,10 +373,15 @@ fn draw_track_row(
                         commands.push(TimelineCommand::SelectClip(clip_id));
                         dragged_clip_id = Some(clip_id);
                         if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-                            if ptr.y < track_rect.min.y && track_index > 0 {
+                            if ptr.y < track_rect.min.y {
+                                let target = if track_index > 0 {
+                                    track_index - 1
+                                } else {
+                                    0 // 顶部轨道上方 → 指令让 model 插入新轨道
+                                };
                                 commands.push(TimelineCommand::MoveClipToTrack {
                                     clip_id,
-                                    target_track_index: track_index - 1,
+                                    target_track_index: target,
                                 });
                             } else if ptr.y > track_rect.max.y {
                                 commands.push(TimelineCommand::MoveClipToTrack {
@@ -410,6 +418,7 @@ fn draw_track_row(
                         anchor_pointer_time: pointer_time,
                         anchor_start: clip_start,
                         anchor_end: clip_end,
+                        track_was_inserted: false,
                     };
                     active_clip_drag = Some(drag_state);
                     commands.push(TimelineCommand::SetClipDrag(Some(drag_state)));
@@ -432,10 +441,11 @@ fn draw_track_row(
                     commands.push(TimelineCommand::SelectClip(clip_id));
                     dragged_clip_id = Some(clip_id);
                     if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-                        if ptr.y < track_rect.min.y && track_index > 0 {
+                        if ptr.y < track_rect.min.y {
+                            let target = if track_index > 0 { track_index - 1 } else { 0 };
                             commands.push(TimelineCommand::MoveClipToTrack {
                                 clip_id,
-                                target_track_index: track_index - 1,
+                                target_track_index: target,
                             });
                         } else if ptr.y > track_rect.max.y {
                             commands.push(TimelineCommand::MoveClipToTrack {
