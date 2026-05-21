@@ -22,10 +22,12 @@ pub struct LayerCommon {
     pub position_x: f32,
     /// 屏幕 Y 位置（像素）。
     pub position_y: f32,
-    /// 水平缩放（1.0 = 原始大小）。
+    /// 水平缩放（1.0 = 原始大小，负数 = 水平翻转）。
     pub scale_x: f32,
-    /// 垂直缩放（1.0 = 原始大小）。
+    /// 垂直缩放（1.0 = 原始大小，负数 = 垂直翻转）。
     pub scale_y: f32,
+    /// 是否锁定横纵比（调整任一项时同步修改另一项）。
+    pub scale_linked: bool,
     /// 合成方式。
     pub blend_mode: BlendMode,
     /// 不透明度（0.0 = 完全透明，1.0 = 完全不透明）。
@@ -39,6 +41,7 @@ impl Default for LayerCommon {
             position_y: 0.0,
             scale_x: 1.0,
             scale_y: 1.0,
+            scale_linked: false,
             blend_mode: BlendMode::Normal,
             opacity: 1.0,
         }

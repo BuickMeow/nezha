@@ -149,8 +149,19 @@ impl App {
         let preview_view = self.render_ctx.preview_view().clone();
         let mut is_first = true;
         let mut total_notes = 0usize;
-        // 收集 Counter 图层，在所有非 Counter 图层之后统一渲染
         let mut counter_clips: Vec<LayerData> = Vec::new();
+
+        // 辅助：从 LayerCommon 计算归一化 rect
+        let make_rect = |c: &LayerCommon, w: f32, h: f32| -> (f32, f32, f32, f32) {
+            (
+                c.position_x / w,
+                c.position_y / h,
+                c.scale_x.abs(),
+                c.scale_y.abs(),
+            )
+        };
+        let rw = render_width as f32;
+        let rh = render_height as f32;
 
         for clip in &layers {
             if clip.kind == ClipKind::Counter {
@@ -160,11 +171,12 @@ impl App {
 
             match clip.kind {
                 ClipKind::SolidColor => {
+                    let opacity = clip.common.opacity as f64;
                     let color = [
                         clip.color.r() as f64 / 255.0,
                         clip.color.g() as f64 / 255.0,
                         clip.color.b() as f64 / 255.0,
-                        1.0,
+                        opacity,
                     ];
                     let load_op = if is_first {
                         wgpu::LoadOp::Clear(wgpu::Color {
@@ -182,6 +194,7 @@ impl App {
                         self.render_ctx.target_format(),
                         color,
                     );
+                    let rect = make_rect(&clip.common, rw, rh);
                     let encoder = self.render_ctx.encoder_mut();
                     compositor.render_layer(
                         encoder,
@@ -192,7 +205,7 @@ impl App {
                         time as f64,
                         load_op,
                         clip.common.blend_mode,
-                        (0.0, 0.0, 1.0, 1.0),
+                        rect,
                     );
                     is_first = false;
                 }
@@ -206,13 +219,14 @@ impl App {
 
                     let clip_time = (time - clip.clip_start).max(0.0) as f64;
                     let keyboard_height_px = render_height as f32 * clip.keyboard_height_percent;
+                    let opacity = clip.common.opacity as f64;
                     let clip_style = nezha_renderer::RenderStyle {
                         render_mode: clip.render_mode,
                         border_width: clip.border_width,
                         rounding: clip.rounding,
                         track_index: 0,
                         palette: default_style.palette,
-                        background: [0.0, 0.0, 0.0, 0.0],
+                        background: [0.0, 0.0, 0.0, opacity],
                         equal_key_width: clip.equal_key_width,
                         keyboard_height: keyboard_height_px,
                     };
@@ -246,6 +260,7 @@ impl App {
                     total_notes += renderer.total_instances();
 
                     let blend_mode = clip.common.blend_mode;
+                    let rect = make_rect(&clip.common, rw, rh);
                     self.render_ctx
                         .with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
                             let mut wrapper = WaterfallLayer { renderer };
@@ -258,13 +273,12 @@ impl App {
                                 clip_time,
                                 load_op,
                                 blend_mode,
-                                (0.0, 0.0, 1.0, 1.0),
+                                rect,
                             );
                         });
                     is_first = false;
                 }
                 ClipKind::Counter => {
-                    // 已在上面收集，此处不可达
                     unreachable!();
                 }
             }
@@ -273,11 +287,12 @@ impl App {
         // 渲染所有 Counter 图层（在所有非 Counter 图层之后）
         for counter in &counter_clips {
             let text = format!("{:.2}s | Notes: {}", time, total_notes);
+            let opacity = counter.common.opacity;
             let color_f = [
                 counter.color.r() as f32 / 255.0,
                 counter.color.g() as f32 / 255.0,
                 counter.color.b() as f32 / 255.0,
-                1.0,
+                opacity,
             ];
 
             let mut text_layer = nezha_text::TextLayer::new(
@@ -291,6 +306,7 @@ impl App {
             text_layer.set_font_size(counter.font_size);
             text_layer.set_color(color_f);
 
+            let rect = make_rect(&counter.common, rw, rh);
             let encoder = self.render_ctx.encoder_mut();
             compositor.render_layer(
                 encoder,
@@ -301,7 +317,7 @@ impl App {
                 time as f64,
                 wgpu::LoadOp::Load,
                 counter.common.blend_mode,
-                (0.0, 0.0, 1.0, 1.0),
+                rect,
             );
         }
     }

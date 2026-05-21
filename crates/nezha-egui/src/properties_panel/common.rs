@@ -14,38 +14,74 @@ pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
         ui.add(
             egui::DragValue::new(&mut common.position_x)
                 .speed(1.0)
-                .range(0.0..=7680.0)
+                .range(-7680.0..=7680.0)
                 .suffix(" px"),
         );
         ui.label("Y:");
         ui.add(
             egui::DragValue::new(&mut common.position_y)
                 .speed(1.0)
-                .range(0.0..=4320.0)
+                .range(-4320.0..=4320.0)
                 .suffix(" px"),
         );
     });
 
     ui.add_space(4.0);
 
-    // ── 缩放 ──
+    // ── 缩放（带链接按钮）──
     ui.label("缩放");
     ui.horizontal(|ui| {
+        // 链接按钮
+        let link_text = if common.scale_linked { "🔗" } else { "🔓" };
+        if ui
+            .selectable_label(common.scale_linked, link_text)
+            .on_hover_text(if common.scale_linked {
+                "已锁定横纵比"
+            } else {
+                "未锁定横纵比"
+            })
+            .clicked()
+        {
+            common.scale_linked = !common.scale_linked;
+            if common.scale_linked {
+                // 锁定时以当前 scale_x 为准同步 scale_y
+                common.scale_y = common.scale_x;
+            }
+        }
+
         ui.label("W:");
-        ui.add(
+        let prev_x = common.scale_x;
+        let resp_x = ui.add(
             egui::DragValue::new(&mut common.scale_x)
                 .speed(0.01)
-                .range(0.01..=10.0)
+                .range(-10.0..=10.0)
                 .fixed_decimals(2),
         );
+        if resp_x.changed() && common.scale_linked {
+            let delta = common.scale_x / prev_x;
+            common.scale_y = (common.scale_y * delta * 100.0).round() / 100.0;
+        }
+
         ui.label("H:");
-        ui.add(
+        let prev_y = common.scale_y;
+        let resp_y = ui.add(
             egui::DragValue::new(&mut common.scale_y)
                 .speed(0.01)
-                .range(0.01..=10.0)
+                .range(-10.0..=10.0)
                 .fixed_decimals(2),
         );
+        if resp_y.changed() && common.scale_linked && !resp_x.changed() {
+            let delta = common.scale_y / prev_y;
+            common.scale_x = (common.scale_x * delta * 100.0).round() / 100.0;
+        }
     });
+    if common.scale_x < 0.0 || common.scale_y < 0.0 {
+        ui.label(
+            egui::RichText::new("💡 负缩放 = 翻转（部分渲染器可能尚未支持）")
+                .size(11.0)
+                .color(egui::Color32::from_rgb(255, 200, 100)),
+        );
+    }
 
     ui.add_space(6.0);
     ui.separator();

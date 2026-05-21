@@ -75,25 +75,35 @@ pub enum ConfigAction {
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> {
-    ui.heading("配置");
-    ui.separator();
+    let mut action = None;
 
-    match state.active_tab {
-        SidebarTab::Style => style::show(ui, state.midi_files, state.highlighted_midi_idx),
-        SidebarTab::Project => {
-            project::show(ui, state.render_width, state.render_height, state.fps);
-            None
-        }
-        SidebarTab::Export => export::show(
-            ui,
-            state.export_format,
-            state.encoder,
-            state.export_path,
-            state.midi_files,
-        ),
-        SidebarTab::Settings => {
-            settings::show(ui, state.theme_mode);
-            None
-        }
-    }
+    egui::ScrollArea::vertical()
+        .id_salt("config_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.heading("配置");
+            ui.separator();
+
+            let result = match state.active_tab {
+                SidebarTab::Style => style::show(ui, state.midi_files, state.highlighted_midi_idx),
+                SidebarTab::Project => {
+                    project::show(ui, state.render_width, state.render_height, state.fps);
+                    None
+                }
+                SidebarTab::Export => export::show(
+                    ui,
+                    state.export_format,
+                    state.encoder,
+                    state.export_path,
+                    state.midi_files,
+                ),
+                SidebarTab::Settings => {
+                    settings::show(ui, state.theme_mode);
+                    None
+                }
+            };
+            action = result;
+        });
+
+    action
 }
