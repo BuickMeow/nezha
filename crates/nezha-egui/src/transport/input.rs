@@ -18,13 +18,26 @@ pub fn handle_input(
         return;
     }
 
+    let mouse_pos = ui.input(|i| i.pointer.hover_pos());
     let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
     let scroll_x = ui.input(|i| i.smooth_scroll_delta.x);
     let zoom_delta = ui.input(|i| i.zoom_delta());
 
-    // 垂直滚动：上下移动轨道
     if scroll_y != 0.0 {
-        view.scroll_y = (view.scroll_y - scroll_y).max(0.0);
+        if let Some(pos) = mouse_pos {
+            if layout.scrollbar_rect.contains(pos) {
+                // 滚动条上滚动 → 缩放（以指针位置为中心）
+                view.zoom_around_pointer(&layout.timeline_rect, pos.x, 1.0 + scroll_y * 0.003);
+            } else if layout.ruler_rect.contains(pos) {
+                // 标尺上滚动 → 左右移动时间线
+                view.pan_by_pixels(scroll_y * 2.0);
+            } else {
+                // 轨道上滚动 → 上下滚动轨道
+                view.scroll_y = (view.scroll_y - scroll_y).max(0.0);
+            }
+        } else {
+            view.scroll_y = (view.scroll_y - scroll_y).max(0.0);
+        }
     }
 
     // 水平滚动：左右移动时间轴
@@ -34,8 +47,16 @@ pub fn handle_input(
 
     // 双指缩放 / Ctrl+滚轮缩放
     if zoom_delta != 1.0 {
-        if let Some(mouse_pos) = response.hover_pos() {
+        if let Some(mouse_pos) = mouse_pos {
             view.zoom_around_pointer(&layout.timeline_rect, mouse_pos.x, zoom_delta);
         }
+    }
+
+    // 按住中键自由拖拽背景移动
+    if ui.input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
+        let delta = ui.input(|i| i.pointer.delta());
+        view.scroll_offset -= delta.x / view.zoom;
+        view.scroll_y = (view.scroll_y - delta.y).max(0.0);
+        view.clamp_scroll();
     }
 }
