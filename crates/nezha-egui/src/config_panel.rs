@@ -1,3 +1,14 @@
+//! 配置面板入口。
+//!
+//! 根据激活的侧边栏标签页，委托给对应的子模块渲染 UI。
+//!
+//! 子模块位于 `config_panel/` 目录（Rust 2018+ 约定）。
+
+mod export;
+mod project;
+mod settings;
+mod style;
+
 use crate::app::ThemeMode;
 use crate::app::project_state::MidiEntry;
 use crate::sidebar::SidebarTab;
@@ -10,16 +21,13 @@ pub(crate) fn truncate_path(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_string();
     }
-    // Use the standard path separator to split
     let path = std::path::Path::new(s);
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("");
 
     if file_name.is_empty() {
-        // Fallback: simple end-truncation
         s.chars().take(max_chars - 1).collect::<String>() + "…"
     } else if parent.is_empty() {
-        // No parent directory, just truncate the filename
         let keep = max_chars.saturating_sub(1);
         if file_name.chars().count() <= keep {
             file_name.to_string()
@@ -27,10 +35,8 @@ pub(crate) fn truncate_path(s: &str, max_chars: usize) -> String {
             file_name.chars().take(keep - 1).collect::<String>() + "…"
         }
     } else {
-        // Reserve space for: "…/" + file_name
-        let suffix_len = file_name.chars().count() + 2; // "…/" + filename
+        let suffix_len = file_name.chars().count() + 2;
         if suffix_len >= max_chars {
-            // Not enough room, just truncate filename
             let keep = max_chars.saturating_sub(1);
             if file_name.chars().count() <= keep {
                 file_name.to_string()
@@ -69,204 +75,25 @@ pub enum ConfigAction {
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> {
-    let mut action: Option<ConfigAction> = None;
-
     ui.heading("配置");
     ui.separator();
 
     match state.active_tab {
-        SidebarTab::Style => {
-            ui.label("MIDI 文件");
-            ui.add_space(4.0);
-
-            if state.midi_files.is_empty() {
-                ui.label("暂无 MIDI 文件");
-            } else {
-                for (idx, entry) in state.midi_files.iter().enumerate() {
-                    let is_highlighted = state.highlighted_midi_idx == &Some(idx);
-                    let raw_name = std::path::Path::new(&entry.path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(&entry.path);
-                    let full_path = &entry.path;
-                    let display = truncate_path(raw_name, 22);
-                    let text = if is_highlighted {
-                        format!("▶ {}", display)
-                    } else {
-                        format!("  {}", display)
-                    };
-                    ui.horizontal(|ui| {
-                        let response = ui
-                            .add(
-                                egui::Label::new(text)
-                                    .truncate()
-                                    .selectable(false)
-                                    .sense(egui::Sense::click()),
-                            )
-                            .on_hover_text(full_path);
-                        if response.clicked() {
-                            *state.highlighted_midi_idx = Some(idx);
-                        }
-                        if ui.button("🗑").clicked() {
-                            action = Some(ConfigAction::RemoveMidi(idx));
-                        }
-                    });
-                }
-            }
-
-            ui.add_space(8.0);
-            if ui.button("➕ 选择 MIDI / 压缩包 / DMS").clicked() {
-                action = Some(ConfigAction::SelectMidi);
-            }
-
-            ui.add_space(12.0);
-            ui.separator();
-            ui.label("添加图层到时间轴");
-            ui.add_space(4.0);
-
-            if ui.button("🌊 默认瀑布流").clicked() {
-                action = Some(ConfigAction::AddWaterfall);
-            }
-            ui.add_space(4.0);
-            if ui.button("🎨 纯色图层").clicked() {
-                action = Some(ConfigAction::AddSolidColor);
-            }
-            ui.add_space(4.0);
-            if ui.button("📊 音符计数器").clicked() {
-                action = Some(ConfigAction::AddCounter);
-            }
-        }
+        SidebarTab::Style => style::show(ui, state.midi_files, state.highlighted_midi_idx),
         SidebarTab::Project => {
-            ui.label("渲染设置");
-
-            ui.horizontal(|ui| {
-                ui.label("分辨率:");
-                ui.add(
-                    egui::DragValue::new(state.render_width)
-                        .speed(1.0)
-                        .range(1..=7680),
-                );
-                ui.label("x");
-                ui.add(
-                    egui::DragValue::new(state.render_height)
-                        .speed(1.0)
-                        .range(1..=4320),
-                );
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("帧率:");
-                ui.add(egui::DragValue::new(state.fps).speed(1.0).range(1..=240));
-                ui.label("fps");
-            });
+            project::show(ui, state.render_width, state.render_height, state.fps);
+            None
         }
-        SidebarTab::Export => {
-            ui.label("导出设置");
-
-            ui.horizontal(|ui| {
-                ui.label("渲染格式:");
-                egui::ComboBox::from_id_salt("export_format")
-                    .selected_text(state.export_format.as_str())
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(state.export_format, "MP4".to_string(), "MP4");
-                        ui.selectable_value(state.export_format, "MOV".to_string(), "MOV");
-                        ui.selectable_value(state.export_format, "MKV".to_string(), "MKV");
-                        ui.selectable_value(state.export_format, "AVI".to_string(), "AVI");
-                    });
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("编码器:");
-                egui::ComboBox::from_id_salt("encoder")
-                    .selected_text(state.encoder.as_str())
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(state.encoder, "H.264".to_string(), "H.264");
-                        ui.selectable_value(
-                            state.encoder,
-                            "H.265 / HEVC".to_string(),
-                            "H.265 / HEVC",
-                        );
-                        ui.selectable_value(state.encoder, "ProRes".to_string(), "ProRes");
-                        ui.selectable_value(state.encoder, "VP9".to_string(), "VP9");
-                        ui.selectable_value(state.encoder, "AV1".to_string(), "AV1");
-                    });
-            });
-
-            ui.label("导出位置:");
-            ui.horizontal(|ui| {
-                if let Some(path) = state.export_path {
-                    let display = truncate_path(path, 28);
-                    ui.add(
-                        egui::Label::new(display)
-                            .truncate()
-                            .sense(egui::Sense::hover()),
-                    )
-                    .on_hover_text(path.as_str());
-                } else {
-                    ui.label("未选择");
-                }
-                if ui.button("浏览...").clicked() {
-                    // 自动填入 MIDI 文件名 + 正确后缀
-                    let default_name = state
-                        .midi_files
-                        .first()
-                        .and_then(|entry| {
-                            std::path::Path::new(&entry.path)
-                                .file_stem()
-                                .and_then(|n| n.to_str())
-                        })
-                        .unwrap_or("output");
-                    let ext = state.export_format.to_lowercase();
-                    let default_filename = format!("{}.{}", default_name, ext);
-
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_file_name(&default_filename)
-                        .save_file()
-                    {
-                        let mut path_str = path.to_string_lossy().to_string();
-                        // 如果没有后缀名，自动补上
-                        let expected_ext = format!(".{}", ext);
-                        if !path_str.to_lowercase().ends_with(&expected_ext) {
-                            path_str.push_str(&expected_ext);
-                        }
-                        *state.export_path = Some(path_str);
-                    }
-                }
-            });
-
-            ui.add_space(12.0);
-            if ui.button("开始导出").clicked() {
-                action = Some(ConfigAction::StartExport);
-            }
-        }
+        SidebarTab::Export => export::show(
+            ui,
+            state.export_format,
+            state.encoder,
+            state.export_path,
+            state.midi_files,
+        ),
         SidebarTab::Settings => {
-            ui.label("主题");
-            ui.horizontal(|ui| {
-                if ui
-                    .selectable_label(*state.theme_mode == ThemeMode::Light, "☀️ 浅色")
-                    .clicked()
-                {
-                    *state.theme_mode = ThemeMode::Light;
-                }
-                if ui
-                    .selectable_label(*state.theme_mode == ThemeMode::Dark, "🌙 深色")
-                    .clicked()
-                {
-                    *state.theme_mode = ThemeMode::Dark;
-                }
-                if ui
-                    .selectable_label(*state.theme_mode == ThemeMode::System, "💻 跟随系统")
-                    .clicked()
-                {
-                    *state.theme_mode = ThemeMode::System;
-                }
-            });
-
-            ui.separator();
-            ui.label("关于");
-            ui.label("Nezha MIDI Renderer v0.1.0");
+            settings::show(ui, state.theme_mode);
+            None
         }
     }
-
-    action
 }

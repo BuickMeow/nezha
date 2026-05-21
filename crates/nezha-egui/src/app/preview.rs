@@ -1,6 +1,6 @@
 use super::App;
 use crate::piano_view;
-use crate::transport::ClipKind;
+use crate::transport::{ClipKind, LayerCommon};
 use eframe::egui;
 use nezha_compositor::{Compositor, LayerRenderer};
 
@@ -46,10 +46,8 @@ struct LayerData {
     keyboard_height_percent: f32,
     /// 计数器：字号
     font_size: u32,
-    /// 计数器：X 位置（像素）
-    position_x: f32,
-    /// 计数器：Y 位置（像素）
-    position_y: f32,
+    /// 通用变换与合成属性
+    common: LayerCommon,
 }
 
 impl App {
@@ -72,8 +70,7 @@ impl App {
                         color: clip.color,
                         keyboard_height_percent: clip.keyboard_height_percent,
                         font_size: clip.font_size,
-                        position_x: clip.position_x,
-                        position_y: clip.position_y,
+                        common: clip.common.clone(),
                     });
                 }
             }
@@ -194,7 +191,7 @@ impl App {
                         render_height,
                         time as f64,
                         load_op,
-                        nezha_compositor::BlendMode::Normal,
+                        clip.common.blend_mode,
                         (0.0, 0.0, 1.0, 1.0),
                     );
                     is_first = false;
@@ -248,6 +245,7 @@ impl App {
                     );
                     total_notes += renderer.total_instances();
 
+                    let blend_mode = clip.common.blend_mode;
                     self.render_ctx
                         .with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
                             let mut wrapper = WaterfallLayer { renderer };
@@ -259,7 +257,7 @@ impl App {
                                 render_height,
                                 clip_time,
                                 load_op,
-                                nezha_compositor::BlendMode::Normal,
+                                blend_mode,
                                 (0.0, 0.0, 1.0, 1.0),
                             );
                         });
@@ -289,7 +287,7 @@ impl App {
                 self.render_ctx.target_format(),
             );
             text_layer.set_text(text);
-            text_layer.set_position([counter.position_x, counter.position_y]);
+            text_layer.set_position([counter.common.position_x, counter.common.position_y]);
             text_layer.set_font_size(counter.font_size);
             text_layer.set_color(color_f);
 
@@ -302,7 +300,7 @@ impl App {
                 render_height,
                 time as f64,
                 wgpu::LoadOp::Load,
-                nezha_compositor::BlendMode::Normal,
+                counter.common.blend_mode,
                 (0.0, 0.0, 1.0, 1.0),
             );
         }

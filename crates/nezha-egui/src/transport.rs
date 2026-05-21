@@ -16,8 +16,8 @@ mod timecode;
 mod tracks;
 
 pub use model::{
-    ClipDragMode, ClipDragState, ClipKind, ScrollbarDrag, TimelineInteraction, TimelineState,
-    TimelineView, Track, TrackClip, TrackKind,
+    BlendMode, ClipDragMode, ClipDragState, ClipKind, LayerCommon, ScrollbarDrag,
+    TimelineInteraction, TimelineState, TimelineView, Track, TrackClip, TrackKind,
 };
 pub use theme::ThemeColors;
 

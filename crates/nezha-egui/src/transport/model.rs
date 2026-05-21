@@ -1,4 +1,5 @@
 use eframe::egui;
+pub use nezha_compositor::BlendMode;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TrackKind {
@@ -12,6 +13,36 @@ pub enum ClipKind {
     SolidColor,
     /// 音符计数器图层：显示当前时间和可见音符数的浮动文本。
     Counter,
+}
+
+/// 所有图层共有的变换与合成属性。
+#[derive(Clone, Debug)]
+pub struct LayerCommon {
+    /// 屏幕 X 位置（像素）。
+    pub position_x: f32,
+    /// 屏幕 Y 位置（像素）。
+    pub position_y: f32,
+    /// 水平缩放（1.0 = 原始大小）。
+    pub scale_x: f32,
+    /// 垂直缩放（1.0 = 原始大小）。
+    pub scale_y: f32,
+    /// 合成方式。
+    pub blend_mode: BlendMode,
+    /// 不透明度（0.0 = 完全透明，1.0 = 完全不透明）。
+    pub opacity: f32,
+}
+
+impl Default for LayerCommon {
+    fn default() -> Self {
+        Self {
+            position_x: 0.0,
+            position_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            blend_mode: BlendMode::Normal,
+            opacity: 1.0,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -31,10 +62,8 @@ pub struct TrackClip {
     pub keyboard_height_percent: f32,
     /// 计数器/文本图层的字号（像素）。
     pub font_size: u32,
-    /// 计数器/文本图层的屏幕坐标 X（像素）。
-    pub position_x: f32,
-    /// 计数器/文本图层的屏幕坐标 Y（像素）。
-    pub position_y: f32,
+    /// 所有图层共有的变换与合成属性。
+    pub common: LayerCommon,
 }
 
 impl TrackClip {
@@ -54,8 +83,7 @@ impl TrackClip {
             midi_idx,
             keyboard_height_percent: 0.15,
             font_size: 24,
-            position_x: 20.0,
-            position_y: 20.0,
+            common: LayerCommon::default(),
         }
     }
 
@@ -75,8 +103,7 @@ impl TrackClip {
             midi_idx: None,
             keyboard_height_percent: 0.0,
             font_size: 24,
-            position_x: 20.0,
-            position_y: 20.0,
+            common: LayerCommon::default(),
         }
     }
 
@@ -96,8 +123,11 @@ impl TrackClip {
             midi_idx: None,
             keyboard_height_percent: 0.0,
             font_size: 24,
-            position_x: 20.0,
-            position_y: 20.0,
+            common: LayerCommon {
+                position_x: 20.0,
+                position_y: 20.0,
+                ..Default::default()
+            },
         }
     }
 }

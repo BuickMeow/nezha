@@ -1,13 +1,17 @@
 //! 属性面板入口。
 //!
 //! 根据选中 clip 的类型，委托给对应的子模块渲染属性 UI。
+//!
+//! 子模块位于 `properties_panel/` 目录（Rust 2018+ 约定）。
 
+mod common;
 mod counter;
 mod solid_color;
 mod waterfall;
 
 use crate::app::project_state::MidiEntry;
 use crate::transport::{ClipKind, TimelineState};
+use common::show_common;
 use eframe::egui;
 
 pub fn show(
@@ -69,7 +73,12 @@ pub fn show(
 
                 ui.separator();
 
-                // 按类型委托
+                // ── 通用属性（位置、缩放、合成方式、不透明度）──
+                show_common(ui, &mut clip.common);
+
+                ui.separator();
+
+                // ── 按类型委托特有属性 ──
                 match clip.kind {
                     ClipKind::Waterfall => {
                         waterfall::show(ui, clip, midi_files);
