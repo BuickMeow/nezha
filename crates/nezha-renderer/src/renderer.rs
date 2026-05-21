@@ -1,17 +1,17 @@
 use nezha_compositor::compute_scissor_rect;
-use rayon::prelude::*;
 use wgpu::*;
 
-use crate::constants::{
-    MAX_INSTANCE_COUNT, MAX_PARALLEL_KEY_GROUPS, MIN_INSTANCE_BUFFER_CAPACITY, MIN_SPEED,
-    PIXELS_PER_SEC_BASE, SEEK_INDEX_BLOCK_SIZE,
-};
+use crate::buffer::{self, InstanceBufferSlot};
+use crate::constants::MAX_INSTANCE_COUNT;
+use crate::constants::MIN_INSTANCE_BUFFER_CAPACITY;
 use crate::gpu_timer::GpuTimer;
+use crate::instances;
 use crate::keyboard;
 use crate::pipeline::RenderPipelineState;
+use crate::scan::NoteSeekIndex;
 use crate::source::NoteSource;
 use crate::state::MidiRenderState;
-use crate::style::{RenderMode, RenderStyle};
+use crate::style::RenderStyle;
 use crate::vertex::{NoteInstance, Uniforms, pack_props, pack_rgba};
 
 #[cfg(feature = "profiling")]
@@ -25,83 +25,6 @@ macro_rules! profile_scope {
     ($name:literal) => {};
 }
 
-#[derive(Default, Clone)]
-pub struct KeySeekIndex {
-    block_prefix_max_end: Vec<f64>,
-    block_prefix_max_end_tick: Vec<u32>,
-}
-
-impl KeySeekIndex {
-    fn build(notes: &[nezha_core::Note]) -> Self {
-        let mut block_prefix_max_end =
-            Vec::with_capacity(notes.len().div_ceil(SEEK_INDEX_BLOCK_SIZE));
-        let mut block_prefix_max_end_tick =
-            Vec::with_capacity(notes.len().div_ceil(SEEK_INDEX_BLOCK_SIZE));
-        let mut max_end = f64::NEG_INFINITY;
-        let mut max_end_tick = 0u32;
-
-        for block in notes.chunks(SEEK_INDEX_BLOCK_SIZE) {
-            for note in block {
-                max_end = max_end.max(note.end);
-                max_end_tick = max_end_tick.max(note.end_tick);
-            }
-            block_prefix_max_end.push(max_end);
-            block_prefix_max_end_tick.push(max_end_tick);
-        }
-
-        Self {
-            block_prefix_max_end,
-            block_prefix_max_end_tick,
-        }
-    }
-
-    fn scan_index_for_time(&self, notes: &[nezha_core::Note], time: f64) -> usize {
-        if notes.is_empty() {
-            return 0;
-        }
-        let completed_blocks = self
-            .block_prefix_max_end
-            .partition_point(|&prefix_max_end| prefix_max_end <= time);
-        let mut scan = completed_blocks
-            .saturating_mul(SEEK_INDEX_BLOCK_SIZE)
-            .min(notes.len());
-        let local_end = (scan + SEEK_INDEX_BLOCK_SIZE).min(notes.len());
-        while scan < local_end && notes[scan].end <= time {
-            scan += 1;
-        }
-        scan
-    }
-
-    fn scan_index_for_tick(&self, notes: &[nezha_core::Note], scroll_tick: f64) -> usize {
-        if notes.is_empty() {
-            return 0;
-        }
-        let completed_blocks = self
-            .block_prefix_max_end_tick
-            .partition_point(|&prefix_max_end_tick| (prefix_max_end_tick as f64) <= scroll_tick);
-        let mut scan = completed_blocks
-            .saturating_mul(SEEK_INDEX_BLOCK_SIZE)
-            .min(notes.len());
-        let local_end = (scan + SEEK_INDEX_BLOCK_SIZE).min(notes.len());
-        while scan < local_end && (notes[scan].end_tick as f64) <= scroll_tick {
-            scan += 1;
-        }
-        scan
-    }
-}
-
-#[derive(Clone)]
-pub struct NoteSeekIndex {
-    pub per_key: [KeySeekIndex; 128],
-}
-
-impl NoteSeekIndex {
-    pub fn build(source: &dyn NoteSource) -> Self {
-        Self {
-            per_key: std::array::from_fn(|key| KeySeekIndex::build(source.key_notes(key as u8))),
-        }
-    }
-}
 pub struct Renderer {
     device: Device,
     queue: Queue,
@@ -113,31 +36,9 @@ pub struct Renderer {
     cached_layout_width: u32,
     cached_layout_equal_key_width: bool,
     current_batch_counts: Vec<usize>,
-    /// 当前帧的音符实例数（不含键盘琴键）。
     current_note_count: usize,
     pub state: MidiRenderState,
     pub seek_index: Option<NoteSeekIndex>,
-}
-
-struct InstanceBufferSlot {
-    buffer: Buffer,
-    capacity_instances: usize,
-}
-
-struct KeyChunkBuildResult {
-    instances: Vec<NoteInstance>,
-    active_keys: [bool; 128],
-    active_colors: [[f32; 3]; 128],
-}
-
-impl KeyChunkBuildResult {
-    fn new() -> Self {
-        Self {
-            instances: Vec::new(),
-            active_keys: [false; 128],
-            active_colors: [[0.0; 3]; 128],
-        }
-    }
 }
 
 impl Renderer {
@@ -208,7 +109,7 @@ impl Renderer {
         let layouts = &self.cached_layouts;
 
         self.current_note_count = match midi {
-            Some(m) => Self::build_instances(
+            Some(m) => instances::build_instances(
                 &mut instances,
                 layouts,
                 height,
@@ -256,7 +157,7 @@ impl Renderer {
         }
         while self.instance_buffers.len() < batches.len() {
             self.instance_buffers
-                .push(Self::create_instance_buffer_slot(
+                .push(buffer::create_instance_buffer_slot(
                     &self.device,
                     instance_size,
                     MIN_INSTANCE_BUFFER_CAPACITY,
@@ -265,10 +166,10 @@ impl Renderer {
         for (i, batch) in batches.iter().enumerate() {
             let required_instances = batch.len().max(1);
             if self.instance_buffers[i].capacity_instances < required_instances {
-                self.instance_buffers[i] = Self::create_instance_buffer_slot(
+                self.instance_buffers[i] = buffer::create_instance_buffer_slot(
                     &self.device,
                     instance_size,
-                    Self::next_instance_capacity(required_instances),
+                    buffer::next_instance_capacity(required_instances),
                 );
             }
             self.queue.write_buffer(
@@ -292,7 +193,6 @@ impl Renderer {
         width: u32,
         height: u32,
         load_op: wgpu::LoadOp<wgpu::Color>,
-        // _blend_mode: not used — Renderer has a single pipeline with ALPHA_BLENDING
         rect: (f32, f32, f32, f32),
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -400,480 +300,6 @@ impl Renderer {
         self.current_note_count
     }
 
-    /// 返回音符实例数（不含键盘琴键）。
-    fn build_instances(
-        instances: &mut Vec<NoteInstance>,
-        layouts: &[(f32, f32)],
-        height: u32,
-        time: f64,
-        speed: f32,
-        midi: &dyn NoteSource,
-        state: &mut MidiRenderState,
-        seek_index: Option<&NoteSeekIndex>,
-        style: &RenderStyle,
-    ) -> usize {
-        let mut active_keys = [false; 128];
-        let mut active_colors = [[0.0f32; 3]; 128];
-
-        let scroll_tick = Self::scroll_tick_for_mode(midi, time, style);
-        Self::advance_scan_indices(
-            midi,
-            state,
-            time,
-            scroll_tick,
-            style.render_mode,
-            seek_index,
-        );
-        let scan_indices = state.scan_indices;
-        let render_keys = Self::build_render_key_order(style.equal_key_width);
-
-        match style.render_mode {
-            RenderMode::TimeBased => Self::build_instances_time(
-                instances,
-                layouts,
-                &render_keys,
-                &scan_indices,
-                &mut active_keys,
-                &mut active_colors,
-                height,
-                time,
-                speed,
-                midi,
-                style,
-            ),
-            RenderMode::TickBased => Self::build_instances_tick(
-                instances,
-                layouts,
-                &render_keys,
-                &scan_indices,
-                &mut active_keys,
-                &mut active_colors,
-                height,
-                time,
-                speed,
-                midi,
-                style,
-            ),
-        };
-
-        let note_count = instances.len();
-        if style.keyboard_height > 0.0 {
-            keyboard::append_keyboard_instances(
-                layouts,
-                height,
-                style.keyboard_height,
-                &active_keys,
-                &active_colors,
-                instances,
-            );
-        }
-        note_count
-    }
-
-    fn build_instances_time(
-        instances: &mut Vec<NoteInstance>,
-        layouts: &[(f32, f32)],
-        render_keys: &[u8; 128],
-        scan_indices: &[usize; 128],
-        active_keys: &mut [bool; 128],
-        active_colors: &mut [[f32; 3]; 128],
-        height: u32,
-        time: f64,
-        speed: f32,
-        midi: &dyn NoteSource,
-        style: &RenderStyle,
-    ) {
-        let kh = (style.keyboard_height as f64).max(0.0);
-        let effective_h = (height as f64 - kh).max(1.0);
-        let pps = PIXELS_PER_SEC_BASE * speed.max(MIN_SPEED) as f64;
-        let screen_top = effective_h + time * pps;
-        let time_top = time + effective_h / pps;
-        let time_bottom = time;
-        let key_groups = Self::build_parallel_key_groups(render_keys, scan_indices, midi);
-        let chunk_results = key_groups
-            .into_par_iter()
-            .map(|range| {
-                let mut result = KeyChunkBuildResult::new();
-                for &key in &render_keys[range] {
-                    Self::append_key_instances_time(
-                        &mut result,
-                        key,
-                        layouts,
-                        scan_indices[key as usize],
-                        time,
-                        time_top,
-                        time_bottom,
-                        screen_top,
-                        pps,
-                        midi,
-                        style,
-                    );
-                }
-                result
-            })
-            .collect::<Vec<_>>();
-
-        for chunk in chunk_results {
-            for key in 0..128usize {
-                if chunk.active_keys[key] {
-                    active_keys[key] = true;
-                    active_colors[key] = chunk.active_colors[key];
-                }
-            }
-            instances.extend(chunk.instances);
-        }
-    }
-
-    fn build_instances_tick(
-        instances: &mut Vec<NoteInstance>,
-        layouts: &[(f32, f32)],
-        render_keys: &[u8; 128],
-        scan_indices: &[usize; 128],
-        active_keys: &mut [bool; 128],
-        active_colors: &mut [[f32; 3]; 128],
-        height: u32,
-        time: f64,
-        speed: f32,
-        midi: &dyn NoteSource,
-        style: &RenderStyle,
-    ) {
-        let kh = (style.keyboard_height as f64).max(0.0);
-        let effective_h = (height as f64 - kh).max(1.0);
-        let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
-        let ppt = 100.0 / ticks_per_beat * speed.max(MIN_SPEED) as f64;
-        let scroll_tick = midi
-            .tick_at_time(time)
-            .unwrap_or(time * ticks_per_beat * 2.0);
-        let visible_ticks = effective_h / ppt;
-        let tick_at_top = scroll_tick + visible_ticks;
-        let screen_bottom = effective_h + scroll_tick * ppt;
-
-        let key_groups = Self::build_parallel_key_groups(render_keys, scan_indices, midi);
-        let chunk_results = key_groups
-            .into_par_iter()
-            .map(|range| {
-                let mut result = KeyChunkBuildResult::new();
-                for &key in &render_keys[range] {
-                    Self::append_key_instances_tick(
-                        &mut result,
-                        key,
-                        layouts,
-                        scan_indices[key as usize],
-                        time,
-                        tick_at_top,
-                        scroll_tick,
-                        screen_bottom,
-                        ppt,
-                        midi,
-                        style,
-                    );
-                }
-                result
-            })
-            .collect::<Vec<_>>();
-
-        for chunk in chunk_results {
-            for key in 0..128usize {
-                if chunk.active_keys[key] {
-                    active_keys[key] = true;
-                    active_colors[key] = chunk.active_colors[key];
-                }
-            }
-            instances.extend(chunk.instances);
-        }
-    }
-
-    fn advance_scan_indices(
-        midi: &dyn NoteSource,
-        state: &mut MidiRenderState,
-        time: f64,
-        scroll_tick: f64,
-        mode: RenderMode,
-        seek_index: Option<&NoteSeekIndex>,
-    ) {
-        let (threshold, last_field, scan_with_seek, scan_linear): (
-            f64,
-            &mut f64,
-            fn(&KeySeekIndex, &[nezha_core::Note], f64) -> usize,
-            fn(&nezha_core::Note) -> f64,
-        ) = match mode {
-            RenderMode::TimeBased => (
-                time,
-                &mut state.last_time,
-                KeySeekIndex::scan_index_for_time,
-                |n| n.end,
-            ),
-            RenderMode::TickBased => (
-                scroll_tick,
-                &mut state.last_scroll_tick,
-                KeySeekIndex::scan_index_for_tick,
-                |n| n.end_tick as f64,
-            ),
-        };
-
-        let rewound = threshold < *last_field;
-        *last_field = threshold;
-
-        if let Some(seek_index) = seek_index {
-            state
-                .scan_indices
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(key, scan_slot)| {
-                    let notes = midi.key_notes(key as u8);
-                    *scan_slot = scan_with_seek(&seek_index.per_key[key], notes, threshold);
-                });
-        } else {
-            if rewound {
-                state.scan_indices = [0; 128];
-            }
-            state
-                .scan_indices
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(key, scan_slot)| {
-                    let notes = midi.key_notes(key as u8);
-                    if notes.is_empty() {
-                        *scan_slot = 0;
-                        return;
-                    }
-
-                    let mut scan = (*scan_slot).min(notes.len());
-                    while scan < notes.len() && scan_linear(&notes[scan]) <= threshold {
-                        scan += 1;
-                    }
-                    *scan_slot = scan;
-                });
-        }
-    }
-
-    fn scroll_tick_for_mode(midi: &dyn NoteSource, time: f64, style: &RenderStyle) -> f64 {
-        match style.render_mode {
-            RenderMode::TimeBased => -1.0,
-            RenderMode::TickBased => {
-                let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
-                midi.tick_at_time(time)
-                    .unwrap_or(time * ticks_per_beat * 2.0)
-            }
-        }
-    }
-
-    fn build_render_key_order(equal_key_width: bool) -> [u8; 128] {
-        let mut keys = [0u8; 128];
-        if equal_key_width {
-            for key in 0..128u8 {
-                keys[key as usize] = key;
-            }
-        } else {
-            let mut idx = 0usize;
-            for key in 0..128u8 {
-                if !keyboard::is_black_key(key) {
-                    keys[idx] = key;
-                    idx += 1;
-                }
-            }
-            for key in 0..128u8 {
-                if keyboard::is_black_key(key) {
-                    keys[idx] = key;
-                    idx += 1;
-                }
-            }
-        }
-        keys
-    }
-
-    fn build_parallel_key_groups(
-        render_keys: &[u8; 128],
-        scan_indices: &[usize; 128],
-        midi: &dyn NoteSource,
-    ) -> Vec<std::ops::Range<usize>> {
-        let mut total_weight = 0usize;
-        let mut active_key_count = 0usize;
-        let mut weights = [0usize; 128];
-        for (i, &key) in render_keys.iter().enumerate() {
-            let notes = midi.key_notes(key);
-            let remaining = notes.len().saturating_sub(scan_indices[key as usize]);
-            let weight = remaining.max(1);
-            weights[i] = weight;
-            total_weight += weight;
-            if !notes.is_empty() {
-                active_key_count += 1;
-            }
-        }
-
-        if active_key_count <= 1 {
-            return vec![0..128];
-        }
-
-        let thread_budget = rayon::current_num_threads().max(1);
-        let desired_groups = if total_weight < 8_192 {
-            thread_budget
-        } else {
-            thread_budget.saturating_mul(2)
-        }
-        .min(MAX_PARALLEL_KEY_GROUPS)
-        .min(active_key_count)
-        .max(1);
-
-        let target_weight = total_weight.div_ceil(desired_groups);
-        let mut ranges = Vec::with_capacity(desired_groups);
-        let mut start = 0usize;
-        let mut acc = 0usize;
-
-        for i in 0..128usize {
-            let remaining_keys = 128usize - i;
-            let remaining_groups = desired_groups.saturating_sub(ranges.len());
-            if remaining_groups == 0 {
-                break;
-            }
-
-            acc += weights[i];
-            let should_split = acc >= target_weight && remaining_keys > remaining_groups;
-            if should_split {
-                ranges.push(start..(i + 1));
-                start = i + 1;
-                acc = 0;
-            }
-        }
-
-        if start < 128 {
-            ranges.push(start..128);
-        }
-        if ranges.is_empty() {
-            ranges.push(0..128);
-        }
-        ranges
-    }
-
-    fn next_instance_capacity(required_instances: usize) -> usize {
-        required_instances
-            .max(MIN_INSTANCE_BUFFER_CAPACITY)
-            .next_power_of_two()
-            .min(MAX_INSTANCE_COUNT)
-    }
-
-    fn create_instance_buffer_slot(
-        device: &Device,
-        instance_size: u64,
-        capacity_instances: usize,
-    ) -> InstanceBufferSlot {
-        InstanceBufferSlot {
-            buffer: device.create_buffer(&BufferDescriptor {
-                label: Some("instance_buffer"),
-                size: capacity_instances as u64 * instance_size,
-                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            capacity_instances,
-        }
-    }
-
-    fn append_key_instances_time(
-        result: &mut KeyChunkBuildResult,
-        key: u8,
-        layouts: &[(f32, f32)],
-        scan: usize,
-        time: f64,
-        time_top: f64,
-        time_bottom: f64,
-        screen_top: f64,
-        pps: f64,
-        midi: &dyn NoteSource,
-        style: &RenderStyle,
-    ) {
-        let notes = midi.key_notes(key);
-        if notes.is_empty() {
-            return;
-        }
-        let (x, w) = layouts[key as usize];
-
-        for note in &notes[scan.min(notes.len())..] {
-            if note.start > time_top {
-                break;
-            }
-            if note.end <= time_bottom {
-                continue;
-            }
-
-            let trk = note.track as usize % 128;
-            let [r, g, b] = style.palette[trk];
-            if note.start <= time && time < note.end {
-                result.active_keys[key as usize] = true;
-                result.active_colors[key as usize] = [r, g, b];
-            }
-
-            let note_bottom = (screen_top - note.start * pps) as f32;
-            let note_top = (screen_top - note.end * pps) as f32;
-            let h = (note_bottom - note_top).max(1.0);
-            result.instances.push(NoteInstance {
-                x,
-                y: note_top,
-                w,
-                h,
-                rgba_packed: pack_rgba(r, g, b, 1.0),
-                props_packed: pack_props(
-                    style.rounding * f32::min(w, h),
-                    style.border_width * w / 2.0,
-                ),
-                velocity: note.velocity as u32,
-                flags: 0,
-            });
-        }
-    }
-
-    fn append_key_instances_tick(
-        result: &mut KeyChunkBuildResult,
-        key: u8,
-        layouts: &[(f32, f32)],
-        scan: usize,
-        time: f64,
-        tick_at_top: f64,
-        scroll_tick: f64,
-        screen_bottom: f64,
-        ppt: f64,
-        midi: &dyn NoteSource,
-        style: &RenderStyle,
-    ) {
-        let notes = midi.key_notes(key);
-        if notes.is_empty() {
-            return;
-        }
-        let (x, w) = layouts[key as usize];
-
-        for note in &notes[scan.min(notes.len())..] {
-            if (note.start_tick as f64) > tick_at_top + 1.0 {
-                break;
-            }
-            if (note.end_tick as f64) <= scroll_tick {
-                continue;
-            }
-
-            let trk = note.track as usize % 128;
-            let [r, g, b] = style.palette[trk];
-            if note.start <= time && time < note.end {
-                result.active_keys[key as usize] = true;
-                result.active_colors[key as usize] = [r, g, b];
-            }
-
-            let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
-            let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
-            let h = (note_bottom - note_top).max(1.0);
-            result.instances.push(NoteInstance {
-                x,
-                y: note_top,
-                w,
-                h,
-                rgba_packed: pack_rgba(r, g, b, 1.0),
-                props_packed: pack_props(
-                    style.rounding * f32::min(w, h),
-                    style.border_width * w / 2.0,
-                ),
-                velocity: note.velocity as u32,
-                flags: 0,
-            });
-        }
-    }
-
     fn ensure_cached_key_layouts(&mut self, width: u32, equal_key_width: bool) {
         if self.cached_layouts.is_empty()
             || self.cached_layout_width != width
@@ -883,104 +309,5 @@ impl Renderer {
             self.cached_layout_width = width;
             self.cached_layout_equal_key_width = equal_key_width;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_note(end: f64, end_tick: u32) -> nezha_core::Note {
-        nezha_core::Note {
-            key: 60,
-            start: 0.0,
-            end,
-            start_tick: 0,
-            end_tick,
-            velocity: 100,
-            channel: 0,
-            track: 0,
-        }
-    }
-
-    #[test]
-    fn test_key_seek_index_empty() {
-        let idx = KeySeekIndex::build(&[]);
-        assert_eq!(idx.scan_index_for_time(&[], 10.0), 0);
-        assert_eq!(idx.scan_index_for_tick(&[], 100.0), 0);
-    }
-
-    #[test]
-    fn test_key_seek_index_single_block() {
-        let notes: Vec<_> = (0..10)
-            .map(|i| make_note(i as f64 + 1.0, i * 100 + 100))
-            .collect();
-        let idx = KeySeekIndex::build(&notes);
-
-        // All notes end before time=5.5 → scan should advance past them
-        assert_eq!(idx.scan_index_for_time(&notes, 5.5), 5);
-        assert_eq!(idx.scan_index_for_time(&notes, 11.0), notes.len());
-
-        // Tick-based
-        assert_eq!(idx.scan_index_for_tick(&notes, 550.0), 5);
-        assert_eq!(idx.scan_index_for_tick(&notes, 1100.0), notes.len());
-    }
-
-    #[test]
-    fn test_key_seek_index_multi_block() {
-        // SEEK_INDEX_BLOCK_SIZE = 256, create 300 notes to span 2 blocks
-        let count = 300usize;
-        let notes: Vec<_> = (0..count)
-            .map(|i| make_note(i as f64 * 0.5 + 0.5, (i as u32) * 50 + 50))
-            .collect();
-        let idx = KeySeekIndex::build(&notes);
-
-        // Time=75 → first 150 notes end before this
-        assert_eq!(idx.scan_index_for_time(&notes, 75.0), 150);
-        // Time=150 → all 300 done
-        assert_eq!(idx.scan_index_for_time(&notes, 150.0), 300);
-
-        // Tick-based: tick=7500 → first 150 notes done
-        assert_eq!(idx.scan_index_for_tick(&notes, 7500.0), 150);
-    }
-
-    #[test]
-    fn test_build_parallel_key_groups_single_active() {
-        let mut scan_indices = [0usize; 128];
-        let mut render_keys = [0u8; 128];
-        for i in 0..128u8 {
-            render_keys[i as usize] = i;
-        }
-
-        // Mock NoteSource that returns non-empty only for key 60
-        struct SingleKeySource;
-        impl NoteSource for SingleKeySource {
-            fn key_notes(&self, key: u8) -> &[nezha_core::Note] {
-                if key == 60 {
-                    static NOTES: [nezha_core::Note; 1] = [nezha_core::Note {
-                        key: 60,
-                        start: 0.0,
-                        end: 10.0,
-                        start_tick: 0,
-                        end_tick: 480,
-                        velocity: 100,
-                        channel: 0,
-                        track: 0,
-                    }];
-                    &NOTES
-                } else {
-                    &[]
-                }
-            }
-            fn duration(&self) -> f64 {
-                10.0
-            }
-        }
-
-        let groups =
-            Renderer::build_parallel_key_groups(&render_keys, &scan_indices, &SingleKeySource);
-        // Single active key → entire range returned
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0], 0..128);
     }
 }
