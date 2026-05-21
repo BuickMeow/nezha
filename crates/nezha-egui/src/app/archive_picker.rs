@@ -29,7 +29,10 @@ pub(super) enum ArchivePickerState {
     Opening {
         path: String,
         rx: mpsc::Receiver<
-            Result<(nezha_archive::Archive, Vec<nezha_archive::ArchiveEntry>), String>,
+            Result<
+                (nezha_archive::Archive, Vec<nezha_archive::ArchiveEntry>),
+                nezha_archive::ArchiveError,
+            >,
         >,
     },
     Opened(ArchivePicker),

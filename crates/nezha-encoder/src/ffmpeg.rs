@@ -4,38 +4,14 @@ use std::process::{Command, Stdio};
 
 use crate::config::{ExportConfig, VideoCodec};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EncoderError {
-    Io(std::io::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("ffmpeg exited with code {0:?}")]
     FfmpegFailed(Option<i32>),
+    #[error("ffmpeg not found")]
     FfmpegNotFound,
-}
-
-impl std::fmt::Display for EncoderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EncoderError::Io(e) => write!(f, "IO error: {}", e),
-            EncoderError::FfmpegFailed(code) => {
-                write!(f, "ffmpeg exited with code {:?}", code)
-            }
-            EncoderError::FfmpegNotFound => write!(f, "ffmpeg not found"),
-        }
-    }
-}
-
-impl std::error::Error for EncoderError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            EncoderError::Io(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for EncoderError {
-    fn from(e: std::io::Error) -> Self {
-        EncoderError::Io(e)
-    }
 }
 
 #[derive(Debug)]

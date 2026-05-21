@@ -154,7 +154,7 @@ impl App {
                             let entries = archive.list_midi_files();
                             (archive, entries)
                         });
-                        let _ = tx.send(result.map_err(|e| e.to_string()));
+                        let _ = tx.send(result);
                     }
                 });
 

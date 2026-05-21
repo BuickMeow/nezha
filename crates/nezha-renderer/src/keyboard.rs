@@ -140,3 +140,78 @@ pub(crate) fn append_keyboard_instances(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_equal_key_layouts_count() {
+        let layouts = compute_key_layouts(1920, true);
+        assert_eq!(layouts.len(), 128);
+        // Each key must have positive width
+        for (i, &(x, w)) in layouts.iter().enumerate() {
+            assert!(w >= 1.0, "key {} width {}", i, w);
+            assert!(x >= 0.0, "key {} x {}", i, x);
+        }
+    }
+
+    #[test]
+    fn test_equal_key_layouts_sum() {
+        let layouts = compute_key_layouts(1920, true);
+        // Last key's right edge should be roughly equal to width
+        let last_x = layouts[127].0;
+        let last_w = layouts[127].1;
+        let right_edge = (last_x + last_w) as u32;
+        // Allow 1px rounding error
+        assert!(
+            right_edge == 1920 || right_edge == 1919 || right_edge == 1921,
+            "right_edge={}",
+            right_edge
+        );
+    }
+
+    #[test]
+    fn test_piano_key_layouts_count() {
+        let layouts = compute_key_layouts(1920, false);
+        assert_eq!(layouts.len(), 128);
+    }
+
+    #[test]
+    fn test_piano_key_layouts_white_count() {
+        let layouts = compute_key_layouts(1920, false);
+        // In a piano-style layout, white keys have larger widths than black keys
+        let white_keys: Vec<_> = layouts
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| !is_black_key(i as u8))
+            .collect();
+        let black_keys: Vec<_> = layouts
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| is_black_key(i as u8))
+            .collect();
+        assert_eq!(white_keys.len(), 75, "there should be 75 white keys");
+        assert_eq!(black_keys.len(), 53, "there should be 53 black keys");
+        // White keys should be wider than black keys
+        for &(_, (_, w_white)) in &white_keys {
+            for &(_, (_, w_black)) in &black_keys {
+                assert!(
+                    w_white > w_black,
+                    "white width {} should > black width {}",
+                    w_white,
+                    w_black
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_is_black_key_consistency() {
+        // Verify the is_black_key function returns expected counts
+        let black_count = (0..128u8).filter(|&k| is_black_key(k)).count();
+        assert_eq!(black_count, 53);
+        let white_count = (0..128u8).filter(|&k| !is_black_key(k)).count();
+        assert_eq!(white_count, 75);
+    }
+}
