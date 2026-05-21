@@ -8,7 +8,13 @@ pub fn handle_input(
     view: &mut TimelineView,
     layout: &TimelineLayout,
 ) {
-    if !response.hovered() {
+    // 用指针位置判断是否在时间线区域内（不依赖 response.hovered()，
+    // 因为 Clip 的 interact 区域会吞掉 hover 状态导致无法滚动）
+    let pointer_in_rect = response.rect.contains(
+        ui.input(|i| i.pointer.hover_pos())
+            .unwrap_or(egui::pos2(-1.0, -1.0)),
+    );
+    if !pointer_in_rect {
         return;
     }
 

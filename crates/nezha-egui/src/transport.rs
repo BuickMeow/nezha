@@ -55,22 +55,20 @@ pub fn show(
 
     // ── 输入处理 ──
     handle_input(ui, &response, &mut state.view, &layout);
-    let layout = TimelineLayout::new(timeline_rect, &state.view, &metrics);
 
-    // ── 标尺 ──
-    draw_ruler(
-        ui,
-        &painter,
-        &c,
-        &layout,
-        &metrics,
-        state,
-        &response,
-        *current_time,
-        duration,
-        fps,
-        &mut commands,
-    );
+    // 在绘制之前就限制垂直滚动范围，避免绘制时 y 偏移过大
+    let total_track_height = state
+        .data
+        .tracks
+        .iter()
+        .filter(|t| t.kind == TrackKind::Video)
+        .count() as f32
+        * state.view.track_height;
+    state
+        .view
+        .clamp_scroll_y(track_area_height, total_track_height);
+
+    let layout = TimelineLayout::new(timeline_rect, &state.view, &metrics);
 
     // ── 滚动条 ──
     draw_scrollbar(
@@ -103,17 +101,26 @@ pub fn show(
         &mut commands,
     );
 
-    // 限制垂直滚动不超出底部
-    let total_track_height = (y - layout.ruler_rect.max.y).max(0.0);
-    state
-        .view
-        .clamp_scroll_y(track_area_height, total_track_height);
+    // ── 标尺 ──（放在轨道之后绘制，覆盖可能滚动上来的轨道内容）
+    draw_ruler(
+        ui,
+        &painter,
+        &c,
+        &layout,
+        &metrics,
+        state,
+        &response,
+        *current_time,
+        duration,
+        fps,
+        &mut commands,
+    );
 
-    // 底部填充
+    // 底部填充（min 取 y 和标尺底部的大值，避免误覆盖标尺）
     if y < layout.content_bottom {
         painter.rect_filled(
             egui::Rect::from_min_max(
-                egui::pos2(timeline_rect.min.x, y),
+                egui::pos2(timeline_rect.min.x, y.max(layout.ruler_rect.max.y)),
                 egui::pos2(timeline_rect.max.x, layout.content_bottom),
             ),
             0.0,
