@@ -1,60 +1,12 @@
 use super::App;
+use super::preview_layer::{self, LayerData};
 use crate::piano_view;
 use crate::transport::{ClipKind, LayerCommon};
 use eframe::egui;
 use nezha_compositor::Compositor;
 use nezha_renderer::WaterfallLayer;
 
-/// 图层渲染所需数据（复制自 TrackClip，避免持有 self 的引用）。
-#[derive(Clone)]
-struct LayerData {
-    clip_id: usize,
-    kind: ClipKind,
-    midi_idx: Option<usize>,
-    speed: f32,
-    border_width: f32,
-    rounding: f32,
-    render_mode: nezha_renderer::RenderMode,
-    equal_key_width: bool,
-    clip_start: f32,
-    color: egui::Color32,
-    text_color: egui::Color32,
-    keyboard_height_percent: f32,
-    /// 计数器：字号
-    font_size: u32,
-    /// 通用变换与合成属性
-    common: LayerCommon,
-}
-
 impl App {
-    /// 收集当前时间点所有可见图层数据（Premiere 顺序：底 -> 顶）。
-    fn collect_visible_layers(&self, time: f32) -> Vec<LayerData> {
-        let mut layers = Vec::new();
-        for track in self.project.timeline_state.data.tracks.iter().rev() {
-            for clip in &track.clips {
-                if time >= clip.start && time < clip.end {
-                    layers.push(LayerData {
-                        clip_id: clip.id,
-                        kind: clip.kind,
-                        midi_idx: clip.midi_idx,
-                        speed: clip.speed,
-                        border_width: clip.border_width,
-                        rounding: clip.rounding,
-                        render_mode: clip.render_mode,
-                        equal_key_width: clip.equal_key_width,
-                        clip_start: clip.start,
-                        color: clip.color,
-                        text_color: clip.text_color,
-                        keyboard_height_percent: clip.keyboard_height_percent,
-                        font_size: clip.font_size,
-                        common: clip.common.clone(),
-                    });
-                }
-            }
-        }
-        layers
-    }
-
     fn default_style(&self) -> nezha_renderer::RenderStyle {
         nezha_renderer::RenderStyle {
             palette: nezha_renderer::random_palette(),
@@ -300,7 +252,8 @@ impl App {
 
     /// Render all visible layers into the current frame encoder.
     fn render_all_layers(&mut self, time: f32, render_width: u32, render_height: u32) {
-        let layers = self.collect_visible_layers(time);
+        let layers =
+            preview_layer::collect_visible_layers(&self.project.timeline_state.data.tracks, time);
         let default_style = self.default_style();
 
         let mut compositor = Compositor::new();

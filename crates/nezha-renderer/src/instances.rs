@@ -316,3 +316,41 @@ fn append_key_instances_tick(
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_key_chunk_build_result_new() {
+        let result = KeyChunkBuildResult::new();
+        assert!(result.instances.is_empty());
+        assert_eq!(result.active_keys, [false; 128]);
+        for c in &result.active_colors {
+            assert_eq!(c, &[0.0; 3]);
+        }
+    }
+
+    #[test]
+    fn test_key_chunk_build_result_accumulate() {
+        let mut result = KeyChunkBuildResult::new();
+
+        result.active_keys[60] = true;
+        result.active_colors[60] = [1.0, 0.0, 0.0];
+        result.instances.push(NoteInstance {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+            rgba_packed: 0xFFFFFFFF,
+            props_packed: 0,
+            velocity: 100,
+            flags: 0,
+        });
+
+        assert_eq!(result.instances.len(), 1);
+        assert!(result.active_keys[60]);
+        assert!(!result.active_keys[0]);
+        assert_eq!(result.active_colors[60], [1.0, 0.0, 0.0]);
+    }
+}

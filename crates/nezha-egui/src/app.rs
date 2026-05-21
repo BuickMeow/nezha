@@ -5,6 +5,7 @@ mod loading;
 mod panels;
 mod playback;
 mod preview;
+mod preview_layer;
 pub mod project_state;
 mod render_context;
 mod ui_state;

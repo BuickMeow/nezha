@@ -100,6 +100,7 @@ pub(crate) fn build_parallel_key_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keyboard::is_black_key;
 
     struct SingleKeySource;
     impl NoteSource for SingleKeySource {
@@ -136,5 +137,112 @@ mod tests {
         let groups = build_parallel_key_groups(&render_keys, &scan_indices, &SingleKeySource);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0], 0..128);
+    }
+
+    #[test]
+    fn test_build_parallel_key_groups_no_active() {
+        struct NoKeySource;
+        impl NoteSource for NoKeySource {
+            fn key_notes(&self, _key: u8) -> &[nezha_core::Note] {
+                &[]
+            }
+            fn duration(&self) -> f64 {
+                0.0
+            }
+        }
+
+        let render_keys = std::array::from_fn(|i| i as u8);
+        let scan_indices = [0usize; 128];
+        let groups = build_parallel_key_groups(&render_keys, &scan_indices, &NoKeySource);
+        assert_eq!(groups.len(), 1, "no active keys = full range");
+        assert_eq!(groups[0], 0..128);
+    }
+
+    #[test]
+    fn test_build_parallel_key_groups_all_active_same_weight() {
+        struct AllKeySource;
+        impl NoteSource for AllKeySource {
+            fn key_notes(&self, _key: u8) -> &[nezha_core::Note] {
+                static NOTES: [nezha_core::Note; 1] = [nezha_core::Note {
+                    key: 0,
+                    start: 0.0,
+                    end: 10.0,
+                    start_tick: 0,
+                    end_tick: 480,
+                    velocity: 100,
+                    channel: 0,
+                    track: 0,
+                }];
+                &NOTES
+            }
+            fn duration(&self) -> f64 {
+                10.0
+            }
+        }
+
+        let render_keys = std::array::from_fn(|i| i as u8);
+        let scan_indices = [0usize; 128];
+        let groups = build_parallel_key_groups(&render_keys, &scan_indices, &AllKeySource);
+        // With 128 active keys and default thread count, we should get multiple groups
+        assert!(
+            groups.len() > 1,
+            "expected multiple groups, got {}",
+            groups.len()
+        );
+        // The union of all groups should cover the full 0..128 range
+        let all_ranges: Vec<usize> = groups.iter().flat_map(|r| r.clone()).collect();
+        assert_eq!(all_ranges.len(), 128);
+    }
+
+    // ── build_render_key_order tests ──
+
+    #[test]
+    fn test_render_key_order_equal_width() {
+        let order = build_render_key_order(true);
+        assert_eq!(order.len(), 128);
+        for i in 0..128u8 {
+            assert_eq!(
+                order[i as usize], i,
+                "key {} should be at position {}",
+                i, i
+            );
+        }
+    }
+
+    #[test]
+    fn test_render_key_order_piano_whites_first() {
+        let order = build_render_key_order(false);
+        assert_eq!(order.len(), 128);
+
+        // First 75 keys should all be white keys
+        for i in 0..75 {
+            let key = order[i];
+            assert!(
+                !is_black_key(key),
+                "expected white key at position {}, got key {}",
+                i,
+                key
+            );
+        }
+        // Remaining 53 keys should all be black keys
+        for i in 75..128 {
+            let key = order[i];
+            assert!(
+                is_black_key(key),
+                "expected black key at position {}, got key {}",
+                i,
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn test_render_key_order_piano_all_keys_present() {
+        let order = build_render_key_order(false);
+        let mut sorted = order;
+        sorted.sort();
+        for i in 0..128u8 {
+            assert_eq!(sorted[i as usize], i, "key {} should be present", i);
+        }
     }
 }
