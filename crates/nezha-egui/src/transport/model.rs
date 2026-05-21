@@ -260,15 +260,18 @@ impl TimelineView {
 #[derive(Clone, Debug)]
 pub struct TimelineData {
     pub tracks: Vec<Track>,
-    pub next_track_id: usize,
+}
+
+/// 根据已有轨道数量自动生成下一个视频轨道的名称。
+pub fn next_video_track_name(tracks: &[Track]) -> String {
+    let count = tracks.iter().filter(|t| t.kind == TrackKind::Video).count();
+    format!("视频 {}", count + 1)
 }
 
 impl Default for TimelineData {
     fn default() -> Self {
-        let tracks = vec![Track::new_video("视频 1")];
         Self {
-            tracks,
-            next_track_id: 2,
+            tracks: vec![Track::new_video(&next_video_track_name(&[]))],
         }
     }
 }
@@ -336,17 +339,48 @@ impl TimelineState {
     ) {
         let id = self.next_clip_id;
         self.next_clip_id += 1;
-        let track_id = self.data.next_track_id;
-        self.data.next_track_id += 1;
-        let mut track = Track::new_video(&format!("视频 {}", track_id));
+
+        // Clip 编号 = 已有同类 clip 数 + 1（每种类型独立计数，内部分布在不同轨道也不影响）
+        let type_count = self
+            .data
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .filter(|c| c.kind == kind)
+            .count()
+            + 1;
         let mut clip = match kind {
-            ClipKind::Waterfall => TrackClip::new_waterfall(id, midi_idx),
-            ClipKind::SolidColor => TrackClip::new_solid_color(id, color),
-            ClipKind::Counter => TrackClip::new_counter(id),
+            ClipKind::Waterfall => {
+                let mut c = TrackClip::new_waterfall(id, midi_idx);
+                c.name = format!("默认瀑布流 {}", type_count);
+                c
+            }
+            ClipKind::SolidColor => {
+                let mut c = TrackClip::new_solid_color(id, color);
+                c.name = format!("纯色 {}", type_count);
+                c
+            }
+            ClipKind::Counter => {
+                let mut c = TrackClip::new_counter(id);
+                c.name = format!("计数器 {}", type_count);
+                c
+            }
         };
         clip.end = if duration > 0.0 { duration } else { 5.0 };
-        track.clips.push(clip);
-        self.data.tracks.insert(0, track);
+
+        // 找第一个空的视频轨道（可能被删光 clip 后留下），没有则新建一条
+        if let Some(empty_track) = self
+            .data
+            .tracks
+            .iter_mut()
+            .find(|t| t.kind == TrackKind::Video && t.clips.is_empty())
+        {
+            empty_track.clips.push(clip);
+        } else {
+            let mut track = Track::new_video(&next_video_track_name(&self.data.tracks));
+            track.clips.push(clip);
+            self.data.tracks.insert(0, track);
+        }
     }
 
     /// Convenience wrapper to push a waterfall clip.

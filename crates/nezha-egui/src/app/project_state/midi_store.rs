@@ -124,14 +124,8 @@ impl MidiStore {
             .find(|t| t.kind == TrackKind::Video)
         {
             track.clips.push(clip);
-        } else if timeline_state.data.tracks.is_empty() {
-            let mut track = Track::new_video("视频 1");
-            track.clips.push(clip);
-            timeline_state.data.tracks.push(track);
-            timeline_state.data.next_track_id = 2;
         } else {
-            let name = format!("视频 {}", timeline_state.data.next_track_id);
-            timeline_state.data.next_track_id += 1;
+            let name = crate::transport::next_video_track_name(&timeline_state.data.tracks);
             let mut track = Track::new_video(&name);
             track.clips.push(clip);
             timeline_state.data.tracks.push(track);

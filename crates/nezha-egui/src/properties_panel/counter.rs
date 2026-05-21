@@ -26,9 +26,13 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip) {
 
     // ── 文字颜色 ──
     ui.label("文字颜色");
-    let mut rgb = [clip.color.r(), clip.color.g(), clip.color.b()];
+    let mut rgb = [
+        clip.text_color.r(),
+        clip.text_color.g(),
+        clip.text_color.b(),
+    ];
     ui.color_edit_button_srgb(&mut rgb);
-    clip.color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+    clip.text_color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
 
     ui.add_space(4.0);
     ui.label(

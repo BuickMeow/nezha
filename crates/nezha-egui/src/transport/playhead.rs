@@ -1,9 +1,9 @@
-use eframe::egui;
 use crate::transport::controller::TimelineCommand;
-use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::hit_test::{is_content_hit, playhead_hit_rect};
-use crate::transport::{TimelineState, ThemeColors};
+use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::timecode::snap_to_frame;
+use crate::transport::{ThemeColors, TimelineState};
+use eframe::egui;
 
 pub fn draw_playhead(
     ui: &egui::Ui,
@@ -43,6 +43,8 @@ pub fn draw_playhead(
         }
     }
 
+    // 空白内容区点击跳转（response.clicked_by 在 Clip 上不触发，
+    // 避免干扰选择图层）
     if response.clicked_by(egui::PointerButton::Primary)
         && !hovering_playhead
         && !ui.input(|i| i.modifiers.shift)
@@ -72,6 +74,10 @@ pub fn draw_playhead(
             egui::pos2(playhead_x + 7.0, timeline_rect.min.y),
             egui::pos2(playhead_x, timeline_rect.min.y + 9.0),
         ];
-        painter.add(egui::Shape::convex_polygon(tri, c.playhead, egui::Stroke::NONE));
+        painter.add(egui::Shape::convex_polygon(
+            tri,
+            c.playhead,
+            egui::Stroke::NONE,
+        ));
     }
 }

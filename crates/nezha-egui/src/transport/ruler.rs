@@ -1,9 +1,11 @@
-use eframe::egui;
 use crate::transport::controller::TimelineCommand;
-use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::hit_test::is_ruler_hit;
-use crate::transport::{TimelineState, ThemeColors};
-use crate::transport::timecode::{snap_to_frame, format_timecode_frames, format_timecode_seconds, font};
+use crate::transport::layout::{TimelineLayout, TimelineMetrics};
+use crate::transport::timecode::{
+    font, format_timecode_frames, format_timecode_seconds, snap_to_frame,
+};
+use crate::transport::{ThemeColors, TimelineState};
+use eframe::egui;
 
 pub fn draw_ruler(
     ui: &egui::Ui,
@@ -12,7 +14,7 @@ pub fn draw_ruler(
     layout: &TimelineLayout,
     _metrics: &TimelineMetrics,
     state: &TimelineState,
-    response: &egui::Response,
+    _response: &egui::Response,
     _current_time: f32,
     duration: f32,
     fps: u32,
@@ -23,15 +25,21 @@ pub fn draw_ruler(
     let visible_start = layout.visible_start;
     let visible_end = layout.visible_end;
     painter.rect_filled(ruler_rect, 0.0, c.ruler_bg);
-    painter.rect_stroke(ruler_rect, 0.0, egui::Stroke::new(1.0, c.border), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        ruler_rect,
+        0.0,
+        egui::Stroke::new(1.0, c.border),
+        egui::StrokeKind::Inside,
+    );
 
-    // 点击 ruler 跳转
-    if response.clicked_by(egui::PointerButton::Primary)
+    // 点击 ruler 跳转（使用原始点击事件，不受子组件干扰）
+    // is_ruler_hit 确保只有标尺区域生效，不影响轨道操作
+    if ui.input(|i| i.pointer.primary_clicked())
         && !ui.input(|i| i.modifiers.shift)
         && !state.interaction.dragging_playhead
         && state.interaction.scrollbar_drag.is_none()
     {
-        if let Some(mouse_pos) = response.hover_pos() {
+        if let Some(mouse_pos) = ui.input(|i| i.pointer.interact_pos()) {
             if is_ruler_hit(layout, &state.view, mouse_pos) {
                 let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
                 commands.push(TimelineCommand::SetCurrentTime(
