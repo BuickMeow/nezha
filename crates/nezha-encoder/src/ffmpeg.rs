@@ -28,8 +28,8 @@ impl FfmpegEncoder {
         // 如果指向一个具体的 sidecar 路径且文件不存在，报错
         let is_bundled_path = ffmpeg
             .file_name()
-            .map_or(false, |n| n == "ffmpeg" || n == "ffmpeg.exe")
-            && ffmpeg.parent().map_or(false, |p| p != PathBuf::from(""));
+            .is_some_and(|n| n == "ffmpeg" || n == "ffmpeg.exe")
+            && ffmpeg.parent().is_some_and(|p| p != "");
         if is_bundled_path && !ffmpeg.exists() {
             return Err(EncoderError::FfmpegNotFound);
         }
@@ -120,17 +120,17 @@ impl Drop for FfmpegEncoder {
 /// 1. 当前可执行文件所在目录的 sidecar（ffmpeg / ffmpeg.exe）
 /// 2. PATH 中的 ffmpeg
 pub fn ffmpeg_path() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let name = if cfg!(target_os = "windows") {
-                "ffmpeg.exe"
-            } else {
-                "ffmpeg"
-            };
-            let bundled = dir.join(name);
-            if bundled.exists() {
-                return bundled;
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let name = if cfg!(target_os = "windows") {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        let bundled = dir.join(name);
+        if bundled.exists() {
+            return bundled;
         }
     }
 

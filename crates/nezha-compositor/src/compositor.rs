@@ -13,6 +13,7 @@ impl Compositor {
     ///
     /// This is the primary API for stage 1, where layers are rendered
     /// sequentially due to mutable-borrow constraints on shared renderers.
+    #[allow(clippy::too_many_arguments)]
     pub fn render_layer(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -34,6 +35,7 @@ impl Compositor {
     /// Render multiple layers in batch.
     ///
     /// This is the future-facing API for full layer compositing.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -46,8 +48,8 @@ impl Compositor {
     ) {
         for (i, layer) in layers.iter_mut().enumerate() {
             let is_first = i == 0;
-            let load_op = if is_first && clear_color.is_some() {
-                wgpu::LoadOp::Clear(clear_color.unwrap())
+            let load_op = if is_first {
+                clear_color.map_or(wgpu::LoadOp::Load, wgpu::LoadOp::Clear)
             } else {
                 wgpu::LoadOp::Load
             };

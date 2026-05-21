@@ -85,9 +85,10 @@ impl std::str::FromStr for VideoCodec {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum QualityPreset {
     High,
+    #[default]
     Medium,
     Low,
 }
@@ -107,12 +108,6 @@ impl QualityPreset {
             QualityPreset::Medium => "medium",
             QualityPreset::Low => "veryfast",
         }
-    }
-}
-
-impl Default for QualityPreset {
-    fn default() -> Self {
-        QualityPreset::Medium
     }
 }
 

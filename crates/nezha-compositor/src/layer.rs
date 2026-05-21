@@ -52,6 +52,7 @@ pub trait LayerRenderer {
     ///
     /// `blend_mode` and `rect` are hints the renderer may use to configure
     /// its pipeline and scissor region.
+    #[allow(clippy::too_many_arguments)]
     fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,

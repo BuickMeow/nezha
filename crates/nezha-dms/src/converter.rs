@@ -123,7 +123,7 @@ pub(crate) fn to_smf_bytes(doc: &DmsDocument) -> Result<Vec<u8>, DmsError> {
 
     let mut buf = Vec::new();
     let track_iters: Vec<_> = smf_tracks.iter().map(|t| t.iter()).collect();
-    midly::write_std(&header, track_iters.into_iter(), &mut buf)
+    midly::write_std(&header, track_iters, &mut buf)
         .map_err(|e| DmsError::MidiConvert(e.to_string()))?;
 
     Ok(buf)
