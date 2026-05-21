@@ -23,6 +23,10 @@ impl App {
                     .timeline_state
                     .push_solid_color_clip(color, duration);
             }
+            config_panel::ConfigAction::AddCounter => {
+                let duration = self.project.duration() as f32;
+                self.project.timeline_state.push_counter_clip(duration);
+            }
             config_panel::ConfigAction::RemoveMidi(idx) => {
                 self.project.remove_midi(idx);
                 self.render_ctx.reset_midi_state();

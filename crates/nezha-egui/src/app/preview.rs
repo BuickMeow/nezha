@@ -44,6 +44,12 @@ struct LayerData {
     clip_start: f32,
     color: egui::Color32,
     keyboard_height_percent: f32,
+    /// 计数器：字号
+    font_size: u32,
+    /// 计数器：X 位置（像素）
+    position_x: f32,
+    /// 计数器：Y 位置（像素）
+    position_y: f32,
 }
 
 impl App {
@@ -65,6 +71,9 @@ impl App {
                         clip_start: clip.start,
                         color: clip.color,
                         keyboard_height_percent: clip.keyboard_height_percent,
+                        font_size: clip.font_size,
+                        position_x: clip.position_x,
+                        position_y: clip.position_y,
                     });
                 }
             }
@@ -143,8 +152,15 @@ impl App {
         let preview_view = self.render_ctx.preview_view().clone();
         let mut is_first = true;
         let mut total_notes = 0usize;
+        // 收集 Counter 图层，在所有非 Counter 图层之后统一渲染
+        let mut counter_clips: Vec<LayerData> = Vec::new();
 
         for clip in &layers {
+            if clip.kind == ClipKind::Counter {
+                counter_clips.push(clip.clone());
+                continue;
+            }
+
             match clip.kind {
                 ClipKind::SolidColor => {
                     let color = [
@@ -249,34 +265,47 @@ impl App {
                         });
                     is_first = false;
                 }
+                ClipKind::Counter => {
+                    // 已在上面收集，此处不可达
+                    unreachable!();
+                }
             }
         }
 
-        // ---- Text overlay (note counter + timecode) ----
-        let overlay_text = format!("{:.2}s | Notes: {}", time, total_notes);
-        let mut text_layer = nezha_text::TextLayer::new(
-            &mut self.font_atlas,
-            self.render_ctx.device(),
-            self.render_ctx.queue(),
-            self.render_ctx.target_format(),
-        );
-        text_layer.set_text(overlay_text);
-        text_layer.set_position([20.0, 20.0]);
-        text_layer.set_font_size(24);
-        text_layer.set_color([1.0, 1.0, 1.0, 1.0]);
+        // 渲染所有 Counter 图层（在所有非 Counter 图层之后）
+        for counter in &counter_clips {
+            let text = format!("{:.2}s | Notes: {}", time, total_notes);
+            let color_f = [
+                counter.color.r() as f32 / 255.0,
+                counter.color.g() as f32 / 255.0,
+                counter.color.b() as f32 / 255.0,
+                1.0,
+            ];
 
-        let encoder = self.render_ctx.encoder_mut();
-        compositor.render_layer(
-            encoder,
-            &mut text_layer,
-            &preview_view,
-            render_width,
-            render_height,
-            time as f64,
-            wgpu::LoadOp::Load,
-            nezha_compositor::BlendMode::Normal,
-            (0.0, 0.0, 1.0, 1.0),
-        );
+            let mut text_layer = nezha_text::TextLayer::new(
+                &mut self.font_atlas,
+                self.render_ctx.device(),
+                self.render_ctx.queue(),
+                self.render_ctx.target_format(),
+            );
+            text_layer.set_text(text);
+            text_layer.set_position([counter.position_x, counter.position_y]);
+            text_layer.set_font_size(counter.font_size);
+            text_layer.set_color(color_f);
+
+            let encoder = self.render_ctx.encoder_mut();
+            compositor.render_layer(
+                encoder,
+                &mut text_layer,
+                &preview_view,
+                render_width,
+                render_height,
+                time as f64,
+                wgpu::LoadOp::Load,
+                nezha_compositor::BlendMode::Normal,
+                (0.0, 0.0, 1.0, 1.0),
+            );
+        }
     }
 
     pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {

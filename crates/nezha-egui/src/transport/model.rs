@@ -10,6 +10,8 @@ pub enum TrackKind {
 pub enum ClipKind {
     Waterfall,
     SolidColor,
+    /// 音符计数器图层：显示当前时间和可见音符数的浮动文本。
+    Counter,
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +29,12 @@ pub struct TrackClip {
     pub equal_key_width: bool,
     pub midi_idx: Option<usize>,
     pub keyboard_height_percent: f32,
+    /// 计数器/文本图层的字号（像素）。
+    pub font_size: u32,
+    /// 计数器/文本图层的屏幕坐标 X（像素）。
+    pub position_x: f32,
+    /// 计数器/文本图层的屏幕坐标 Y（像素）。
+    pub position_y: f32,
 }
 
 impl TrackClip {
@@ -45,6 +53,9 @@ impl TrackClip {
             equal_key_width: true,
             midi_idx,
             keyboard_height_percent: 0.15,
+            font_size: 24,
+            position_x: 20.0,
+            position_y: 20.0,
         }
     }
 
@@ -63,6 +74,30 @@ impl TrackClip {
             equal_key_width: true,
             midi_idx: None,
             keyboard_height_percent: 0.0,
+            font_size: 24,
+            position_x: 20.0,
+            position_y: 20.0,
+        }
+    }
+
+    pub fn new_counter(id: usize) -> Self {
+        Self {
+            id,
+            name: format!("计数器 {}", id),
+            kind: ClipKind::Counter,
+            start: 0.0,
+            end: 0.0,
+            color: egui::Color32::WHITE,
+            speed: 1.0,
+            border_width: 0.0,
+            rounding: 0.0,
+            render_mode: nezha_renderer::RenderMode::TimeBased,
+            equal_key_width: true,
+            midi_idx: None,
+            keyboard_height_percent: 0.0,
+            font_size: 24,
+            position_x: 20.0,
+            position_y: 20.0,
         }
     }
 }
@@ -264,6 +299,18 @@ impl TimelineState {
         self.data.next_track_id += 1;
         let mut track = Track::new_video(&format!("视频 {}", track_id));
         let mut clip = TrackClip::new_solid_color(id, color);
+        clip.end = if duration > 0.0 { duration } else { 5.0 };
+        track.clips.push(clip);
+        self.data.tracks.insert(0, track);
+    }
+
+    pub fn push_counter_clip(&mut self, duration: f32) {
+        let id = self.next_clip_id;
+        self.next_clip_id += 1;
+        let track_id = self.data.next_track_id;
+        self.data.next_track_id += 1;
+        let mut track = Track::new_video(&format!("视频 {}", track_id));
+        let mut clip = TrackClip::new_counter(id);
         clip.end = if duration > 0.0 { duration } else { 5.0 };
         track.clips.push(clip);
         self.data.tracks.insert(0, track);

@@ -63,6 +63,7 @@ pub enum ConfigAction {
     SelectMidi,
     AddWaterfall,
     AddSolidColor,
+    AddCounter,
     RemoveMidi(usize),
     StartExport,
 }
@@ -129,6 +130,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
             ui.add_space(4.0);
             if ui.button("🎨 纯色图层").clicked() {
                 action = Some(ConfigAction::AddSolidColor);
+            }
+            ui.add_space(4.0);
+            if ui.button("📊 音符计数器").clicked() {
+                action = Some(ConfigAction::AddCounter);
             }
         }
         SidebarTab::Project => {
