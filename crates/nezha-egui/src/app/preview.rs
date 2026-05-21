@@ -38,17 +38,18 @@ impl App {
         let render_height = self.project.render.height;
         self.render_ctx
             .ensure_preview_size(render_width, render_height);
+        self.export_pipeline
+            .ensure_size(render_width, render_height);
 
-        // 单次 begin_pass：所有图层 + copy 共用同一 encoder
         self.render_ctx.begin_pass();
         self.render_all_layers(time, render_width, render_height);
 
-        // 使用 ring API：copy → submit+map → wait_read
-        let slot = self
-            .render_ctx
-            .copy_frame_to_staging_ring(render_width, render_height);
-        self.render_ctx.submit_and_map_staging(slot);
-        self.render_ctx.wait_read_staging()
+        let encoder = self.render_ctx.take_encoder();
+        let texture = self.render_ctx.preview_texture();
+        let queue = self.render_ctx.queue();
+        self.export_pipeline
+            .copy_and_submit(encoder, texture, queue);
+        self.export_pipeline.wait_read()
     }
 
     /// 将当前帧渲染并推入 staging ring（不阻塞等待读回）。
@@ -59,14 +60,17 @@ impl App {
         let render_height = self.project.render.height;
         self.render_ctx
             .ensure_preview_size(render_width, render_height);
+        self.export_pipeline
+            .ensure_size(render_width, render_height);
 
         self.render_ctx.begin_pass();
         self.render_all_layers(time, render_width, render_height);
 
-        let slot = self
-            .render_ctx
-            .copy_frame_to_staging_ring(render_width, render_height);
-        self.render_ctx.submit_and_map_staging(slot);
+        let encoder = self.render_ctx.take_encoder();
+        let texture = self.render_ctx.preview_texture();
+        let queue = self.render_ctx.queue();
+        self.export_pipeline
+            .copy_and_submit(encoder, texture, queue);
     }
 
     /// Render a solid color clip into the compositor.

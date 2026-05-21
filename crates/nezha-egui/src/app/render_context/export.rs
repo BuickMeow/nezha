@@ -1,0 +1,261 @@
+use std::sync::mpsc;
+
+/// GPU→CPU 读回缓冲区。
+struct StagingBuffer {
+    buffer: wgpu::Buffer,
+    padded_bytes_per_row: u32,
+    unpadded_bytes_per_row: u32,
+    width: u32,
+    height: u32,
+}
+
+struct StagingSlot {
+    buffer: Option<StagingBuffer>,
+    /// map_async 完成通知
+    rx: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+}
+
+/// 三重缓冲环，实现 GPU 渲染与 CPU 读回的流水线并行。
+struct StagingRing {
+    slots: [StagingSlot; 3],
+    next_write: usize,
+    next_read: usize,
+    inflight: usize,
+    device: wgpu::Device,
+}
+
+impl StagingRing {
+    fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        let make_slot = || StagingSlot {
+            buffer: Some(Self::create_staging_buffer(device, width, height)),
+            rx: None,
+        };
+        Self {
+            slots: [make_slot(), make_slot(), make_slot()],
+            next_write: 0,
+            next_read: 0,
+            inflight: 0,
+            device: device.clone(),
+        }
+    }
+
+    fn create_staging_buffer(device: &wgpu::Device, width: u32, height: u32) -> StagingBuffer {
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+        let buffer_size = (padded_bytes_per_row * height) as u64;
+
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("staging_ring"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        StagingBuffer {
+            buffer,
+            padded_bytes_per_row,
+            unpadded_bytes_per_row,
+            width,
+            height,
+        }
+    }
+
+    fn ensure_size(&mut self, width: u32, height: u32) {
+        let mut changed = false;
+        for slot in &mut self.slots {
+            if let Some(ref buf) = slot.buffer {
+                if buf.width != width || buf.height != height {
+                    // SAFETY: ensure_size 仅在渲染前调用，所有 buffer 此时处于 unmapped 状态。
+                    slot.buffer = Some(Self::create_staging_buffer(&self.device, width, height));
+                    slot.rx = None;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.next_write = 0;
+            self.next_read = 0;
+            self.inflight = 0;
+        }
+    }
+
+    fn can_write(&self) -> bool {
+        self.inflight < 3
+    }
+
+    fn has_pending(&self) -> bool {
+        self.inflight > 0
+    }
+
+    fn acquire_write_slot(&mut self) -> usize {
+        debug_assert!(self.can_write());
+        let idx = self.next_write;
+        self.next_write = (self.next_write + 1) % 3;
+        idx
+    }
+
+    fn write_slot_buffer(&self, slot_idx: usize) -> &StagingBuffer {
+        self.slots[slot_idx]
+            .buffer
+            .as_ref()
+            .expect("slot has buffer")
+    }
+
+    fn map_after_submit(&mut self, slot_idx: usize) {
+        let slot = &mut self.slots[slot_idx];
+        let buf = slot.buffer.as_ref().expect("slot has buffer");
+        let slice = buf.buffer.slice(..);
+        let (tx, rx) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        slot.rx = Some(rx);
+        self.inflight += 1;
+    }
+
+    fn try_read(&mut self) -> Option<Vec<u8>> {
+        if self.inflight == 0 {
+            return None;
+        }
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        let slot = &self.slots[self.next_read];
+        if let Some(ref rx) = slot.rx {
+            if rx.try_recv().is_ok() {
+                return Some(self.finish_read());
+            }
+        }
+        None
+    }
+
+    fn wait_read(&mut self) -> Vec<u8> {
+        if self.inflight == 0 {
+            return Vec::new();
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            {
+                let slot = &self.slots[self.next_read];
+                if let Some(ref rx) = slot.rx {
+                    if rx.try_recv().is_ok() {
+                        return self.finish_read();
+                    }
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Vec::new();
+            }
+            let _ = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
+        }
+    }
+
+    fn finish_read(&mut self) -> Vec<u8> {
+        let slot = &mut self.slots[self.next_read];
+        slot.rx = None;
+        let buf = slot.buffer.as_ref().expect("slot has buffer");
+
+        let data = buf.buffer.slice(..).get_mapped_range();
+        let total_unpadded = (buf.unpadded_bytes_per_row * buf.height) as usize;
+        let mut result = Vec::with_capacity(total_unpadded);
+
+        if buf.padded_bytes_per_row == buf.unpadded_bytes_per_row {
+            result.extend_from_slice(&data[..total_unpadded]);
+        } else {
+            for row in 0..buf.height {
+                let start = (row * buf.padded_bytes_per_row) as usize;
+                let end = start + buf.unpadded_bytes_per_row as usize;
+                result.extend_from_slice(&data[start..end]);
+            }
+        }
+        drop(data);
+        buf.buffer.unmap();
+
+        self.next_read = (self.next_read + 1) % 3;
+        self.inflight -= 1;
+        result
+    }
+}
+
+/// GPU 帧读回导出管线。
+///
+/// 通过三重缓冲实现渲染与 CPU 读回的流水线并行：
+/// 提交渲染后立即返回，非阻塞读取已完成帧。
+pub struct ExportPipeline {
+    ring: StagingRing,
+}
+
+impl ExportPipeline {
+    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self {
+            ring: StagingRing::new(device, width, height),
+        }
+    }
+
+    /// 当输出尺寸变化时重建 staging buffer。
+    pub fn ensure_size(&mut self, width: u32, height: u32) {
+        self.ring.ensure_size(width, height);
+    }
+
+    /// 三重缓冲是否还有空闲槽位可供渲染。
+    pub fn can_write(&self) -> bool {
+        self.ring.can_write()
+    }
+
+    /// 是否有已提交但未读回的帧。
+    pub fn has_pending(&self) -> bool {
+        self.ring.has_pending()
+    }
+
+    /// 将当前帧拷贝到 staging ring、提交编码器、启动异步 GPU 读回映射。
+    ///
+    /// 所有权型编码器：此方法消费 `encoder`（调用 `encoder.finish()` 后提交）。
+    pub fn copy_and_submit(
+        &mut self,
+        mut encoder: wgpu::CommandEncoder,
+        source: &wgpu::Texture,
+        queue: &wgpu::Queue,
+    ) {
+        let slot_idx = self.ring.acquire_write_slot();
+        let staging = self.ring.write_slot_buffer(slot_idx);
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: source,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging.buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(staging.padded_bytes_per_row),
+                    rows_per_image: Some(staging.height),
+                },
+            },
+            wgpu::Extent3d {
+                width: staging.width,
+                height: staging.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let cmd_buf = encoder.finish();
+        queue.submit(std::iter::once(cmd_buf));
+        self.ring.map_after_submit(slot_idx);
+    }
+
+    /// 非阻塞尝试读回最早提交的帧。
+    pub fn try_read(&mut self) -> Option<Vec<u8>> {
+        self.ring.try_read()
+    }
+
+    /// 阻塞等待最早提交的帧就绪（超时 5s 返回空 Vec）。
+    pub fn wait_read(&mut self) -> Vec<u8> {
+        self.ring.wait_read()
+    }
+}

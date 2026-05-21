@@ -1,4 +1,5 @@
 use eframe::egui;
+
 mod archive_picker;
 mod export;
 mod loading;
@@ -17,6 +18,7 @@ pub use ui_state::{ThemeMode, UiState};
 
 pub struct App {
     pub render_ctx: RenderContext,
+    pub export_pipeline: render_context::export::ExportPipeline,
     pub project: ProjectState,
     pub ui: UiState,
     pub export_state: Option<export::ExportState>,
@@ -66,11 +68,19 @@ impl App {
                 .expect("failed to load MiSans font");
         let font_atlas = nezha_text::FontAtlas::new(&wgpu_state.device, &wgpu_state.queue, font);
 
+        let wgpu = cc
+            .wgpu_render_state
+            .as_ref()
+            .expect("wgpu backend required");
+        let default_w = nezha_renderer::constants::DEFAULT_PREVIEW_WIDTH;
+        let default_h = nezha_renderer::constants::DEFAULT_PREVIEW_HEIGHT;
+
         Self {
-            render_ctx: RenderContext::new(
-                cc,
-                nezha_renderer::constants::DEFAULT_PREVIEW_WIDTH,
-                nezha_renderer::constants::DEFAULT_PREVIEW_HEIGHT,
+            render_ctx: RenderContext::new(cc, default_w, default_h),
+            export_pipeline: render_context::export::ExportPipeline::new(
+                &wgpu.device,
+                default_w,
+                default_h,
             ),
             project: ProjectState::new(),
             ui: UiState::default(),

@@ -194,7 +194,7 @@ impl App {
 
                 loop {
                     // —— 阶段 1：尝试读回已完成的帧并写入 ffmpeg ——
-                    while let Some(data) = self.render_ctx.try_read_staging() {
+                    while let Some(data) = self.export_pipeline.try_read() {
                         match encoder.write_frame(data) {
                             Ok(()) => {
                                 written_frame += 1;
@@ -209,7 +209,7 @@ impl App {
                     }
 
                     // —— 阶段 2：渲染新帧（如果有剩余帧且 ring 有空位） ——
-                    if rendered_frame < total_frames && self.render_ctx.staging_can_write() {
+                    if rendered_frame < total_frames && self.export_pipeline.can_write() {
                         let time = rendered_frame as f64 / fps;
                         self.render_frame_pipelined(time as f32);
                         rendered_frame += 1;
@@ -237,7 +237,7 @@ impl App {
                         return;
                     }
 
-                    if all_rendered && self.render_ctx.staging_has_pending() {
+                    if all_rendered && self.export_pipeline.has_pending() {
                         // 所有帧已提交，还有未读回的：yield 给 UI，GPU 正在完成
                         break;
                     }
