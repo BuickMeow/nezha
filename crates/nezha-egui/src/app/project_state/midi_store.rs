@@ -112,8 +112,7 @@ impl MidiStore {
         }
 
         // 没有未绑定的 clip → 在首个视频轨道上新建一个
-        let id = timeline_state.next_clip_id;
-        timeline_state.next_clip_id += 1;
+        let id = timeline_state.data.alloc_clip_id();
         let mut clip = TrackClip::new_waterfall(id, Some(midi_idx));
         clip.end = midi_duration;
 

@@ -61,8 +61,8 @@ pub fn apply_timeline_commands(
                 state.view.zoom = zoom.clamp(0.2, 5000.0);
                 state.view.scroll_offset = scroll_offset.max(0.0);
             }
-            TimelineCommand::SelectClip(clip_id) => state.select_clip(clip_id),
-            TimelineCommand::ClearSelection => state.clear_selection(),
+            TimelineCommand::SelectClip(clip_id) => state.selection.select(clip_id),
+            TimelineCommand::ClearSelection => state.selection.clear(),
             TimelineCommand::MoveClipToStart { clip_id, start } => {
                 state.move_clip_to_start(clip_id, start);
             }

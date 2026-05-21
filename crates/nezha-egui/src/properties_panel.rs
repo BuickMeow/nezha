@@ -27,7 +27,7 @@ pub fn show(
             ui.heading(format!("属性（{:.0}%）", zoom * 100.0));
             ui.separator();
 
-            let Some(selected_id) = timeline_state.selected_clip_id else {
+            let Some(selected_id) = timeline_state.selection.selected_clip_id else {
                 ui.label("未选中任何图层");
                 ui.add_space(4.0);
                 ui.label(

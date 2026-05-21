@@ -29,7 +29,7 @@ pub fn draw_tracks(
 
     let mut y = layout.ruler_rect.max.y - state.view.scroll_y;
     let view = &state.view;
-    let selected_id = state.selected_clip_id;
+    let selected_id = state.selection.selected_clip_id;
     let tracks = &state.data.tracks;
 
     if has_video {
