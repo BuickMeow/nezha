@@ -189,6 +189,7 @@ fn draw_clip_visual(
 }
 
 /// Handle drag interactions for a selected clip (resize left/right, move).
+#[allow(clippy::too_many_arguments)]
 fn handle_selected_clip_interaction(
     ui: &mut egui::Ui,
     layout: &TimelineLayout,
@@ -235,15 +236,15 @@ fn handle_selected_clip_interaction(
         if let (Some(drag), Some(pointer_pos)) = (
             active_clip_drag.as_ref(),
             left_interact.interact_pointer_pos(),
-        ) {
-            if drag.clip_id == clip_id && drag.mode == ClipDragMode::ResizeStart {
-                let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
-                let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
-                commands.push(TimelineCommand::ResizeClipStartTo {
-                    clip_id,
-                    start: new_start,
-                });
-            }
+        ) && drag.clip_id == clip_id
+            && drag.mode == ClipDragMode::ResizeStart
+        {
+            let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+            let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+            commands.push(TimelineCommand::ResizeClipStartTo {
+                clip_id,
+                start: new_start,
+            });
         }
         commands.push(TimelineCommand::SelectClip(clip_id));
         *dragged_clip_id = Some(clip_id);
@@ -278,15 +279,15 @@ fn handle_selected_clip_interaction(
         if let (Some(drag), Some(pointer_pos)) = (
             active_clip_drag.as_ref(),
             right_interact.interact_pointer_pos(),
-        ) {
-            if drag.clip_id == clip_id && drag.mode == ClipDragMode::ResizeEnd {
-                let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
-                let new_end = drag.anchor_end + (pointer_time - drag.anchor_pointer_time);
-                commands.push(TimelineCommand::ResizeClipEndTo {
-                    clip_id,
-                    end: new_end,
-                });
-            }
+        ) && drag.clip_id == clip_id
+            && drag.mode == ClipDragMode::ResizeEnd
+        {
+            let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+            let new_end = drag.anchor_end + (pointer_time - drag.anchor_pointer_time);
+            commands.push(TimelineCommand::ResizeClipEndTo {
+                clip_id,
+                end: new_end,
+            });
         }
         commands.push(TimelineCommand::SelectClip(clip_id));
         *dragged_clip_id = Some(clip_id);
@@ -327,15 +328,15 @@ fn handle_selected_clip_interaction(
             if let (Some(drag), Some(pointer_pos)) = (
                 active_clip_drag.as_ref(),
                 mid_interact.interact_pointer_pos(),
-            ) {
-                if drag.clip_id == clip_id && drag.mode == ClipDragMode::Move {
-                    let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
-                    let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
-                    commands.push(TimelineCommand::MoveClipToStart {
-                        clip_id,
-                        start: new_start,
-                    });
-                }
+            ) && drag.clip_id == clip_id
+                && drag.mode == ClipDragMode::Move
+            {
+                let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+                let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+                commands.push(TimelineCommand::MoveClipToStart {
+                    clip_id,
+                    start: new_start,
+                });
             }
             commands.push(TimelineCommand::SelectClip(clip_id));
             *dragged_clip_id = Some(clip_id);
@@ -358,6 +359,7 @@ fn handle_selected_clip_interaction(
 }
 
 /// Handle drag interactions for an unselected clip (move only).
+#[allow(clippy::too_many_arguments)]
 fn handle_unselected_clip_interaction(
     ui: &mut egui::Ui,
     layout: &TimelineLayout,
@@ -407,15 +409,15 @@ fn handle_unselected_clip_interaction(
         if let (Some(drag), Some(pointer_pos)) = (
             active_clip_drag.as_ref(),
             clip_interact.interact_pointer_pos(),
-        ) {
-            if drag.clip_id == clip_id && drag.mode == ClipDragMode::Move {
-                let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
-                let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
-                commands.push(TimelineCommand::MoveClipToStart {
-                    clip_id,
-                    start: new_start,
-                });
-            }
+        ) && drag.clip_id == clip_id
+            && drag.mode == ClipDragMode::Move
+        {
+            let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+            let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+            commands.push(TimelineCommand::MoveClipToStart {
+                clip_id,
+                start: new_start,
+            });
         }
         commands.push(TimelineCommand::SelectClip(clip_id));
         *dragged_clip_id = Some(clip_id);
@@ -436,6 +438,7 @@ fn handle_unselected_clip_interaction(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_track_row(
     ui: &mut egui::Ui,
     painter: &egui::Painter,

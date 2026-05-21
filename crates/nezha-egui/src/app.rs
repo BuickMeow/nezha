@@ -115,7 +115,9 @@ impl App {
                         let data = match std::fs::read(&path) {
                             Ok(d) => d,
                             Err(e) => {
-                                let _ = tx.send(loading::MidiLoadEvent::Complete(Err(e.into())));
+                                let _ = tx.send(loading::MidiLoadEvent::Complete(Box::new(Err(
+                                    e.into()
+                                ))));
                                 return;
                             }
                         };
@@ -140,13 +142,15 @@ impl App {
                             };
                             let _ = tx.send(ev);
                         });
-                        let _ = tx.send(loading::MidiLoadEvent::Complete(result.map_err(|e| {
-                            std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!("DMS 解析失败: {e}"),
-                            )
-                            .into()
-                        })));
+                        let _ = tx.send(loading::MidiLoadEvent::Complete(Box::new(
+                            result.map_err(|e| {
+                                std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    format!("DMS 解析失败: {e}"),
+                                )
+                                .into()
+                            }),
+                        )));
                     }
                 });
 
@@ -180,7 +184,7 @@ impl App {
                         let result = nezha_core::MidiFile::load_with_progress(&path, |progress| {
                             let _ = tx.send(loading::MidiLoadEvent::Progress(progress));
                         });
-                        let _ = tx.send(loading::MidiLoadEvent::Complete(result));
+                        let _ = tx.send(loading::MidiLoadEvent::Complete(Box::new(result)));
                     }
                 });
 

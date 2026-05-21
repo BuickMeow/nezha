@@ -43,7 +43,7 @@ impl StagingRing {
         let bytes_per_pixel = 4u32;
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
         let buffer_size = (padded_bytes_per_row * height) as u64;
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -65,13 +65,13 @@ impl StagingRing {
     fn ensure_size(&mut self, width: u32, height: u32) {
         let mut changed = false;
         for slot in &mut self.slots {
-            if let Some(ref buf) = slot.buffer {
-                if buf.width != width || buf.height != height {
-                    // SAFETY: ensure_size 仅在渲染前调用，所有 buffer 此时处于 unmapped 状态。
-                    slot.buffer = Some(Self::create_staging_buffer(&self.device, width, height));
-                    slot.rx = None;
-                    changed = true;
-                }
+            if let Some(ref buf) = slot.buffer
+                && (buf.width != width || buf.height != height)
+            {
+                // SAFETY: ensure_size 仅在渲染前调用，所有 buffer 此时处于 unmapped 状态。
+                slot.buffer = Some(Self::create_staging_buffer(&self.device, width, height));
+                slot.rx = None;
+                changed = true;
             }
         }
         if changed {
@@ -121,10 +121,10 @@ impl StagingRing {
         }
         let _ = self.device.poll(wgpu::PollType::Poll);
         let slot = &self.slots[self.next_read];
-        if let Some(ref rx) = slot.rx {
-            if rx.try_recv().is_ok() {
-                return Some(self.finish_read());
-            }
+        if let Some(ref rx) = slot.rx
+            && rx.try_recv().is_ok()
+        {
+            return Some(self.finish_read());
         }
         None
     }
@@ -137,10 +137,10 @@ impl StagingRing {
         loop {
             {
                 let slot = &self.slots[self.next_read];
-                if let Some(ref rx) = slot.rx {
-                    if rx.try_recv().is_ok() {
-                        return self.finish_read();
-                    }
+                if let Some(ref rx) = slot.rx
+                    && rx.try_recv().is_ok()
+                {
+                    return self.finish_read();
                 }
             }
             if std::time::Instant::now() >= deadline {

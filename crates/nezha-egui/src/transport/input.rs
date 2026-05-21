@@ -46,10 +46,10 @@ pub fn handle_input(
     }
 
     // 双指缩放 / Ctrl+滚轮缩放
-    if zoom_delta != 1.0 {
-        if let Some(mouse_pos) = mouse_pos {
-            view.zoom_around_pointer(&layout.timeline_rect, mouse_pos.x, zoom_delta);
-        }
+    if zoom_delta != 1.0
+        && let Some(mouse_pos) = mouse_pos
+    {
+        view.zoom_around_pointer(&layout.timeline_rect, mouse_pos.x, zoom_delta);
     }
 
     // 按住中键自由拖拽背景移动

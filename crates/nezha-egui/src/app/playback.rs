@@ -10,9 +10,10 @@ impl App {
                 .project
                 .playback
                 .start
-                .get_or_insert_with(|| (now, self.project.playback.current_time));
+                .get_or_insert((now, self.project.playback.current_time));
             let elapsed = now.duration_since(*start_instant).as_secs_f64();
-            self.project.playback.current_time = (*start_time + elapsed).min(self.project.duration());
+            self.project.playback.current_time =
+                (*start_time + elapsed).min(self.project.duration());
 
             if self.project.playback.current_time >= self.project.duration() {
                 self.project.playback.current_time = 0.0;
@@ -40,8 +41,9 @@ impl App {
             }
 
             if ui.input(|input| input.key_pressed(egui::Key::ArrowRight)) {
-                self.project.playback.current_time =
-                    (self.project.playback.current_time + frame_duration).min(self.project.duration());
+                self.project.playback.current_time = (self.project.playback.current_time
+                    + frame_duration)
+                    .min(self.project.duration());
                 self.project.playback.start = None;
             }
         }

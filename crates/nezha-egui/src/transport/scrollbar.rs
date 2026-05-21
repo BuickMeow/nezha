@@ -4,6 +4,7 @@ use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::{ScrollbarDrag, ThemeColors, TimelineInteraction, TimelineView};
 use eframe::egui;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_scrollbar(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
@@ -78,18 +79,18 @@ pub fn draw_scrollbar(
     );
 
     // Hover 光标
-    if thumb_response.hovered() {
-        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-            let edge_threshold = 10.0_f32.min(thumb_rect.width() / 3.0);
-            let dist_left = pos.x - thumb_rect.min.x;
-            let dist_right = thumb_rect.max.x - pos.x;
-            if dist_left < edge_threshold {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest);
-            } else if dist_right < edge_threshold {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast);
-            } else {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-            }
+    if thumb_response.hovered()
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+    {
+        let edge_threshold = 10.0_f32.min(thumb_rect.width() / 3.0);
+        let dist_left = pos.x - thumb_rect.min.x;
+        let dist_right = thumb_rect.max.x - pos.x;
+        if dist_left < edge_threshold {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest);
+        } else if dist_right < edge_threshold {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast);
+        } else {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
     }
 
@@ -109,29 +110,29 @@ pub fn draw_scrollbar(
     }
 
     // 拖拽开始
-    if thumb_response.drag_started() {
-        if let Some(pos) = thumb_response.interact_pointer_pos() {
-            let edge_threshold = 10.0_f32.min(thumb_rect.width() / 3.0);
-            let dist_left = pos.x - thumb_rect.min.x;
-            let dist_right = thumb_rect.max.x - pos.x;
+    if thumb_response.drag_started()
+        && let Some(pos) = thumb_response.interact_pointer_pos()
+    {
+        let edge_threshold = 10.0_f32.min(thumb_rect.width() / 3.0);
+        let dist_left = pos.x - thumb_rect.min.x;
+        let dist_right = thumb_rect.max.x - pos.x;
 
-            if dist_left < edge_threshold {
-                commands.push(TimelineCommand::SetScrollbarDrag(Some(
-                    ScrollbarDrag::LeftEdge,
-                )));
-            } else if dist_right < edge_threshold {
-                commands.push(TimelineCommand::SetScrollbarDrag(Some(
-                    ScrollbarDrag::RightEdge,
-                )));
-            } else {
-                let rel_x = (pos.x - scrollbar_rect.min.x).clamp(0.0, scrollbar_rect.width());
-                commands.push(TimelineCommand::SetScrollbarDrag(Some(
-                    ScrollbarDrag::Pan {
-                        anchor_time: rel_x / scrollbar_rect.width() * duration,
-                        anchor_vis_start: vis_start,
-                    },
-                )));
-            }
+        if dist_left < edge_threshold {
+            commands.push(TimelineCommand::SetScrollbarDrag(Some(
+                ScrollbarDrag::LeftEdge,
+            )));
+        } else if dist_right < edge_threshold {
+            commands.push(TimelineCommand::SetScrollbarDrag(Some(
+                ScrollbarDrag::RightEdge,
+            )));
+        } else {
+            let rel_x = (pos.x - scrollbar_rect.min.x).clamp(0.0, scrollbar_rect.width());
+            commands.push(TimelineCommand::SetScrollbarDrag(Some(
+                ScrollbarDrag::Pan {
+                    anchor_time: rel_x / scrollbar_rect.width() * duration,
+                    anchor_vis_start: vis_start,
+                },
+            )));
         }
     }
 
@@ -141,42 +142,39 @@ pub fn draw_scrollbar(
     }
 
     // 拖拽过程
-    if thumb_response.dragged() {
-        if let Some(drag) = &interaction.scrollbar_drag {
-            if let Some(pos) = thumb_response.interact_pointer_pos() {
-                let rel_x = (pos.x - scrollbar_rect.min.x).clamp(0.0, scrollbar_rect.width());
-                let mouse_time = rel_x / scrollbar_rect.width() * duration;
+    if thumb_response.dragged()
+        && let Some(drag) = &interaction.scrollbar_drag
+        && let Some(pos) = thumb_response.interact_pointer_pos()
+    {
+        let rel_x = (pos.x - scrollbar_rect.min.x).clamp(0.0, scrollbar_rect.width());
+        let mouse_time = rel_x / scrollbar_rect.width() * duration;
 
-                match drag {
-                    ScrollbarDrag::Pan {
-                        anchor_time,
-                        anchor_vis_start,
-                    } => {
-                        let time_offset = mouse_time - anchor_time;
-                        let visible_dur = vis_end - vis_start;
-                        commands.push(TimelineCommand::SetScrollOffset(
-                            (anchor_vis_start + time_offset)
-                                .clamp(0.0, (duration - visible_dur).max(0.0)),
-                        ));
-                    }
-                    ScrollbarDrag::LeftEdge => {
-                        let new_start = mouse_time.clamp(0.0, vis_end - 1.0 / fps.max(1) as f32);
-                        let new_zoom = content_width / (vis_end - new_start);
-                        commands.push(TimelineCommand::SetZoomAndScroll {
-                            zoom: new_zoom,
-                            scroll_offset: new_start,
-                        });
-                    }
-                    ScrollbarDrag::RightEdge => {
-                        let new_end =
-                            mouse_time.clamp(vis_start + 1.0 / fps.max(1) as f32, duration);
-                        let new_zoom = content_width / (new_end - vis_start);
-                        commands.push(TimelineCommand::SetZoomAndScroll {
-                            zoom: new_zoom,
-                            scroll_offset: vis_start,
-                        });
-                    }
-                }
+        match drag {
+            ScrollbarDrag::Pan {
+                anchor_time,
+                anchor_vis_start,
+            } => {
+                let time_offset = mouse_time - anchor_time;
+                let visible_dur = vis_end - vis_start;
+                commands.push(TimelineCommand::SetScrollOffset(
+                    (anchor_vis_start + time_offset).clamp(0.0, (duration - visible_dur).max(0.0)),
+                ));
+            }
+            ScrollbarDrag::LeftEdge => {
+                let new_start = mouse_time.clamp(0.0, vis_end - 1.0 / fps.max(1) as f32);
+                let new_zoom = content_width / (vis_end - new_start);
+                commands.push(TimelineCommand::SetZoomAndScroll {
+                    zoom: new_zoom,
+                    scroll_offset: new_start,
+                });
+            }
+            ScrollbarDrag::RightEdge => {
+                let new_end = mouse_time.clamp(vis_start + 1.0 / fps.max(1) as f32, duration);
+                let new_zoom = content_width / (new_end - vis_start);
+                commands.push(TimelineCommand::SetZoomAndScroll {
+                    zoom: new_zoom,
+                    scroll_offset: vis_start,
+                });
             }
         }
     }

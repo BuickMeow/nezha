@@ -100,10 +100,9 @@ impl RenderContext {
         _width: u32,
         _equal_key_width: bool,
     ) -> &mut nezha_renderer::Renderer {
-        if !self.seek_indices.contains_key(&midi_idx) {
-            self.seek_indices
-                .insert(midi_idx, nezha_renderer::NoteSeekIndex::build(midi));
-        }
+        self.seek_indices
+            .entry(midi_idx)
+            .or_insert_with(|| nezha_renderer::NoteSeekIndex::build(midi));
         let seek_index = self.seek_indices.get(&midi_idx).cloned();
 
         self.waterfall_renderers.entry(clip_id).or_insert_with(|| {

@@ -74,6 +74,7 @@ impl App {
     }
 
     /// Render a solid color clip into the compositor.
+    #[allow(clippy::too_many_arguments)]
     fn render_solid_color_layer(
         &mut self,
         compositor: &mut Compositor,
@@ -123,6 +124,7 @@ impl App {
     }
 
     /// Render a waterfall (note visualization) clip into the compositor.
+    #[allow(clippy::too_many_arguments)]
     fn render_waterfall_layer(
         &mut self,
         compositor: &mut Compositor,
@@ -204,6 +206,7 @@ impl App {
     }
 
     /// Render all counter (text overlay) clips after other layers.
+    #[allow(clippy::too_many_arguments)]
     fn render_counter_layers(
         &mut self,
         compositor: &mut Compositor,

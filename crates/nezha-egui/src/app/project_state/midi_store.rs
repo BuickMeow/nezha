@@ -9,18 +9,10 @@ pub struct MidiEntry {
 }
 
 /// 项目中的 MIDI 资源集合与当前高亮选择。
+#[derive(Default)]
 pub struct MidiStore {
     pub entries: Vec<MidiEntry>,
     pub highlighted_idx: Option<usize>,
-}
-
-impl Default for MidiStore {
-    fn default() -> Self {
-        Self {
-            entries: Vec::new(),
-            highlighted_idx: None,
-        }
-    }
 }
 
 impl MidiStore {

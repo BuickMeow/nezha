@@ -23,14 +23,15 @@ pub struct ProjectState {
 
 impl ProjectState {
     pub fn new() -> Self {
-        let mut timeline_state = TimelineState::default();
-        timeline_state.fps = 60;
         Self {
             playback: PlaybackState::default(),
             midi: MidiStore::default(),
             render: RenderSettings::default(),
             last_error: None,
-            timeline_state,
+            timeline_state: TimelineState {
+                fps: 60,
+                ..Default::default()
+            },
         }
     }
 

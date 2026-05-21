@@ -46,12 +46,12 @@ pub fn show(
         *zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
 
         // 以鼠标位置为中心缩放
-        if *zoom != old_zoom {
-            if let Some(cursor) = pointer_pos {
-                let center = available / 2.0;
-                let cursor_rel = cursor - response.rect.min - center;
-                *pan_offset += cursor_rel * (1.0 - old_zoom / *zoom);
-            }
+        if *zoom != old_zoom
+            && let Some(cursor) = pointer_pos
+        {
+            let center = available / 2.0;
+            let cursor_rel = cursor - response.rect.min - center;
+            *pan_offset += cursor_rel * (1.0 - old_zoom / *zoom);
         }
     }
 

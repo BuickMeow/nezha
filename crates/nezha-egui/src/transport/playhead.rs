@@ -5,6 +5,7 @@ use crate::transport::timecode::snap_to_frame;
 use crate::transport::{ThemeColors, TimelineState};
 use eframe::egui;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_playhead(
     ui: &egui::Ui,
     painter: &egui::Painter,
@@ -34,13 +35,13 @@ pub fn draw_playhead(
         commands.push(TimelineCommand::SetPlayheadDragging(false));
     }
 
-    if state.interaction.dragging_playhead {
-        if let Some(mouse_pos) = response.interact_pointer_pos() {
-            let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
-            commands.push(TimelineCommand::SetCurrentTime(
-                snap_to_frame(new_time, fps).clamp(0.0, duration),
-            ));
-        }
+    if state.interaction.dragging_playhead
+        && let Some(mouse_pos) = response.interact_pointer_pos()
+    {
+        let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
+        commands.push(TimelineCommand::SetCurrentTime(
+            snap_to_frame(new_time, fps).clamp(0.0, duration),
+        ));
     }
 
     // 空白内容区点击跳转（response.clicked_by 在 Clip 上不触发，
@@ -50,15 +51,13 @@ pub fn draw_playhead(
         && !ui.input(|i| i.modifiers.shift)
         && !state.interaction.dragging_playhead
         && state.interaction.scrollbar_drag.is_none()
+        && let Some(mouse_pos) = response.hover_pos()
+        && is_content_hit(layout, &state.view, mouse_pos)
     {
-        if let Some(mouse_pos) = response.hover_pos() {
-            if is_content_hit(layout, &state.view, mouse_pos) {
-                let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
-                commands.push(TimelineCommand::SetCurrentTime(
-                    snap_to_frame(new_time, fps).clamp(0.0, duration),
-                ));
-            }
-        }
+        let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
+        commands.push(TimelineCommand::SetCurrentTime(
+            snap_to_frame(new_time, fps).clamp(0.0, duration),
+        ));
     }
 
     if playhead_x >= timeline_rect.min.x + state.view.header_width {

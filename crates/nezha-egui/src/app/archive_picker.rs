@@ -41,65 +41,63 @@ pub(super) enum ArchivePickerState {
 impl App {
     pub(super) fn show_archive_picker(&mut self, ui: &mut egui::Ui) {
         // 1) 处理 Opening 状态：检查后台线程是否完成
-        if let Some(ArchivePickerState::Opening { path, rx }) = &self.archive_picker {
-            if let Ok(result) = rx.try_recv() {
-                match result {
-                    Ok((archive, entries)) => {
-                        if entries.is_empty() {
-                            self.project.last_error =
-                                Some("压缩包内没有找到 MIDI 文件".to_string());
-                            self.archive_picker = None;
-                            return;
-                        }
-                        // 只有一个 MIDI 文件时直接加载，跳过选择对话框
-                        if entries.len() == 1 {
-                            let name = entries[0].name.clone();
-                            match archive.read_file(&name) {
-                                Ok(bytes) => {
-                                    let display_path = format!("{path} > {name}");
-                                    let (tx, rx) = mpsc::channel();
-                                    std::thread::spawn(move || {
-                                        let result =
-                                            nezha_core::MidiFile::load_from_bytes_with_progress(
-                                                &bytes,
-                                                |progress| {
-                                                    let _ =
-                                                        tx.send(MidiLoadEvent::Progress(progress));
-                                                },
-                                            );
-                                        let _ = tx.send(MidiLoadEvent::Complete(result));
-                                    });
-                                    self.midi_loader = Some(MidiLoader {
-                                        path: display_path,
-                                        rx,
-                                        current_progress: None,
-                                        status_message: None,
-                                    });
-                                }
-                                Err(e) => {
-                                    self.project.last_error =
-                                        Some(format!("读取压缩包内文件失败: {}", e));
-                                }
-                            }
-                            self.archive_picker = None;
-                            return;
-                        }
-                        let mut picker = ArchivePicker {
-                            path: path.clone(),
-                            archive,
-                            entries,
-                            selected_idx: None,
-                            search_query: String::new(),
-                            filtered: Vec::new(),
-                        };
-                        picker.recompute_filter();
-                        self.archive_picker = Some(ArchivePickerState::Opened(picker));
-                    }
-                    Err(e) => {
-                        self.project.last_error = Some(format!("压缩包打开失败: {}", e));
+        if let Some(ArchivePickerState::Opening { path, rx }) = &self.archive_picker
+            && let Ok(result) = rx.try_recv()
+        {
+            match result {
+                Ok((archive, entries)) => {
+                    if entries.is_empty() {
+                        self.project.last_error = Some("压缩包内没有找到 MIDI 文件".to_string());
                         self.archive_picker = None;
                         return;
                     }
+                    // 只有一个 MIDI 文件时直接加载，跳过选择对话框
+                    if entries.len() == 1 {
+                        let name = entries[0].name.clone();
+                        match archive.read_file(&name) {
+                            Ok(bytes) => {
+                                let display_path = format!("{path} > {name}");
+                                let (tx, rx) = mpsc::channel();
+                                std::thread::spawn(move || {
+                                    let result =
+                                        nezha_core::MidiFile::load_from_bytes_with_progress(
+                                            &bytes,
+                                            |progress| {
+                                                let _ = tx.send(MidiLoadEvent::Progress(progress));
+                                            },
+                                        );
+                                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
+                                });
+                                self.midi_loader = Some(MidiLoader {
+                                    path: display_path,
+                                    rx,
+                                    current_progress: None,
+                                    status_message: None,
+                                });
+                            }
+                            Err(e) => {
+                                self.project.last_error =
+                                    Some(format!("读取压缩包内文件失败: {}", e));
+                            }
+                        }
+                        self.archive_picker = None;
+                        return;
+                    }
+                    let mut picker = ArchivePicker {
+                        path: path.clone(),
+                        archive,
+                        entries,
+                        selected_idx: None,
+                        search_query: String::new(),
+                        filtered: Vec::new(),
+                    };
+                    picker.recompute_filter();
+                    self.archive_picker = Some(ArchivePickerState::Opened(picker));
+                }
+                Err(e) => {
+                    self.project.last_error = Some(format!("压缩包打开失败: {}", e));
+                    self.archive_picker = None;
+                    return;
                 }
             }
         }
@@ -345,36 +343,35 @@ impl App {
             return;
         }
 
-        if confirmed {
-            if let Some(ArchivePickerState::Opened(picker)) = self.archive_picker.take() {
-                if let Some(idx) = picker.selected_idx {
-                    let entry = &picker.entries[idx];
-                    match picker.archive.read_file(&entry.name) {
-                        Ok(bytes) => {
-                            let display_path = format!("{} > {}", picker.path, entry.name);
-                            let (tx, rx) = mpsc::channel();
+        if confirmed
+            && let Some(ArchivePickerState::Opened(picker)) = self.archive_picker.take()
+            && let Some(idx) = picker.selected_idx
+        {
+            let entry = &picker.entries[idx];
+            match picker.archive.read_file(&entry.name) {
+                Ok(bytes) => {
+                    let display_path = format!("{} > {}", picker.path, entry.name);
+                    let (tx, rx) = mpsc::channel();
 
-                            std::thread::spawn(move || {
-                                let result = nezha_core::MidiFile::load_from_bytes_with_progress(
-                                    &bytes,
-                                    |progress| {
-                                        let _ = tx.send(MidiLoadEvent::Progress(progress));
-                                    },
-                                );
-                                let _ = tx.send(MidiLoadEvent::Complete(result));
-                            });
+                    std::thread::spawn(move || {
+                        let result = nezha_core::MidiFile::load_from_bytes_with_progress(
+                            &bytes,
+                            |progress| {
+                                let _ = tx.send(MidiLoadEvent::Progress(progress));
+                            },
+                        );
+                        let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
+                    });
 
-                            self.midi_loader = Some(MidiLoader {
-                                path: display_path,
-                                rx,
-                                current_progress: None,
-                                status_message: None,
-                            });
-                        }
-                        Err(e) => {
-                            self.project.last_error = Some(format!("读取压缩包内文件失败: {}", e));
-                        }
-                    }
+                    self.midi_loader = Some(MidiLoader {
+                        path: display_path,
+                        rx,
+                        current_progress: None,
+                        status_message: None,
+                    });
+                }
+                Err(e) => {
+                    self.project.last_error = Some(format!("读取压缩包内文件失败: {}", e));
                 }
             }
         }

@@ -1,11 +1,6 @@
+#[derive(Default)]
 pub(super) struct FrameEncoder {
     current: Option<wgpu::CommandEncoder>,
-}
-
-impl Default for FrameEncoder {
-    fn default() -> Self {
-        Self { current: None }
-    }
 }
 
 impl FrameEncoder {

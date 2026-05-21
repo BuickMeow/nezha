@@ -7,6 +7,7 @@ use crate::transport::timecode::{
 use crate::transport::{ThemeColors, TimelineState};
 use eframe::egui;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_ruler(
     ui: &egui::Ui,
     painter: &egui::Painter,
@@ -38,15 +39,13 @@ pub fn draw_ruler(
         && !ui.input(|i| i.modifiers.shift)
         && !state.interaction.dragging_playhead
         && state.interaction.scrollbar_drag.is_none()
+        && let Some(mouse_pos) = ui.input(|i| i.pointer.interact_pos())
+        && is_ruler_hit(layout, &state.view, mouse_pos)
     {
-        if let Some(mouse_pos) = ui.input(|i| i.pointer.interact_pos()) {
-            if is_ruler_hit(layout, &state.view, mouse_pos) {
-                let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
-                commands.push(TimelineCommand::SetCurrentTime(
-                    snap_to_frame(new_time, fps).clamp(0.0, duration),
-                ));
-            }
-        }
+        let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
+        commands.push(TimelineCommand::SetCurrentTime(
+            snap_to_frame(new_time, fps).clamp(0.0, duration),
+        ));
     }
 
     let frame_interval = 1.0 / fps.max(1) as f32;

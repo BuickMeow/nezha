@@ -1,9 +1,10 @@
-use eframe::egui;
 use crate::transport::controller::TimelineCommand;
 use crate::transport::layout::TimelineLayout;
-use crate::transport::{TimelineState, ThemeColors};
-use crate::transport::timecode::{format_timecode_full, font};
+use crate::transport::timecode::{font, format_timecode_full};
+use crate::transport::{ThemeColors, TimelineState};
+use eframe::egui;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_controls(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
@@ -17,7 +18,12 @@ pub fn draw_controls(
 ) {
     let controls_rect = layout.controls_rect;
     painter.rect_filled(controls_rect, 0.0, c.controls_bg);
-    painter.rect_stroke(controls_rect, 0.0, egui::Stroke::new(1.0, c.border), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        controls_rect,
+        0.0,
+        egui::Stroke::new(1.0, c.border),
+        egui::StrokeKind::Inside,
+    );
 
     let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(controls_rect));
     child_ui.horizontal(|ui| {

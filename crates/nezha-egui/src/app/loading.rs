@@ -7,7 +7,7 @@ pub(super) enum MidiLoadEvent {
     Progress(nezha_core::LoadProgress),
     /// 自定义状态文本（用于 DMS 解压等非音轨阶段）。
     Status(String),
-    Complete(Result<nezha_core::MidiFile, nezha_core::MidiError>),
+    Complete(Box<Result<nezha_core::MidiFile, nezha_core::MidiError>>),
 }
 
 pub(super) struct MidiLoader {
@@ -31,7 +31,7 @@ impl App {
                         loader.current_progress = None;
                     }
                     MidiLoadEvent::Complete(result) => {
-                        match result {
+                        match *result {
                             Ok(midi) => {
                                 let path = loader.path.clone();
                                 self.project.insert_midi(path, midi);
