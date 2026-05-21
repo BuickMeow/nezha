@@ -54,6 +54,7 @@ pub(crate) fn build_parallel_key_groups(
     }
 
     if active_key_count <= 1 {
+        #[allow(clippy::single_range_in_vec_init)]
         return vec![0..128];
     }
 
@@ -72,14 +73,14 @@ pub(crate) fn build_parallel_key_groups(
     let mut start = 0usize;
     let mut acc = 0usize;
 
-    for i in 0..128usize {
+    for (i, weight) in weights.iter().enumerate() {
         let remaining_keys = 128usize - i;
         let remaining_groups = desired_groups.saturating_sub(ranges.len());
         if remaining_groups == 0 {
             break;
         }
 
-        acc += weights[i];
+        acc += weight;
         let should_split = acc >= target_weight && remaining_keys > remaining_groups;
         if should_split {
             ranges.push(start..(i + 1));
@@ -215,8 +216,7 @@ mod tests {
         assert_eq!(order.len(), 128);
 
         // First 75 keys should all be white keys
-        for i in 0..75 {
-            let key = order[i];
+        for (i, &key) in order.iter().enumerate().take(75) {
             assert!(
                 !is_black_key(key),
                 "expected white key at position {}, got key {}",
@@ -225,8 +225,7 @@ mod tests {
             );
         }
         // Remaining 53 keys should all be black keys
-        for i in 75..128 {
-            let key = order[i];
+        for (i, &key) in order.iter().enumerate().skip(75) {
             assert!(
                 is_black_key(key),
                 "expected black key at position {}, got key {}",

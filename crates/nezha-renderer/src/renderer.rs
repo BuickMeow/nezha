@@ -228,6 +228,7 @@ impl Renderer {
     /// Render one frame (legacy API).
     ///
     /// Prefer using [`Self::prepare`] + [`Self::draw`] for compositor integration.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         encoder: &mut CommandEncoder,

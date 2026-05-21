@@ -29,6 +29,7 @@ impl KeyChunkBuildResult {
 /// Build note instances for the current frame.
 ///
 /// Returns the number of note instances (excluding keyboard overlay instances).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_instances(
     instances: &mut Vec<NoteInstance>,
     layouts: &[(f32, f32)],
@@ -98,6 +99,7 @@ pub(crate) fn build_instances(
     note_count
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_instances_time(
     instances: &mut Vec<NoteInstance>,
     layouts: &[(f32, f32)],
@@ -152,6 +154,7 @@ fn build_instances_time(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_instances_tick(
     instances: &mut Vec<NoteInstance>,
     layouts: &[(f32, f32)],
@@ -211,6 +214,7 @@ fn build_instances_tick(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_key_instances_time(
     result: &mut KeyChunkBuildResult,
     key: u8,
@@ -264,6 +268,7 @@ fn append_key_instances_time(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn append_key_instances_tick(
     result: &mut KeyChunkBuildResult,
     key: u8,

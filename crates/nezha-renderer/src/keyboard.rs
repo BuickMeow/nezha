@@ -70,6 +70,7 @@ pub(crate) fn append_keyboard_instances(
     let black_h = kh * BLACK_KEY_HEIGHT_RATIO;
     out.reserve(128);
 
+    #[allow(clippy::too_many_arguments)]
     fn build_key_instance(
         key: u8,
         layouts: &[(f32, f32)],
@@ -109,13 +110,13 @@ pub(crate) fn append_keyboard_instances(
         }
         if let Some(inst) = build_key_instance(
             key,
-            &layouts,
+            layouts,
             key_top,
             kh,
             WHITE_KEY_COLOR,
             WHITE_KEY_CORNER_RADIUS,
-            &active_keys,
-            &active_colors,
+            active_keys,
+            active_colors,
         ) {
             out.push(inst);
         }
@@ -128,13 +129,13 @@ pub(crate) fn append_keyboard_instances(
         }
         if let Some(inst) = build_key_instance(
             key,
-            &layouts,
+            layouts,
             key_top,
             black_h,
             BLACK_KEY_COLOR,
             BLACK_KEY_CORNER_RADIUS,
-            &active_keys,
-            &active_colors,
+            active_keys,
+            active_colors,
         ) {
             out.push(inst);
         }

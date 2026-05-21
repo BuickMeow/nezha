@@ -95,6 +95,7 @@ impl NoteSeekIndex {
 }
 
 /// Advance scan indices for all 128 keys past notes that have already ended.
+#[allow(clippy::type_complexity)]
 pub(crate) fn advance_scan_indices(
     midi: &dyn NoteSource,
     state: &mut MidiRenderState,
