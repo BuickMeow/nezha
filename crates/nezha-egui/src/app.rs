@@ -31,9 +31,13 @@ impl App {
             puffin::set_scopes_on(true);
             // Leak the server so it lives for the entire app lifetime
             let _ = std::mem::ManuallyDrop::new(
-                puffin_http::Server::new("0.0.0.0:8585").expect("puffin_http"),
+                puffin_http::Server::new(format!(
+                    "0.0.0.0:{}",
+                    nezha_renderer::constants::PUFFIN_PORT
+                ))
+                .expect("puffin_http"),
             );
-            println!("🔥 Puffin bridge on :8585 → puffin_viewer --url 127.0.0.1:8585");
+            tracing::info!("Puffin bridge on :8585");
         }
 
         let mut fonts = egui::FontDefinitions::default();
@@ -62,7 +66,11 @@ impl App {
         let font_atlas = nezha_text::FontAtlas::new(&wgpu_state.device, &wgpu_state.queue, font);
 
         Self {
-            render_ctx: RenderContext::new(cc, 1920, 1080),
+            render_ctx: RenderContext::new(
+                cc,
+                nezha_renderer::constants::DEFAULT_PREVIEW_WIDTH,
+                nezha_renderer::constants::DEFAULT_PREVIEW_HEIGHT,
+            ),
             project: ProjectState::new(),
             ui: UiState::default(),
             export_state: None,

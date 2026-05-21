@@ -250,7 +250,9 @@ impl TimelineView {
     }
 
     pub fn clamp_scroll_y(&mut self, track_area_height: f32, total_track_height: f32) {
-        let max_scroll = (total_track_height - track_area_height).max(0.0);
+        // 留出半个轨道高度的底部余量，便于最后一条轨道完全可见
+        let bottom_margin = self.track_height * 0.5;
+        let max_scroll = (total_track_height + bottom_margin - track_area_height).max(0.0);
         self.scroll_y = self.scroll_y.clamp(0.0, max_scroll);
     }
 }
@@ -324,40 +326,52 @@ impl TimelineState {
         }
     }
 
+    /// Push a new clip onto a new track at the top of the timeline.
+    pub fn push_clip(
+        &mut self,
+        kind: ClipKind,
+        duration: f32,
+        midi_idx: Option<usize>,
+        color: egui::Color32,
+    ) {
+        let id = self.next_clip_id;
+        self.next_clip_id += 1;
+        let track_id = self.data.next_track_id;
+        self.data.next_track_id += 1;
+        let mut track = Track::new_video(&format!("视频 {}", track_id));
+        let mut clip = match kind {
+            ClipKind::Waterfall => TrackClip::new_waterfall(id, midi_idx),
+            ClipKind::SolidColor => TrackClip::new_solid_color(id, color),
+            ClipKind::Counter => TrackClip::new_counter(id),
+        };
+        clip.end = if duration > 0.0 { duration } else { 5.0 };
+        track.clips.push(clip);
+        self.data.tracks.insert(0, track);
+    }
+
+    /// Convenience wrapper to push a waterfall clip.
     pub fn push_waterfall_clip(&mut self, midi_idx: Option<usize>, duration: f32) {
-        let id = self.next_clip_id;
-        self.next_clip_id += 1;
-        let track_id = self.data.next_track_id;
-        self.data.next_track_id += 1;
-        let mut track = Track::new_video(&format!("视频 {}", track_id));
-        let mut clip = TrackClip::new_waterfall(id, midi_idx);
-        clip.end = if duration > 0.0 { duration } else { 5.0 };
-        track.clips.push(clip);
-        self.data.tracks.insert(0, track);
+        self.push_clip(
+            ClipKind::Waterfall,
+            duration,
+            midi_idx,
+            egui::Color32::TRANSPARENT,
+        );
     }
 
+    /// Convenience wrapper to push a solid color clip.
     pub fn push_solid_color_clip(&mut self, color: egui::Color32, duration: f32) {
-        let id = self.next_clip_id;
-        self.next_clip_id += 1;
-        let track_id = self.data.next_track_id;
-        self.data.next_track_id += 1;
-        let mut track = Track::new_video(&format!("视频 {}", track_id));
-        let mut clip = TrackClip::new_solid_color(id, color);
-        clip.end = if duration > 0.0 { duration } else { 5.0 };
-        track.clips.push(clip);
-        self.data.tracks.insert(0, track);
+        self.push_clip(ClipKind::SolidColor, duration, None, color);
     }
 
+    /// Convenience wrapper to push a counter clip.
     pub fn push_counter_clip(&mut self, duration: f32) {
-        let id = self.next_clip_id;
-        self.next_clip_id += 1;
-        let track_id = self.data.next_track_id;
-        self.data.next_track_id += 1;
-        let mut track = Track::new_video(&format!("视频 {}", track_id));
-        let mut clip = TrackClip::new_counter(id);
-        clip.end = if duration > 0.0 { duration } else { 5.0 };
-        track.clips.push(clip);
-        self.data.tracks.insert(0, track);
+        self.push_clip(
+            ClipKind::Counter,
+            duration,
+            None,
+            egui::Color32::TRANSPARENT,
+        );
     }
 
     pub fn remove_selected_clip(&mut self) {

@@ -11,8 +11,10 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 bytemuck = { workspace = true }
 nezha-core = { path = "../nezha-core" }
+nezha-compositor = { path = "../nezha-compositor" }
 half = "2.7.1"
 rayon = "1.10.0"
+tracing = { workspace = true }
 puffin = { workspace = true, optional = true }
 
 [build-dependencies]

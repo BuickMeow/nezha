@@ -55,19 +55,35 @@ impl GpuTimer {
             let _ = tx.send(result);
         });
 
-        // Poll in a loop with timeout — Metal backend doesn't always
-        // drive the mapping callback via PollType::Wait alone.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // Poll with timeout — use Wait for the first attempt, then fall back to Poll + yield.
+        const POLL_ATTEMPTS: u32 = 20;
         let mut done = false;
-        while std::time::Instant::now() < deadline && !done {
-            let _ = device.poll(PollType::Poll);
-            done = rx.try_recv().is_ok();
-            if !done {
+        for _ in 0..POLL_ATTEMPTS {
+            let _ = device.poll(PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_millis(100)),
+            });
+            if rx.try_recv().is_ok() {
+                done = true;
+                break;
+            }
+        }
+        if !done {
+            // Second pass with Poll + yield for backends that don't support Wait timeout
+            for _ in 0..POLL_ATTEMPTS {
+                let _ = device.poll(PollType::Poll);
+                if rx.try_recv().is_ok() {
+                    done = true;
+                    break;
+                }
                 std::thread::yield_now();
             }
         }
         if !done {
-            // Timed out — map may still be pending; ignore this frame
+            tracing::warn!(
+                "GPU timestamp readback timed out after {} attempts",
+                POLL_ATTEMPTS * 2
+            );
             return None;
         }
 

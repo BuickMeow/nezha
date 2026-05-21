@@ -8,6 +8,7 @@ profiling = ["nezha-renderer/profiling", "puffin", "puffin_http"]
 
 [dependencies]
 eframe = { workspace = true }
+tracing = { workspace = true }
 egui = { workspace = true }
 wgpu = { workspace = true }
 nezha-core = { path = "../nezha-core" }
@@ -18,6 +19,7 @@ nezha-dms = { path = "../nezha-dms" }
 nezha-encoder = { path = "../nezha-encoder" }
 nezha-text = { path = "../nezha-text" }
 pollster = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rfd = "0.17.2"
 puffin = { workspace = true, optional = true }
 puffin_http = { version = "0.17", optional = true }

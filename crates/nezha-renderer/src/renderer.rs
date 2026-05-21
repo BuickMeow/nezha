@@ -1,7 +1,11 @@
+use nezha_compositor::compute_scissor_rect;
+use rayon::prelude::*;
 use wgpu::*;
 
-use rayon::prelude::*;
-
+use crate::constants::{
+    MAX_INSTANCE_COUNT, MAX_PARALLEL_KEY_GROUPS, MIN_INSTANCE_BUFFER_CAPACITY, MIN_SPEED,
+    PIXELS_PER_SEC_BASE, SEEK_INDEX_BLOCK_SIZE,
+};
 use crate::gpu_timer::GpuTimer;
 use crate::keyboard;
 use crate::pipeline::RenderPipelineState;
@@ -114,12 +118,6 @@ pub struct Renderer {
     pub state: MidiRenderState,
     pub seek_index: Option<NoteSeekIndex>,
 }
-
-/// CPU path keeps multi-buffer batching to avoid a single hard cap per frame.
-const MAX_INSTANCE_COUNT: usize = 6_000_000;
-const MAX_PARALLEL_KEY_GROUPS: usize = 16;
-const SEEK_INDEX_BLOCK_SIZE: usize = 256;
-const MIN_INSTANCE_BUFFER_CAPACITY: usize = 4_096;
 
 struct InstanceBufferSlot {
     buffer: Buffer,
@@ -314,10 +312,7 @@ impl Renderer {
             timestamp_writes: None,
         });
 
-        let sx = (rect.0 * width as f32).clamp(0.0, width as f32) as u32;
-        let sy = (rect.1 * height as f32).clamp(0.0, height as f32) as u32;
-        let sw = (rect.2 * width as f32).clamp(1.0, (width - sx) as f32) as u32;
-        let sh = (rect.3 * height as f32).clamp(1.0, (height - sy) as f32) as u32;
+        let (sx, sy, sw, sh) = compute_scissor_rect(rect, width, height);
         pass.set_scissor_rect(sx, sy, sw, sh);
 
         if !self.instance_buffers.is_empty() && !self.current_batch_counts.is_empty() {
@@ -490,7 +485,7 @@ impl Renderer {
     ) {
         let kh = (style.keyboard_height as f64).max(0.0);
         let effective_h = (height as f64 - kh).max(1.0);
-        let pps = 200.0f64 * speed.max(0.01) as f64;
+        let pps = PIXELS_PER_SEC_BASE * speed.max(MIN_SPEED) as f64;
         let screen_top = effective_h + time * pps;
         let time_top = time + effective_h / pps;
         let time_bottom = time;
@@ -545,7 +540,7 @@ impl Renderer {
         let kh = (style.keyboard_height as f64).max(0.0);
         let effective_h = (height as f64 - kh).max(1.0);
         let ticks_per_beat = midi.ticks_per_beat().unwrap_or(480) as f64;
-        let ppt = 100.0 / ticks_per_beat * speed.max(0.01) as f64;
+        let ppt = 100.0 / ticks_per_beat * speed.max(MIN_SPEED) as f64;
         let scroll_tick = midi
             .tick_at_time(time)
             .unwrap_or(time * ticks_per_beat * 2.0);
@@ -596,79 +591,59 @@ impl Renderer {
         mode: RenderMode,
         seek_index: Option<&NoteSeekIndex>,
     ) {
-        match mode {
-            RenderMode::TimeBased => {
-                let rewound = time < state.last_time;
-                state.last_time = time;
-                if let Some(seek_index) = seek_index {
-                    state
-                        .scan_indices
-                        .par_iter_mut()
-                        .enumerate()
-                        .for_each(|(key, scan_slot)| {
-                            let notes = midi.key_notes(key as u8);
-                            *scan_slot = seek_index.per_key[key].scan_index_for_time(notes, time);
-                        });
-                } else {
-                    if rewound {
-                        state.scan_indices = [0; 128];
-                    }
-                    state
-                        .scan_indices
-                        .par_iter_mut()
-                        .enumerate()
-                        .for_each(|(key, scan_slot)| {
-                            let notes = midi.key_notes(key as u8);
-                            if notes.is_empty() {
-                                *scan_slot = 0;
-                                return;
-                            }
+        let (threshold, last_field, scan_with_seek, scan_linear): (
+            f64,
+            &mut f64,
+            fn(&KeySeekIndex, &[nezha_core::Note], f64) -> usize,
+            fn(&nezha_core::Note) -> f64,
+        ) = match mode {
+            RenderMode::TimeBased => (
+                time,
+                &mut state.last_time,
+                KeySeekIndex::scan_index_for_time,
+                |n| n.end,
+            ),
+            RenderMode::TickBased => (
+                scroll_tick,
+                &mut state.last_scroll_tick,
+                KeySeekIndex::scan_index_for_tick,
+                |n| n.end_tick as f64,
+            ),
+        };
 
-                            let mut scan = (*scan_slot).min(notes.len());
-                            while scan < notes.len() && notes[scan].end <= time {
-                                scan += 1;
-                            }
-                            *scan_slot = scan;
-                        });
-                }
-            }
-            RenderMode::TickBased => {
-                let rewound = scroll_tick < state.last_scroll_tick;
-                state.last_scroll_tick = scroll_tick;
-                if let Some(seek_index) = seek_index {
-                    state
-                        .scan_indices
-                        .par_iter_mut()
-                        .enumerate()
-                        .for_each(|(key, scan_slot)| {
-                            let notes = midi.key_notes(key as u8);
-                            *scan_slot =
-                                seek_index.per_key[key].scan_index_for_tick(notes, scroll_tick);
-                        });
-                } else {
-                    if rewound {
-                        state.scan_indices = [0; 128];
-                    }
-                    state
-                        .scan_indices
-                        .par_iter_mut()
-                        .enumerate()
-                        .for_each(|(key, scan_slot)| {
-                            let notes = midi.key_notes(key as u8);
-                            if notes.is_empty() {
-                                *scan_slot = 0;
-                                return;
-                            }
+        let rewound = threshold < *last_field;
+        *last_field = threshold;
 
-                            let mut scan = (*scan_slot).min(notes.len());
-                            while scan < notes.len() && (notes[scan].end_tick as f64) <= scroll_tick
-                            {
-                                scan += 1;
-                            }
-                            *scan_slot = scan;
-                        });
-                }
+        if let Some(seek_index) = seek_index {
+            state
+                .scan_indices
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(key, scan_slot)| {
+                    let notes = midi.key_notes(key as u8);
+                    *scan_slot = scan_with_seek(&seek_index.per_key[key], notes, threshold);
+                });
+        } else {
+            if rewound {
+                state.scan_indices = [0; 128];
             }
+            state
+                .scan_indices
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(key, scan_slot)| {
+                    let notes = midi.key_notes(key as u8);
+                    if notes.is_empty() {
+                        *scan_slot = 0;
+                        return;
+                    }
+
+                    let mut scan = (*scan_slot).min(notes.len());
+                    while scan < notes.len() && scan_linear(&notes[scan]) <= threshold {
+                        scan += 1;
+                    }
+                    *scan_slot = scan;
+                });
         }
     }
 
@@ -908,5 +883,104 @@ impl Renderer {
             self.cached_layout_width = width;
             self.cached_layout_equal_key_width = equal_key_width;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_note(end: f64, end_tick: u32) -> nezha_core::Note {
+        nezha_core::Note {
+            key: 60,
+            start: 0.0,
+            end,
+            start_tick: 0,
+            end_tick,
+            velocity: 100,
+            channel: 0,
+            track: 0,
+        }
+    }
+
+    #[test]
+    fn test_key_seek_index_empty() {
+        let idx = KeySeekIndex::build(&[]);
+        assert_eq!(idx.scan_index_for_time(&[], 10.0), 0);
+        assert_eq!(idx.scan_index_for_tick(&[], 100.0), 0);
+    }
+
+    #[test]
+    fn test_key_seek_index_single_block() {
+        let notes: Vec<_> = (0..10)
+            .map(|i| make_note(i as f64 + 1.0, i * 100 + 100))
+            .collect();
+        let idx = KeySeekIndex::build(&notes);
+
+        // All notes end before time=5.5 → scan should advance past them
+        assert_eq!(idx.scan_index_for_time(&notes, 5.5), 5);
+        assert_eq!(idx.scan_index_for_time(&notes, 11.0), notes.len());
+
+        // Tick-based
+        assert_eq!(idx.scan_index_for_tick(&notes, 550.0), 5);
+        assert_eq!(idx.scan_index_for_tick(&notes, 1100.0), notes.len());
+    }
+
+    #[test]
+    fn test_key_seek_index_multi_block() {
+        // SEEK_INDEX_BLOCK_SIZE = 256, create 300 notes to span 2 blocks
+        let count = 300usize;
+        let notes: Vec<_> = (0..count)
+            .map(|i| make_note(i as f64 * 0.5 + 0.5, (i as u32) * 50 + 50))
+            .collect();
+        let idx = KeySeekIndex::build(&notes);
+
+        // Time=75 → first 150 notes end before this
+        assert_eq!(idx.scan_index_for_time(&notes, 75.0), 150);
+        // Time=150 → all 300 done
+        assert_eq!(idx.scan_index_for_time(&notes, 150.0), 300);
+
+        // Tick-based: tick=7500 → first 150 notes done
+        assert_eq!(idx.scan_index_for_tick(&notes, 7500.0), 150);
+    }
+
+    #[test]
+    fn test_build_parallel_key_groups_single_active() {
+        let mut scan_indices = [0usize; 128];
+        let mut render_keys = [0u8; 128];
+        for i in 0..128u8 {
+            render_keys[i as usize] = i;
+        }
+
+        // Mock NoteSource that returns non-empty only for key 60
+        struct SingleKeySource;
+        impl NoteSource for SingleKeySource {
+            fn key_notes(&self, key: u8) -> &[nezha_core::Note] {
+                if key == 60 {
+                    static NOTES: [nezha_core::Note; 1] = [nezha_core::Note {
+                        key: 60,
+                        start: 0.0,
+                        end: 10.0,
+                        start_tick: 0,
+                        end_tick: 480,
+                        velocity: 100,
+                        channel: 0,
+                        track: 0,
+                    }];
+                    &NOTES
+                } else {
+                    &[]
+                }
+            }
+            fn duration(&self) -> f64 {
+                10.0
+            }
+        }
+
+        let groups =
+            Renderer::build_parallel_key_groups(&render_keys, &scan_indices, &SingleKeySource);
+        // Single active key → entire range returned
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0], 0..128);
     }
 }

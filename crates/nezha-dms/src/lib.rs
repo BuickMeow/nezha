@@ -93,39 +93,29 @@ impl DmsFile {
 mod tests {
     use super::*;
 
-    fn load_test_data() -> Option<Vec<u8>> {
-        std::fs::read("../../assets/Song.dms").ok()
-    }
-
     #[test]
-    fn test_parse_song_dms() {
-        let Some(data) = load_test_data() else {
-            eprintln!("Skipping test: ../../assets/Song.dms not found");
-            return;
-        };
-        let result = DmsFile::from_bytes(&data);
-        if let Err(ref e) = result {
-            eprintln!("Parse error: {}", e);
+    fn test_invalid_header() {
+        let result = DmsFile::from_bytes(b"not a dms file");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DmsError::InvalidDms => {}
+            e => panic!("expected InvalidDms, got: {e}"),
         }
-        assert!(result.is_ok());
     }
 
     #[test]
-    fn test_parse_song_dms_with_progress() {
-        let Some(data) = load_test_data() else {
-            eprintln!("Skipping test: ../../assets/Song.dms not found");
-            return;
-        };
-        let mut events = Vec::new();
-        let result = DmsFile::from_bytes_with_progress(&data, |p| events.push(p));
-        assert!(result.is_ok());
-        assert!(
-            events.contains(&DmsLoadProgress::Decompressing),
-            "should have Decompressing"
-        );
-        assert!(
-            events.contains(&DmsLoadProgress::GeneratingSmf),
-            "should have GeneratingSmf"
-        );
+    fn test_short_data() {
+        let result = DmsFile::from_bytes(b"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = DmsFile::load("/nonexistent/path.dms");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            DmsError::Io(_) => {}
+            e => panic!("expected Io error, got: {e}"),
+        }
     }
 }

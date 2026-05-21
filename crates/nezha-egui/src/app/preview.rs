@@ -142,152 +142,151 @@ impl App {
         self.render_ctx.submit_and_map_staging(slot);
     }
 
-    /// 渲染所有可见图层到当前 frame encoder（不创建/提交 encoder）。
-    fn render_all_layers(&mut self, time: f32, render_width: u32, render_height: u32) {
-        let layers = self.collect_visible_layers(time);
-        let default_style = self.default_style();
-
-        let mut compositor = Compositor::new();
-        let preview_view = self.render_ctx.preview_view().clone();
-        let mut is_first = true;
-        let mut total_notes = 0usize;
-        let mut counter_clips: Vec<LayerData> = Vec::new();
-
-        // 辅助：从 LayerCommon 计算归一化 rect
-        let make_rect = |c: &LayerCommon, w: f32, h: f32| -> (f32, f32, f32, f32) {
-            (
-                c.position_x / w,
-                c.position_y / h,
-                c.scale_x.abs(),
-                c.scale_y.abs(),
-            )
+    /// Render a solid color clip into the compositor.
+    fn render_solid_color_layer(
+        &mut self,
+        compositor: &mut Compositor,
+        preview_view: &wgpu::TextureView,
+        clip: &LayerData,
+        time: f32,
+        render_width: u32,
+        render_height: u32,
+        rect: (f32, f32, f32, f32),
+        is_first: bool,
+    ) {
+        let opacity = clip.common.opacity as f64;
+        let color = [
+            clip.color.r() as f64 / 255.0,
+            clip.color.g() as f64 / 255.0,
+            clip.color.b() as f64 / 255.0,
+            opacity,
+        ];
+        let load_op = if is_first {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: color[0],
+                g: color[1],
+                b: color[2],
+                a: color[3],
+            })
+        } else {
+            wgpu::LoadOp::Load
         };
+        let mut solid = nezha_compositor::SolidColorLayer::new(
+            self.render_ctx.device(),
+            self.render_ctx.queue(),
+            self.render_ctx.target_format(),
+            color,
+        );
+        let encoder = self.render_ctx.encoder_mut();
+        compositor.render_layer(
+            encoder,
+            &mut solid,
+            preview_view,
+            render_width,
+            render_height,
+            time as f64,
+            load_op,
+            clip.common.blend_mode,
+            rect,
+        );
+    }
+
+    /// Render a waterfall (note visualization) clip into the compositor.
+    fn render_waterfall_layer(
+        &mut self,
+        compositor: &mut Compositor,
+        preview_view: &wgpu::TextureView,
+        clip: &LayerData,
+        time: f32,
+        render_width: u32,
+        render_height: u32,
+        rect: (f32, f32, f32, f32),
+        default_palette: [[f32; 3]; 128],
+        is_first: bool,
+    ) -> usize {
+        let Some(midi_idx) = clip.midi_idx else {
+            return 0;
+        };
+        let Some(entry) = self.project.midi.entries.get(midi_idx) else {
+            return 0;
+        };
+
+        let clip_time = (time - clip.clip_start).max(0.0) as f64;
+        let keyboard_height_px = render_height as f32 * clip.keyboard_height_percent;
+        let opacity = clip.common.opacity as f64;
+        let clip_style = nezha_renderer::RenderStyle {
+            render_mode: clip.render_mode,
+            border_width: clip.border_width,
+            rounding: clip.rounding,
+            track_index: 0,
+            palette: default_palette,
+            background: [0.0, 0.0, 0.0, opacity],
+            equal_key_width: clip.equal_key_width,
+            keyboard_height: keyboard_height_px,
+        };
+
+        let load_op = if is_first {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: clip_style.background[0],
+                g: clip_style.background[1],
+                b: clip_style.background[2],
+                a: clip_style.background[3],
+            })
+        } else {
+            wgpu::LoadOp::Load
+        };
+
+        let renderer = self.render_ctx.get_or_create_renderer(
+            clip.clip_id,
+            midi_idx,
+            &entry.file,
+            render_width,
+            clip.equal_key_width,
+        );
+        renderer.prepare(
+            render_width,
+            render_height,
+            clip_time,
+            clip.speed,
+            Some(&entry.file),
+            &clip_style,
+        );
+        let note_count = renderer.total_instances();
+
+        let blend_mode = clip.common.blend_mode;
+        self.render_ctx
+            .with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
+                let mut wrapper = WaterfallLayer { renderer };
+                compositor.render_layer(
+                    encoder,
+                    &mut wrapper,
+                    preview_view,
+                    render_width,
+                    render_height,
+                    clip_time,
+                    load_op,
+                    blend_mode,
+                    rect,
+                );
+            });
+        note_count
+    }
+
+    /// Render all counter (text overlay) clips after other layers.
+    fn render_counter_layers(
+        &mut self,
+        compositor: &mut Compositor,
+        preview_view: &wgpu::TextureView,
+        counter_clips: &[LayerData],
+        time: f32,
+        render_width: u32,
+        render_height: u32,
+        make_rect: &impl Fn(&LayerCommon, f32, f32) -> (f32, f32, f32, f32),
+        total_notes: usize,
+    ) {
         let rw = render_width as f32;
         let rh = render_height as f32;
-
-        for clip in &layers {
-            if clip.kind == ClipKind::Counter {
-                counter_clips.push(clip.clone());
-                continue;
-            }
-
-            match clip.kind {
-                ClipKind::SolidColor => {
-                    let opacity = clip.common.opacity as f64;
-                    let color = [
-                        clip.color.r() as f64 / 255.0,
-                        clip.color.g() as f64 / 255.0,
-                        clip.color.b() as f64 / 255.0,
-                        opacity,
-                    ];
-                    let load_op = if is_first {
-                        wgpu::LoadOp::Clear(wgpu::Color {
-                            r: color[0],
-                            g: color[1],
-                            b: color[2],
-                            a: color[3],
-                        })
-                    } else {
-                        wgpu::LoadOp::Load
-                    };
-                    let mut solid = nezha_compositor::SolidColorLayer::new(
-                        self.render_ctx.device(),
-                        self.render_ctx.queue(),
-                        self.render_ctx.target_format(),
-                        color,
-                    );
-                    let rect = make_rect(&clip.common, rw, rh);
-                    let encoder = self.render_ctx.encoder_mut();
-                    compositor.render_layer(
-                        encoder,
-                        &mut solid,
-                        &preview_view,
-                        render_width,
-                        render_height,
-                        time as f64,
-                        load_op,
-                        clip.common.blend_mode,
-                        rect,
-                    );
-                    is_first = false;
-                }
-                ClipKind::Waterfall => {
-                    let Some(midi_idx) = clip.midi_idx else {
-                        continue;
-                    };
-                    let Some(entry) = self.project.midi.entries.get(midi_idx) else {
-                        continue;
-                    };
-
-                    let clip_time = (time - clip.clip_start).max(0.0) as f64;
-                    let keyboard_height_px = render_height as f32 * clip.keyboard_height_percent;
-                    let opacity = clip.common.opacity as f64;
-                    let clip_style = nezha_renderer::RenderStyle {
-                        render_mode: clip.render_mode,
-                        border_width: clip.border_width,
-                        rounding: clip.rounding,
-                        track_index: 0,
-                        palette: default_style.palette,
-                        background: [0.0, 0.0, 0.0, opacity],
-                        equal_key_width: clip.equal_key_width,
-                        keyboard_height: keyboard_height_px,
-                    };
-
-                    let load_op = if is_first {
-                        wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clip_style.background[0],
-                            g: clip_style.background[1],
-                            b: clip_style.background[2],
-                            a: clip_style.background[3],
-                        })
-                    } else {
-                        wgpu::LoadOp::Load
-                    };
-
-                    let renderer = self.render_ctx.get_or_create_renderer(
-                        clip.clip_id,
-                        midi_idx,
-                        &entry.file,
-                        render_width,
-                        clip.equal_key_width,
-                    );
-                    renderer.prepare(
-                        render_width,
-                        render_height,
-                        clip_time,
-                        clip.speed,
-                        Some(&entry.file),
-                        &clip_style,
-                    );
-                    total_notes += renderer.total_instances();
-
-                    let blend_mode = clip.common.blend_mode;
-                    let rect = make_rect(&clip.common, rw, rh);
-                    self.render_ctx
-                        .with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
-                            let mut wrapper = WaterfallLayer { renderer };
-                            compositor.render_layer(
-                                encoder,
-                                &mut wrapper,
-                                &preview_view,
-                                render_width,
-                                render_height,
-                                clip_time,
-                                load_op,
-                                blend_mode,
-                                rect,
-                            );
-                        });
-                    is_first = false;
-                }
-                ClipKind::Counter => {
-                    unreachable!();
-                }
-            }
-        }
-
-        // 渲染所有 Counter 图层（在所有非 Counter 图层之后）
-        for counter in &counter_clips {
+        for counter in counter_clips {
             let text = format!("{:.2}s | Notes: {}", time, total_notes);
             let opacity = counter.common.opacity;
             let color_f = [
@@ -313,7 +312,7 @@ impl App {
             compositor.render_layer(
                 encoder,
                 &mut text_layer,
-                &preview_view,
+                preview_view,
                 render_width,
                 render_height,
                 time as f64,
@@ -322,6 +321,83 @@ impl App {
                 rect,
             );
         }
+    }
+
+    /// Render all visible layers into the current frame encoder.
+    fn render_all_layers(&mut self, time: f32, render_width: u32, render_height: u32) {
+        let layers = self.collect_visible_layers(time);
+        let default_style = self.default_style();
+
+        let mut compositor = Compositor::new();
+        let preview_view = self.render_ctx.preview_view().clone();
+        let mut is_first = true;
+        let mut total_notes = 0usize;
+        let mut counter_clips: Vec<LayerData> = Vec::new();
+
+        let make_rect = |c: &LayerCommon, w: f32, h: f32| -> (f32, f32, f32, f32) {
+            (
+                c.position_x / w,
+                c.position_y / h,
+                c.scale_x.abs(),
+                c.scale_y.abs(),
+            )
+        };
+        let rw = render_width as f32;
+        let rh = render_height as f32;
+
+        for clip in &layers {
+            if clip.kind == ClipKind::Counter {
+                counter_clips.push(clip.clone());
+                continue;
+            }
+
+            let rect = make_rect(&clip.common, rw, rh);
+
+            match clip.kind {
+                ClipKind::SolidColor => {
+                    self.render_solid_color_layer(
+                        &mut compositor,
+                        &preview_view,
+                        clip,
+                        time,
+                        render_width,
+                        render_height,
+                        rect,
+                        is_first,
+                    );
+                    is_first = false;
+                }
+                ClipKind::Waterfall => {
+                    let note_count = self.render_waterfall_layer(
+                        &mut compositor,
+                        &preview_view,
+                        clip,
+                        time,
+                        render_width,
+                        render_height,
+                        rect,
+                        default_style.palette,
+                        is_first,
+                    );
+                    total_notes += note_count;
+                    is_first = false;
+                }
+                ClipKind::Counter => {
+                    unreachable!();
+                }
+            }
+        }
+
+        self.render_counter_layers(
+            &mut compositor,
+            &preview_view,
+            &counter_clips,
+            time,
+            render_width,
+            render_height,
+            &make_rect,
+            total_notes,
+        );
     }
 
     pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {

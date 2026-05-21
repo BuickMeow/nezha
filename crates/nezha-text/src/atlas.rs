@@ -10,6 +10,9 @@ use wgpu::{
 
 use crate::font::FontRef;
 
+/// Width and height of the glyph atlas texture (square).
+const ATLAS_SIZE: u32 = 2048;
+
 /// Information about a glyph that has been packed into the atlas.
 #[derive(Clone, Copy, Debug)]
 pub struct GlyphInfo {
@@ -43,7 +46,7 @@ impl FontAtlas {
     pub const PADDING: u32 = 2;
 
     pub fn new(device: &Device, queue: &wgpu::Queue, font: Arc<FontRef>) -> Self {
-        let size = 2048;
+        let size = ATLAS_SIZE;
         let texture = device.create_texture(&TextureDescriptor {
             label: Some("glyph_atlas"),
             size: wgpu::Extent3d {

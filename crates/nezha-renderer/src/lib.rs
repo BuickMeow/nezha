@@ -1,3 +1,5 @@
+pub mod constants;
+
 mod gpu_timer;
 mod keyboard;
 mod palette;

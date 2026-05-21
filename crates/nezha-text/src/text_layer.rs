@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
-use nezha_compositor::{BlendMode, LayerRenderer};
+use nezha_compositor::{BlendMode, LayerRenderer, blend_state_for, compute_scissor_rect};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingType, BlendComponent, BlendFactor, BlendOperation, BlendState,
-    Buffer, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder, Device,
-    FragmentState, FrontFace, LoadOp, MultisampleState, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor,
-    ShaderSource, TextureFormat, TextureView, VertexAttribute, VertexBufferLayout, VertexFormat,
-    VertexState, VertexStepMode,
+    BindGroupLayoutEntry, BindingType, Buffer, BufferDescriptor, BufferUsages, ColorTargetState,
+    ColorWrites, CommandEncoder, Device, FragmentState, FrontFace, LoadOp, MultisampleState,
+    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+    ShaderModuleDescriptor, ShaderSource, TextureFormat, TextureView, VertexAttribute,
+    VertexBufferLayout, VertexFormat, VertexState, VertexStepMode,
 };
 
 use crate::atlas::FontAtlas;
@@ -351,10 +350,7 @@ impl<'a> LayerRenderer for TextLayer<'a> {
             timestamp_writes: None,
         });
 
-        let sx = (rect.0 * width as f32).clamp(0.0, width as f32) as u32;
-        let sy = (rect.1 * height as f32).clamp(0.0, height as f32) as u32;
-        let sw = (rect.2 * width as f32).clamp(1.0, (width - sx) as f32) as u32;
-        let sh = (rect.3 * height as f32).clamp(1.0, (height - sy) as f32) as u32;
+        let (sx, sy, sw, sh) = compute_scissor_rect(rect, width, height);
         pass.set_scissor_rect(sx, sy, sw, sh);
 
         let pipeline = self
@@ -365,35 +361,5 @@ impl<'a> LayerRenderer for TextLayer<'a> {
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.draw(0..self.num_vertices, 0..1);
-    }
-}
-
-fn blend_state_for(mode: BlendMode) -> BlendState {
-    match mode {
-        BlendMode::Normal => BlendState::ALPHA_BLENDING,
-        BlendMode::Add => BlendState {
-            color: BlendComponent {
-                src_factor: BlendFactor::One,
-                dst_factor: BlendFactor::One,
-                operation: BlendOperation::Add,
-            },
-            alpha: BlendComponent {
-                src_factor: BlendFactor::One,
-                dst_factor: BlendFactor::One,
-                operation: BlendOperation::Add,
-            },
-        },
-        BlendMode::Multiply => BlendState {
-            color: BlendComponent {
-                src_factor: BlendFactor::Dst,
-                dst_factor: BlendFactor::Zero,
-                operation: BlendOperation::Add,
-            },
-            alpha: BlendComponent {
-                src_factor: BlendFactor::One,
-                dst_factor: BlendFactor::One,
-                operation: BlendOperation::Add,
-            },
-        },
     }
 }

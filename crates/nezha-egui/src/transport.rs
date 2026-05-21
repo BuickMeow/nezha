@@ -88,7 +88,20 @@ pub fn show(
     );
 
     // ── 轨道 ──
-    let y = draw_tracks(ui, &painter, &c, &layout, &metrics, state, &mut commands);
+    // 使用裁剪 painter，防止轨道滚动到标尺区域上方
+    let track_painter = ui.painter_at(egui::Rect::from_min_max(
+        egui::pos2(timeline_rect.min.x, layout.ruler_rect.max.y),
+        egui::pos2(timeline_rect.max.x, layout.content_bottom),
+    ));
+    let y = draw_tracks(
+        ui,
+        &track_painter,
+        &c,
+        &layout,
+        &metrics,
+        state,
+        &mut commands,
+    );
 
     // 限制垂直滚动不超出底部
     let total_track_height = (y - layout.ruler_rect.max.y).max(0.0);
