@@ -485,7 +485,7 @@ impl Renderer {
         let effective_h = (height as f64 - kh).max(1.0);
         let pps = 200.0f64 * speed.max(0.01) as f64;
         let screen_top = effective_h + time * pps;
-        let time_top = time + effective_h / pps + 1.0;
+        let time_top = time + effective_h / pps;
         let time_bottom = time;
         let key_groups = Self::build_parallel_key_groups(render_keys, scan_indices, midi);
         let chunk_results = key_groups
