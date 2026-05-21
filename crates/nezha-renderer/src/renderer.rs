@@ -396,6 +396,11 @@ impl Renderer {
         Some(false)
     }
 
+    /// Total number of note instances prepared for the current frame.
+    pub fn total_instances(&self) -> usize {
+        self.current_batch_counts.iter().sum()
+    }
+
     fn build_instances(
         instances: &mut Vec<NoteInstance>,
         layouts: &[(f32, f32)],

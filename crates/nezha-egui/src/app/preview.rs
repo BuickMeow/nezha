@@ -142,6 +142,7 @@ impl App {
         let mut compositor = Compositor::new();
         let preview_view = self.render_ctx.preview_view().clone();
         let mut is_first = true;
+        let mut total_notes = 0usize;
 
         for clip in &layers {
             match clip.kind {
@@ -214,22 +215,22 @@ impl App {
                         wgpu::LoadOp::Load
                     };
 
-                    self.render_ctx
-                        .get_or_create_renderer(
-                            clip.clip_id,
-                            midi_idx,
-                            &entry.file,
-                            render_width,
-                            clip.equal_key_width,
-                        )
-                        .prepare(
-                            render_width,
-                            render_height,
-                            clip_time,
-                            clip.speed,
-                            Some(&entry.file),
-                            &clip_style,
-                        );
+                    let renderer = self.render_ctx.get_or_create_renderer(
+                        clip.clip_id,
+                        midi_idx,
+                        &entry.file,
+                        render_width,
+                        clip.equal_key_width,
+                    );
+                    renderer.prepare(
+                        render_width,
+                        render_height,
+                        clip_time,
+                        clip.speed,
+                        Some(&entry.file),
+                        &clip_style,
+                    );
+                    total_notes += renderer.total_instances();
 
                     self.render_ctx
                         .with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
@@ -250,6 +251,32 @@ impl App {
                 }
             }
         }
+
+        // ---- Text overlay (note counter + timecode) ----
+        let overlay_text = format!("{:.2}s | Notes: {}", time, total_notes);
+        let mut text_layer = nezha_text::TextLayer::new(
+            &mut self.font_atlas,
+            self.render_ctx.device(),
+            self.render_ctx.queue(),
+            self.render_ctx.target_format(),
+        );
+        text_layer.set_text(overlay_text);
+        text_layer.set_position([20.0, 20.0]);
+        text_layer.set_font_size(24);
+        text_layer.set_color([1.0, 1.0, 1.0, 1.0]);
+
+        let encoder = self.render_ctx.encoder_mut();
+        compositor.render_layer(
+            encoder,
+            &mut text_layer,
+            &preview_view,
+            render_width,
+            render_height,
+            time as f64,
+            wgpu::LoadOp::Load,
+            nezha_compositor::BlendMode::Normal,
+            (0.0, 0.0, 1.0, 1.0),
+        );
     }
 
     pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {

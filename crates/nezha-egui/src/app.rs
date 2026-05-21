@@ -21,6 +21,7 @@ pub struct App {
     pub export_state: Option<export::ExportState>,
     midi_loader: Option<MidiLoader>,
     archive_picker: Option<archive_picker::ArchivePickerState>,
+    pub font_atlas: nezha_text::FontAtlas,
 }
 
 impl App {
@@ -51,6 +52,15 @@ impl App {
         let theme_mode = ThemeMode::System;
         theme_mode.apply(&cc.egui_ctx);
 
+        let wgpu_state = cc
+            .wgpu_render_state
+            .as_ref()
+            .expect("wgpu backend required");
+        let font =
+            nezha_text::FontRef::from_bytes(include_bytes!("../../../assets/MiSans-Regular.otf"))
+                .expect("failed to load MiSans font");
+        let font_atlas = nezha_text::FontAtlas::new(&wgpu_state.device, &wgpu_state.queue, font);
+
         Self {
             render_ctx: RenderContext::new(cc, 1920, 1080),
             project: ProjectState::new(),
@@ -58,6 +68,7 @@ impl App {
             export_state: None,
             midi_loader: None,
             archive_picker: None,
+            font_atlas,
         }
     }
 
