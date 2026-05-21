@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_min_positive_size() {
-        let (sx, sy, sw, sh) = compute_scissor_rect((0.5, 0.5, 0.0, 0.0), 100, 100);
+        let (_sx, _sy, sw, sh) = compute_scissor_rect((0.5, 0.5, 0.0, 0.0), 100, 100);
         // sw/sh clamped to at least 1
         assert!(sw >= 1);
         assert!(sh >= 1);
