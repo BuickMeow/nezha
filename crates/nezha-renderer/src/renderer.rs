@@ -311,3 +311,29 @@ impl Renderer {
         }
     }
 }
+
+/// Adapter that wraps a [`Renderer`] as a [`LayerRenderer`] for use with the compositor.
+///
+/// Preparation is expected to be done externally before wrapping.
+pub struct WaterfallLayer<'a> {
+    pub renderer: &'a Renderer,
+}
+
+impl<'a> nezha_compositor::LayerRenderer for WaterfallLayer<'a> {
+    fn prepare(&mut self, _width: u32, _height: u32, _time: f64) {}
+
+    fn render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        _time: f64,
+        load_op: wgpu::LoadOp<wgpu::Color>,
+        _blend_mode: nezha_compositor::BlendMode,
+        rect: (f32, f32, f32, f32),
+    ) {
+        self.renderer
+            .draw(encoder, target, width, height, load_op, rect);
+    }
+}

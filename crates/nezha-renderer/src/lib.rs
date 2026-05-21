@@ -15,7 +15,7 @@ mod style;
 mod vertex;
 
 pub use palette::{hsv_to_rgb, random_palette};
-pub use renderer::Renderer;
+pub use renderer::{Renderer, WaterfallLayer};
 pub use scan::{KeySeekIndex, NoteSeekIndex};
 pub use source::NoteSource;
 pub use state::MidiRenderState;

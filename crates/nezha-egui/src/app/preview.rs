@@ -2,33 +2,8 @@ use super::App;
 use crate::piano_view;
 use crate::transport::{ClipKind, LayerCommon};
 use eframe::egui;
-use nezha_compositor::{Compositor, LayerRenderer};
-
-/// Wrapper to adapt [`nezha_renderer::Renderer`] for the compositor's [`LayerRenderer`] trait.
-struct WaterfallLayer<'a> {
-    renderer: &'a nezha_renderer::Renderer,
-}
-
-impl LayerRenderer for WaterfallLayer<'_> {
-    fn prepare(&mut self, _width: u32, _height: u32, _time: f64) {
-        // Preparation is done externally before wrapping.
-    }
-
-    fn render(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        width: u32,
-        height: u32,
-        _time: f64,
-        load_op: wgpu::LoadOp<wgpu::Color>,
-        _blend_mode: nezha_compositor::BlendMode,
-        rect: (f32, f32, f32, f32),
-    ) {
-        self.renderer
-            .draw(encoder, target, width, height, load_op, rect);
-    }
-}
+use nezha_compositor::Compositor;
+use nezha_renderer::WaterfallLayer;
 
 /// 图层渲染所需数据（复制自 TrackClip，避免持有 self 的引用）。
 #[derive(Clone)]
