@@ -36,11 +36,20 @@ pub fn show(
             *zoom *= zoom_delta;
         }
 
+        // 触控板双指滑动 / 鼠标滚轮：平移画布
+        // 按住 Cmd/Ctrl + 滚轮：缩放
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
-        if scroll_delta.y > 0.0 {
-            *zoom *= ZOOM_SCROLL_FACTOR;
-        } else if scroll_delta.y < 0.0 {
-            *zoom /= ZOOM_SCROLL_FACTOR;
+        let cmd_or_ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+        if scroll_delta != egui::Vec2::ZERO {
+            if cmd_or_ctrl {
+                if scroll_delta.y > 0.0 {
+                    *zoom *= ZOOM_SCROLL_FACTOR;
+                } else if scroll_delta.y < 0.0 {
+                    *zoom /= ZOOM_SCROLL_FACTOR;
+                }
+            } else {
+                *pan_offset += scroll_delta;
+            }
         }
 
         *zoom = zoom.clamp(MIN_ZOOM, MAX_ZOOM);
@@ -49,9 +58,12 @@ pub fn show(
         if *zoom != old_zoom
             && let Some(cursor) = pointer_pos
         {
+            // 先计算光标在内容空间（base_size 坐标系）中的锚点
             let center = available / 2.0;
-            let cursor_rel = cursor - response.rect.min - center;
-            *pan_offset += cursor_rel * (1.0 - old_zoom / *zoom);
+            let viewport_pos = cursor - response.rect.min;
+            let anchor = (viewport_pos - center - *pan_offset) / old_zoom;
+            // 根据新缩放重新计算 pan_offset，使同一个锚点保持在光标位置
+            *pan_offset = viewport_pos - center - *zoom * anchor;
         }
     }
 
