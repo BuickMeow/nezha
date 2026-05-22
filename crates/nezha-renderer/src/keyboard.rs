@@ -65,6 +65,7 @@ pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f3
 /// When `equal_key_width` is true, the white keys are expanded so that they fill
 /// the entire keyboard bottom without gaps, while black keys keep their original
 /// equal-width positions and are drawn on top.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn append_keyboard_instances(
     layouts: &[(f32, f32)],
     width: u32,

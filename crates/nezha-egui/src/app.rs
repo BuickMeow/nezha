@@ -34,7 +34,7 @@ impl App {
             puffin::set_scopes_on(true);
             // Leak the server so it lives for the entire app lifetime
             let _ = std::mem::ManuallyDrop::new(
-                puffin_http::Server::new(format!(
+                puffin_http::Server::new(&format!(
                     "0.0.0.0:{}",
                     nezha_renderer::constants::PUFFIN_PORT
                 ))
