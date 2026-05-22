@@ -10,22 +10,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy, rustfmt
 
-      - name: cargo check
-        run: cargo check --workspace
+      - uses: Swatinem/rust-cache@v2
 
-      - name: cargo test
-        run: cargo test --workspace
+      - name: cargo fmt
+        run: cargo fmt --all --check
 
       - name: cargo clippy
         run: cargo clippy --workspace -- -D warnings
 
-      - name: cargo fmt
-        run: cargo fmt --all --check
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+
+      - name: cargo test
+        run: cargo test --workspace
