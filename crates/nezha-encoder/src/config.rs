@@ -119,6 +119,10 @@ pub struct ExportConfig {
     pub codec: VideoCodec,
     pub output_path: PathBuf,
     pub quality: QualityPreset,
+    // Optional audio data for mixing into the output
+    pub audio_pcm: Option<Vec<f32>>,
+    pub audio_sample_rate: u32,
+    pub audio_channels: u16,
 }
 
 impl ExportConfig {

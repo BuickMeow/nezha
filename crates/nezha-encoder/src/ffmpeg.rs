@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::config::{ExportConfig, VideoCodec};
@@ -12,6 +12,8 @@ pub enum EncoderError {
     FfmpegFailed(Option<i32>),
     #[error("ffmpeg not found")]
     FfmpegNotFound,
+    #[error("WAV error: {0}")]
+    Wav(#[from] hound::Error),
 }
 
 #[derive(Debug)]
@@ -19,13 +21,15 @@ pub struct FfmpegEncoder {
     process: std::process::Child,
     sender: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
     join_handle: Option<std::thread::JoinHandle<Result<(), EncoderError>>>,
+    /// Temporary WAV file path to clean up on drop.
+    temp_wav: Option<PathBuf>,
 }
 
 impl FfmpegEncoder {
     pub fn new(config: &ExportConfig) -> Result<Self, EncoderError> {
         let ffmpeg = ffmpeg_path();
 
-        // 如果指向一个具体的 sidecar 路径且文件不存在，报错
+        // Check for bundled ffmpeg
         let is_bundled_path = ffmpeg
             .file_name()
             .is_some_and(|n| n == "ffmpeg" || n == "ffmpeg.exe")
@@ -34,7 +38,16 @@ impl FfmpegEncoder {
             return Err(EncoderError::FfmpegNotFound);
         }
 
-        let args = build_ffmpeg_args(config);
+        // Write audio PCM to a temp WAV file if present
+        let temp_wav: Option<PathBuf> = if let Some(pcm) = &config.audio_pcm {
+            let tmp = std::env::temp_dir().join(format!("nezha_audio_{}.wav", std::process::id()));
+            write_wav_file(&tmp, pcm, config.audio_sample_rate, config.audio_channels)?;
+            Some(tmp)
+        } else {
+            None
+        };
+
+        let args = build_ffmpeg_args(config, temp_wav.as_deref());
 
         let mut process = Command::new(&ffmpeg)
             .args(&args)
@@ -56,6 +69,7 @@ impl FfmpegEncoder {
             process,
             sender: Some(tx),
             join_handle: Some(join_handle),
+            temp_wav,
         })
     }
 
@@ -69,17 +83,17 @@ impl FfmpegEncoder {
     }
 
     pub fn finish(mut self) -> Result<(), EncoderError> {
-        // 关闭 sender，后台线程的 rx 会结束，stdin 被关闭
+        // Close sender so background thread finishes
         self.sender.take();
 
-        // 等待后台线程把所有剩余数据写入 ffmpeg stdin
+        // Wait for background thread
         if let Some(handle) = self.join_handle.take() {
             handle
                 .join()
                 .map_err(|_| EncoderError::FfmpegFailed(None))??;
         }
 
-        // 等待 ffmpeg 子进程结束
+        // Wait for ffmpeg process
         let status = self.process.wait()?;
         if !status.success() {
             let stderr = self
@@ -98,27 +112,56 @@ impl FfmpegEncoder {
             }
             return Err(EncoderError::FfmpegFailed(status.code()));
         }
+
+        // Clean up temp WAV
+        if let Some(tmp) = &self.temp_wav {
+            let _ = std::fs::remove_file(tmp);
+        }
+
         Ok(())
     }
 }
 
 impl Drop for FfmpegEncoder {
     fn drop(&mut self) {
-        // 如果用户取消导出，强制终止 ffmpeg 子进程
+        // Kill ffmpeg if user cancels
         let _ = self.process.kill();
         let _ = self.process.wait();
-        // 等待后台线程退出（pipe broken 后自然结束）
+
+        // Wait for background thread
         if let Some(handle) = self.join_handle.take() {
             let _ = handle.join();
+        }
+
+        // Clean up temp WAV
+        if let Some(tmp) = &self.temp_wav {
+            let _ = std::fs::remove_file(tmp);
         }
     }
 }
 
-/// 返回 ffmpeg 可执行文件的绝对路径。
-///
-/// 查找顺序：
-/// 1. 当前可执行文件所在目录的 sidecar（ffmpeg / ffmpeg.exe）
-/// 2. PATH 中的 ffmpeg
+/// Write PCM samples to a WAV file.
+fn write_wav_file(
+    path: &Path,
+    pcm: &[f32],
+    sample_rate: u32,
+    channels: u16,
+) -> Result<(), EncoderError> {
+    let spec = hound::WavSpec {
+        channels,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    for &sample in pcm {
+        writer.write_sample(sample)?;
+    }
+    writer.finalize()?;
+    Ok(())
+}
+
+/// Return the ffmpeg executable path.
 pub fn ffmpeg_path() -> PathBuf {
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
@@ -141,10 +184,16 @@ pub fn ffmpeg_path() -> PathBuf {
     }
 }
 
-fn build_ffmpeg_args(config: &ExportConfig) -> Vec<String> {
+fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<String> {
     let mut args = Vec::new();
 
-    // 输入：从 stdin 读取 rawvideo（BGRA，与 wgpu Bgra8UnormSrgb 一致）
+    // Audio input first (if present)
+    if let Some(wav_path) = audio_wav {
+        args.push("-i".to_string());
+        args.push(wav_path.to_string_lossy().to_string());
+    }
+
+    // Video input: rawvideo from stdin
     args.push("-f".to_string());
     args.push("rawvideo".to_string());
     args.push("-pix_fmt".to_string());
@@ -158,11 +207,22 @@ fn build_ffmpeg_args(config: &ExportConfig) -> Vec<String> {
     args.push("-i".to_string());
     args.push("-".to_string());
 
-    // 编码器
+    // Map video from the second input (index 1)
+    args.push("-map".to_string());
+    args.push("1:v".to_string());
+
+    // Map audio from the first input (index 0) if present
+    if audio_wav.is_some() {
+        args.push("-map".to_string());
+        args.push("0:a".to_string());
+        args.push("-shortest".to_string());
+    }
+
+    // Video encoder
     args.push("-c:v".to_string());
     args.push(config.codec.ffmpeg_encoder().to_string());
 
-    // 质量与像素格式设置
+    // Quality settings
     match &config.codec {
         VideoCodec::H264 | VideoCodec::H265 => {
             args.push("-crf".to_string());
@@ -171,12 +231,6 @@ fn build_ffmpeg_args(config: &ExportConfig) -> Vec<String> {
             args.push(config.quality.preset().to_string());
             args.push("-pix_fmt".to_string());
             args.push("yuv420p".to_string());
-
-            if config.codec == VideoCodec::H264 {
-                // 不启用 faststart（需二次处理，大文件耗时数分钟）。
-                // 用户如需 web 渐进式下载，可事后运行：
-                //   ffmpeg -i in.mp4 -c copy -movflags +faststart out.mp4
-            }
         }
         VideoCodec::Vp9 => {
             args.push("-crf".to_string());
@@ -194,7 +248,7 @@ fn build_ffmpeg_args(config: &ExportConfig) -> Vec<String> {
         }
         VideoCodec::ProRes => {
             args.push("-profile:v".to_string());
-            args.push("3".to_string()); // 422
+            args.push("3".to_string());
             args.push("-pix_fmt".to_string());
             args.push("yuv422p".to_string());
             args.push("-qscale:v".to_string());
@@ -202,14 +256,22 @@ fn build_ffmpeg_args(config: &ExportConfig) -> Vec<String> {
         }
     }
 
-    // 容器格式
+    // Audio encoder (copy from source, or re-encode to AAC)
+    if audio_wav.is_some() {
+        args.push("-c:a".to_string());
+        args.push("aac".to_string());
+        args.push("-b:a".to_string());
+        args.push("192k".to_string());
+    }
+
+    // Container format
     args.push("-f".to_string());
     args.push(config.container.ffmpeg_muxer().to_string());
 
-    // 覆盖输出文件
+    // Overwrite output
     args.push("-y".to_string());
 
-    // 输出路径
+    // Output path
     args.push(config.output_path.to_string_lossy().to_string());
 
     args

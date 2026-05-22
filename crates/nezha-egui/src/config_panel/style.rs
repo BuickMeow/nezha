@@ -43,6 +43,9 @@ pub fn show(
                 if response.clicked() {
                     *highlighted_midi_idx = Some(idx);
                 }
+                if ui.button("🎵").on_hover_text("渲染音频").clicked() {
+                    action = Some(ConfigAction::RenderAudio(idx));
+                }
                 if ui.button("🗑").clicked() {
                     action = Some(ConfigAction::RemoveMidi(idx));
                 }

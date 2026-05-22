@@ -4,21 +4,14 @@ use crate::properties_panel;
 use crate::sidebar;
 use crate::transport;
 use eframe::egui;
+use std::path::PathBuf;
 
 impl App {
     pub(super) fn handle_config_action(&mut self, action: config_panel::ConfigAction) {
         match action {
             config_panel::ConfigAction::SelectMidi => self.pick_midi_file(),
             config_panel::ConfigAction::AddWaterfall => {
-                let midi_idx = self.project.midi.highlighted_idx;
-                // 如果有选中的 MIDI，使用其真实长度；否则使用时间线总长度
-                let duration = midi_idx
-                    .and_then(|idx| self.project.midi.entries.get(idx))
-                    .map(|e| e.file.duration as f32)
-                    .unwrap_or_else(|| self.project.duration() as f32);
-                self.project
-                    .timeline_state
-                    .push_waterfall_clip(midi_idx, duration);
+                self.add_waterfall_with_audio_prompt();
             }
             config_panel::ConfigAction::AddSolidColor => {
                 let duration = self.project.duration() as f32;
@@ -37,6 +30,43 @@ impl App {
             }
             config_panel::ConfigAction::StartExport => {
                 self.start_export();
+            }
+            // SoundFont actions
+            config_panel::ConfigAction::AddSoundfont => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("SoundFont", &["sf2", "sfz"])
+                    .pick_file()
+                {
+                    self.project
+                        .soundfonts
+                        .push(crate::app::project_state::SoundFontEntry { path });
+                }
+            }
+            config_panel::ConfigAction::RemoveSoundfont(idx) => {
+                if idx < self.project.soundfonts.len() {
+                    self.project.soundfonts.remove(idx);
+                }
+            }
+            config_panel::ConfigAction::MoveSoundfontUp(idx) => {
+                if idx > 0 && idx < self.project.soundfonts.len() {
+                    self.project.soundfonts.swap(idx, idx - 1);
+                }
+            }
+            config_panel::ConfigAction::MoveSoundfontDown(idx) => {
+                if idx + 1 < self.project.soundfonts.len() {
+                    self.project.soundfonts.swap(idx, idx + 1);
+                }
+            }
+            config_panel::ConfigAction::RenderAudio(midi_idx) => {
+                if let Some(entry) = self.project.midi.entries.get(midi_idx) {
+                    self.cached_midi_name = PathBuf::from(&entry.path)
+                        .file_stem()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("MIDI")
+                        .to_string();
+                    self.cached_midi_path = entry.path.clone();
+                    self.render_settings_open = true;
+                }
             }
         }
     }
@@ -91,6 +121,7 @@ impl App {
                     encoder: &mut self.ui.encoder,
                     export_path: &mut self.ui.export_path,
                     theme_mode: &mut self.ui.theme_mode,
+                    soundfonts: &self.project.soundfonts,
                 };
 
                 if let Some(action) = config_panel::show(ui, &mut state) {

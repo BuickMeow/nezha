@@ -15,6 +15,8 @@ pub enum ClipKind {
     SolidColor,
     /// 音符计数器图层：显示当前时间和可见音符数的浮动文本。
     Counter,
+    /// 音频轨道：显示已渲染的 PCM 音频。
+    Audio,
 }
 
 /// 所有图层共有的变换与合成属性。
@@ -66,6 +68,8 @@ pub struct TrackClip {
     pub render_mode: nezha_renderer::RenderMode,
     pub equal_key_width: bool,
     pub midi_idx: Option<usize>,
+    /// 关联的音频索引（指向 AudioStore）。
+    pub audio_idx: Option<usize>,
     pub keyboard_height_percent: f32,
     /// 计数器/文本图层的字号（像素）。
     pub font_size: u32,
@@ -89,6 +93,7 @@ impl TrackClip {
             render_mode: nezha_renderer::RenderMode::TimeBased,
             equal_key_width: false,
             midi_idx,
+            audio_idx: None,
             keyboard_height_percent: 0.15,
             font_size: 24,
             common: LayerCommon::default(),
@@ -110,6 +115,7 @@ impl TrackClip {
             render_mode: nezha_renderer::RenderMode::TimeBased,
             equal_key_width: false,
             midi_idx: None,
+            audio_idx: None,
             keyboard_height_percent: 0.0,
             font_size: 24,
             common: LayerCommon::default(),
@@ -131,6 +137,7 @@ impl TrackClip {
             render_mode: nezha_renderer::RenderMode::TimeBased,
             equal_key_width: false,
             midi_idx: None,
+            audio_idx: None,
             keyboard_height_percent: 0.0,
             font_size: 24,
             common: LayerCommon {
@@ -138,6 +145,29 @@ impl TrackClip {
                 position_y: 20.0,
                 ..Default::default()
             },
+        }
+    }
+
+    /// Create an audio clip referencing a rendered audio entry.
+    pub fn new_audio(id: usize, name: String, audio_idx: usize, duration: f32) -> Self {
+        Self {
+            id,
+            name,
+            kind: ClipKind::Audio,
+            start: 0.0,
+            end: duration,
+            color: egui::Color32::from_rgb(100, 200, 100),
+            text_color: egui::Color32::WHITE,
+            speed: 1.0,
+            border_width: 0.0,
+            rounding: 0.0,
+            render_mode: nezha_renderer::RenderMode::TimeBased,
+            equal_key_width: false,
+            midi_idx: None,
+            audio_idx: Some(audio_idx),
+            keyboard_height_percent: 0.0,
+            font_size: 24,
+            common: LayerCommon::default(),
         }
     }
 }
@@ -156,6 +186,16 @@ impl Track {
         Self {
             name: name.to_string(),
             kind: TrackKind::Video,
+            clips: Vec::new(),
+            muted: false,
+            solo: false,
+        }
+    }
+
+    pub fn new_audio(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            kind: TrackKind::Audio,
             clips: Vec::new(),
             muted: false,
             solo: false,
@@ -297,6 +337,12 @@ pub fn next_video_track_name(tracks: &[Track]) -> String {
     format!("视频 {}", count + 1)
 }
 
+/// 根据已有轨道数量自动生成下一个音频轨道的名称。
+pub fn next_audio_track_name(tracks: &[Track]) -> String {
+    let count = tracks.iter().filter(|t| t.kind == TrackKind::Audio).count();
+    format!("音频 {}", count + 1)
+}
+
 #[derive(Clone, Debug)]
 pub struct TimelineData {
     pub tracks: Vec<Track>,
@@ -369,18 +415,35 @@ impl TimelineData {
                 c.name = format!("计数器 {}", type_count);
                 c
             }
+            ClipKind::Audio => {
+                // Audio clips should be created via TrackClip::new_audio directly.
+                // This fallback is used only when push_clip is called with kind=Audio.
+                let c = TrackClip::new_audio(id, format!("音频 {}", type_count), 0, 5.0);
+                c
+            }
         };
         clip.end = if duration > 0.0 { duration } else { 5.0 };
 
-        // 找第一个空的视频轨道（可能被删光 clip 后留下），没有则新建一条
+        // 根据 clip 类型选择合适的轨道
+        let target_kind = match kind {
+            ClipKind::Audio => TrackKind::Audio,
+            _ => TrackKind::Video,
+        };
+        let name_fn = match kind {
+            ClipKind::Audio => next_audio_track_name as fn(&[Track]) -> String,
+            _ => next_video_track_name as fn(&[Track]) -> String,
+        };
+
+        // 找第一个同类型的空轨道，没有则新建一条
         if let Some(empty_track) = self
             .tracks
             .iter_mut()
-            .find(|t| t.kind == TrackKind::Video && t.clips.is_empty())
+            .find(|t| t.kind == target_kind && t.clips.is_empty())
         {
             empty_track.clips.push(clip);
         } else {
-            let mut track = Track::new_video(&next_video_track_name(&self.tracks));
+            let mut track = Track::new_video(&name_fn(&self.tracks));
+            track.kind = target_kind;
             track.clips.push(clip);
             self.tracks.insert(0, track);
         }

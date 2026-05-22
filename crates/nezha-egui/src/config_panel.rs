@@ -5,12 +5,12 @@
 //! 子模块位于 `config_panel/` 目录（Rust 2018+ 约定）。
 
 mod export;
-mod project;
+pub mod project;
 mod settings;
 mod style;
 
 use crate::app::ThemeMode;
-use crate::app::project_state::MidiEntry;
+use crate::app::project_state::{MidiEntry, SoundFontEntry};
 use crate::sidebar::SidebarTab;
 use eframe::egui;
 
@@ -62,6 +62,8 @@ pub struct ConfigState<'a> {
     pub encoder: &'a mut String,
     pub export_path: &'a mut Option<String>,
     pub theme_mode: &'a mut ThemeMode,
+    // SoundFont management
+    pub soundfonts: &'a [SoundFontEntry],
 }
 
 #[derive(Clone, Debug)]
@@ -72,6 +74,13 @@ pub enum ConfigAction {
     AddCounter,
     RemoveMidi(usize),
     StartExport,
+    // SoundFont actions
+    AddSoundfont,
+    RemoveSoundfont(usize),
+    MoveSoundfontUp(usize),
+    MoveSoundfontDown(usize),
+    // Audio render trigger
+    RenderAudio(usize), // midi_idx
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> {
@@ -84,12 +93,32 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
             ui.heading("配置");
             ui.separator();
 
-            let result = match state.active_tab {
+            let result: Option<ConfigAction> = match state.active_tab {
                 SidebarTab::Style => style::show(ui, state.midi_files, state.highlighted_midi_idx),
-                SidebarTab::Project => {
-                    project::show(ui, state.render_width, state.render_height, state.fps);
-                    None
-                }
+                SidebarTab::Project => match project::show(
+                    ui,
+                    state.render_width,
+                    state.render_height,
+                    state.fps,
+                    state.soundfonts,
+                ) {
+                    Some(pa) => {
+                        use project::ProjectAction;
+                        match pa {
+                            ProjectAction::AddSoundfont(_) => Some(ConfigAction::AddSoundfont),
+                            ProjectAction::RemoveSoundfont(i) => {
+                                Some(ConfigAction::RemoveSoundfont(i))
+                            }
+                            ProjectAction::MoveSoundfontUp(i) => {
+                                Some(ConfigAction::MoveSoundfontUp(i))
+                            }
+                            ProjectAction::MoveSoundfontDown(i) => {
+                                Some(ConfigAction::MoveSoundfontDown(i))
+                            }
+                        }
+                    }
+                    None => None,
+                },
                 SidebarTab::Export => export::show(
                     ui,
                     state.export_format,
@@ -102,7 +131,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                     None
                 }
             };
-            action = result;
+
+            if let Some(a) = result {
+                action = Some(a);
+            }
         });
 
     action

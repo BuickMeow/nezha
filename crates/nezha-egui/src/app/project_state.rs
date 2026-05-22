@@ -1,10 +1,13 @@
+mod audio_store;
 mod midi_store;
 mod playback_state;
 mod render_settings;
 
 use crate::transport::TimelineState;
 use nezha_core::MidiFile;
+use std::path::PathBuf;
 
+pub use audio_store::{AudioEntry, AudioStore};
 pub use midi_store::{MidiEntry, MidiStore};
 pub use playback_state::PlaybackState;
 pub use render_settings::RenderSettings;
@@ -12,9 +15,17 @@ pub use render_settings::RenderSettings;
 /// 无 MIDI 时的默认时长（秒）。
 const DEFAULT_DURATION_SECS: f64 = 120.0;
 
+/// A registered SoundFont entry.
+#[derive(Clone, Debug)]
+pub struct SoundFontEntry {
+    pub path: PathBuf,
+}
+
 pub struct ProjectState {
     pub playback: PlaybackState,
     pub midi: MidiStore,
+    pub audio: AudioStore,
+    pub soundfonts: Vec<SoundFontEntry>,
     pub render: RenderSettings,
     pub timeline_state: TimelineState,
     /// 最近一次错误信息（用于 UI 提示）
@@ -26,6 +37,8 @@ impl ProjectState {
         Self {
             playback: PlaybackState::default(),
             midi: MidiStore::default(),
+            audio: AudioStore::default(),
+            soundfonts: Vec::new(),
             render: RenderSettings::default(),
             last_error: None,
             timeline_state: TimelineState {
@@ -74,5 +87,17 @@ impl ProjectState {
 
     fn sync_timeline_settings(&mut self) {
         self.timeline_state.fps = self.render.fps;
+    }
+
+    /// Collect audio timeline clips as (audio_idx, clip_start, clip_end) tuples.
+    pub fn audio_timeline_clips(&self) -> Vec<(usize, f32, f32)> {
+        self.timeline_state
+            .data
+            .tracks
+            .iter()
+            .filter(|t| t.kind == crate::transport::TrackKind::Audio)
+            .flat_map(|t| t.clips.iter())
+            .filter_map(|clip| clip.audio_idx.map(|idx| (idx, clip.start, clip.end)))
+            .collect()
     }
 }

@@ -93,6 +93,12 @@ pub fn show(
                             ClipKind::Counter => {
                                 counter::show(ui, clip);
                             }
+                            ClipKind::Audio => {
+                                ui.label("音频图层");
+                                if let Some(audio_idx) = clip.audio_idx {
+                                    ui.label(format!("音频 ID: {}", audio_idx));
+                                }
+                            }
                         }
 
                         break;

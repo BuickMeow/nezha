@@ -38,6 +38,8 @@ impl App {
                 self.project.playback.current_time =
                     (self.project.playback.current_time - frame_duration).max(0.0);
                 self.project.playback.start = None;
+                self.audio_player
+                    .seek_to(self.project.playback.current_time);
             }
 
             if ui.input(|input| input.key_pressed(egui::Key::ArrowRight)) {
@@ -45,6 +47,8 @@ impl App {
                     + frame_duration)
                     .min(self.project.duration());
                 self.project.playback.start = None;
+                self.audio_player
+                    .seek_to(self.project.playback.current_time);
             }
         }
 

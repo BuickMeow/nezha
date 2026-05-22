@@ -123,6 +123,22 @@ impl App {
         let duration = self.project.duration();
         let fps = self.project.render.fps as f64;
 
+        // Mix audio for export
+        let audio_clips = self.project.audio_timeline_clips();
+        let audio_pcm = if !audio_clips.is_empty() {
+            Some(self.project.audio.mix_timeline(
+                &audio_clips,
+                self.project.render.audio_sample_rate,
+                duration,
+            ))
+        } else {
+            None
+        };
+        let audio_channels: u16 = match self.project.render.audio_channels {
+            nezha_xsynth::ChannelCount::Stereo => 2,
+            nezha_xsynth::ChannelCount::Mono => 1,
+        };
+
         let config = ExportConfig {
             width: self.project.render.width,
             height: self.project.render.height,
@@ -131,6 +147,9 @@ impl App {
             codec,
             output_path: path,
             quality: QualityPreset::default(),
+            audio_pcm,
+            audio_sample_rate: self.project.render.audio_sample_rate,
+            audio_channels,
         };
 
         let total_frames = config.total_frames(duration);

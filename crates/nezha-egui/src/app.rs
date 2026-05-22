@@ -1,6 +1,9 @@
 use eframe::egui;
+use std::path::PathBuf;
+use std::sync::mpsc;
 
 mod archive_picker;
+mod audio_player;
 mod export;
 mod loading;
 mod panels;
@@ -11,10 +14,40 @@ pub mod project_state;
 mod render_context;
 mod ui_state;
 
+use audio_player::AudioPlayback;
 use loading::MidiLoader;
 pub use project_state::ProjectState;
 pub use render_context::RenderContext;
 pub use ui_state::{ThemeMode, UiState};
+
+/// State for audio rendering via xsynth.
+struct AudioRenderState {
+    /// MIDI store index being rendered.
+    midi_idx: usize,
+    /// MIDI path on disk (for reading bytes).
+    #[allow(dead_code)]
+    midi_path: String,
+    /// Progress receiver from render thread.
+    rx: mpsc::Receiver<AudioRenderEvent>,
+    /// Whether the render dialog is open.
+    show_progress: bool,
+    /// Cached progress values for display
+    last_progress: f64,
+    last_voice_count: u64,
+    /// Accumulated PCM samples (interleaved f32) built from chunks.
+    accumulated_pcm: Vec<f32>,
+    /// Total duration in seconds (from MIDI).
+    total_seconds: f64,
+}
+
+enum AudioRenderEvent {
+    /// (accumulated_pcm_chunk, elapsed_seconds, voice_count, total_seconds)
+    Chunk(Vec<f32>, f64, u64, f64),
+    /// Rendering completed successfully.
+    Done,
+    /// Rendering failed.
+    Error(String),
+}
 
 pub struct App {
     pub render_ctx: RenderContext,
@@ -25,6 +58,15 @@ pub struct App {
     midi_loader: Option<MidiLoader>,
     archive_picker: Option<archive_picker::ArchivePickerState>,
     pub font_atlas: nezha_text::FontAtlas,
+    // Audio
+    pub audio_player: AudioPlayback,
+    // Audio render dialog
+    render_dialog_open: bool,
+    render_settings_open: bool,
+    render_progress_open: bool,
+    render_state: Option<AudioRenderState>,
+    cached_midi_name: String, // temp storage for dialog
+    cached_midi_path: String,
 }
 
 impl App {
@@ -88,6 +130,336 @@ impl App {
             midi_loader: None,
             archive_picker: None,
             font_atlas,
+            audio_player: AudioPlayback::new(),
+            render_dialog_open: false,
+            render_settings_open: false,
+            render_progress_open: false,
+            render_state: None,
+            cached_midi_name: String::new(),
+            cached_midi_path: String::new(),
+        }
+    }
+
+    /// Called when a MIDI file has been fully loaded.
+    /// Inserts it into the project and shows the audio render dialog.
+    pub fn on_midi_loaded(&mut self, path: String, midi: nezha_core::MidiFile) {
+        let _midi_idx = self.project.insert_midi(path.clone(), midi);
+
+        // Ask if user wants to render audio
+        let file_name = PathBuf::from(&path)
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("MIDI")
+            .to_string();
+        self.cached_midi_name = file_name;
+        self.cached_midi_path = path;
+        self.render_settings_open = true;
+    }
+
+    /// Start the xsynth audio render in a background thread.
+    pub fn start_audio_render(&mut self, midi_idx: usize, midi_path: &str) {
+        let settings = &self.project.render;
+        let soundfont_paths: Vec<PathBuf> = self
+            .project
+            .soundfonts
+            .iter()
+            .map(|sf| sf.path.clone())
+            .collect();
+
+        let midi_data = match std::fs::read(midi_path) {
+            Ok(d) => d,
+            Err(e) => {
+                self.project.last_error = Some(format!("读取 MIDI 文件失败: {}", e));
+                return;
+            }
+        };
+
+        let config = nezha_xsynth::RenderConfig {
+            sample_rate: settings.audio_sample_rate,
+            channels: settings.audio_channels,
+            use_limiter: settings.audio_use_limiter,
+            layers: Some(settings.audio_layers as usize),
+            min_velocity: settings.audio_min_velocity,
+        };
+
+        let (tx, rx) = mpsc::channel();
+        let tx2 = tx.clone();
+
+        // Spawn render thread — use chunked API for incremental preview
+        std::thread::spawn(move || {
+            let midi_copy = midi_data.clone();
+            let result = nezha_xsynth::render_midi_to_pcm_chunked(
+                &midi_copy,
+                &soundfont_paths,
+                &config,
+                |chunk, progress| {
+                    let _ = tx.send(AudioRenderEvent::Chunk(
+                        chunk,
+                        progress.elapsed_seconds,
+                        progress.voice_count,
+                        progress.total_seconds,
+                    ));
+                },
+            );
+
+            match result {
+                Ok(()) => {
+                    let _ = tx2.send(AudioRenderEvent::Done);
+                }
+                Err(e) => {
+                    let _ = tx2.send(AudioRenderEvent::Error(e.to_string()));
+                }
+            }
+        });
+
+        self.render_state = Some(AudioRenderState {
+            midi_idx,
+            midi_path: midi_path.to_string(),
+            rx,
+            show_progress: true,
+            last_progress: 0.0,
+            last_voice_count: 0,
+            accumulated_pcm: Vec::new(),
+            total_seconds: 0.0,
+        });
+        self.render_progress_open = true;
+    }
+
+    /// Finalize a completed audio render: store PCM and create audio track.
+    #[allow(dead_code)]
+    fn finish_audio_render(&mut self, pcm: Vec<f32>, midi_idx: usize) {
+        let entry = project_state::AudioEntry {
+            name: self.cached_midi_name.clone(),
+            sample_rate: self.project.render.audio_sample_rate,
+            channels: match self.project.render.audio_channels {
+                nezha_xsynth::ChannelCount::Stereo => 2,
+                nezha_xsynth::ChannelCount::Mono => 1,
+            },
+            duration_secs: if self.project.render.audio_sample_rate > 0 {
+                let ch = match self.project.render.audio_channels {
+                    nezha_xsynth::ChannelCount::Stereo => 2,
+                    nezha_xsynth::ChannelCount::Mono => 1,
+                };
+                pcm.len() as f64 / (self.project.render.audio_sample_rate as f64 * ch as f64)
+            } else {
+                0.0
+            },
+            samples: pcm,
+            midi_idx,
+        };
+
+        let audio_idx = self.project.audio.insert(entry);
+
+        // Create audio track clip on timeline
+        let entry = self.project.audio.get(audio_idx).unwrap();
+        let duration = entry.duration_secs as f32;
+        let id = self.project.timeline_state.data.alloc_clip_id();
+        let clip = crate::transport::TrackClip::new_audio(
+            id,
+            format!("音频: {}", self.cached_midi_name),
+            audio_idx,
+            duration,
+        );
+
+        // Add to an existing audio track or create a new one
+        if let Some(empty_track) = self
+            .project
+            .timeline_state
+            .data
+            .tracks
+            .iter_mut()
+            .find(|t| t.kind == crate::transport::TrackKind::Audio && t.clips.is_empty())
+        {
+            empty_track.clips.push(clip);
+        } else {
+            let name =
+                crate::transport::next_audio_track_name(&self.project.timeline_state.data.tracks);
+            let mut track = crate::transport::Track::new_audio(&name);
+            track.clips.push(clip);
+            self.project.timeline_state.data.tracks.push(track);
+        }
+
+        // Update project duration
+        self.project.timeline_state.data.update_duration(duration);
+
+        // Re-mix audio for preview
+        let audio_clips = self.project.audio_timeline_clips();
+        self.audio_player.mix(
+            &self.project.audio,
+            &audio_clips,
+            self.project.duration(),
+            self.project.render.audio_sample_rate as u32,
+        );
+
+        // Sync playback with audio
+        if self.project.playback.is_playing {
+            self.audio_player
+                .seek_to(self.project.playback.current_time);
+        }
+    }
+
+    /// Poll the audio render thread for progress updates and PCM chunks.
+    fn poll_audio_render(&mut self) {
+        let mut state = match self.render_state.take() {
+            Some(s) => s,
+            None => return,
+        };
+
+        loop {
+            match state.rx.try_recv() {
+                Ok(AudioRenderEvent::Chunk(pcm, elapsed, voice, total)) => {
+                    state.last_progress = if total > 0.0 {
+                        (elapsed / total).min(1.0)
+                    } else {
+                        0.0
+                    };
+                    state.last_voice_count = voice;
+                    state.total_seconds = total;
+
+                    // Append chunk to accumulated PCM
+                    let had_data_before = !state.accumulated_pcm.is_empty();
+                    state.accumulated_pcm.extend(pcm);
+
+                    // Update or create the AudioEntry incrementally for preview
+                    let entry = project_state::AudioEntry {
+                        name: self.cached_midi_name.clone(),
+                        sample_rate: self.project.render.audio_sample_rate,
+                        channels: match self.project.render.audio_channels {
+                            nezha_xsynth::ChannelCount::Stereo => 2,
+                            nezha_xsynth::ChannelCount::Mono => 1,
+                        },
+                        duration_secs: if self.project.render.audio_sample_rate > 0
+                            && !had_data_before
+                        {
+                            // Estimate from total when available, otherwise use elapsed
+                            elapsed
+                        } else {
+                            // Recalculate from PCM length
+                            let ch = match self.project.render.audio_channels {
+                                nezha_xsynth::ChannelCount::Stereo => 2,
+                                nezha_xsynth::ChannelCount::Mono => 1,
+                            } as f64;
+                            state.accumulated_pcm.len() as f64
+                                / (self.project.render.audio_sample_rate as f64 * ch)
+                        },
+                        samples: state.accumulated_pcm.clone(),
+                        midi_idx: state.midi_idx,
+                    };
+
+                    // Upsert: replace or add the entry at audio_store
+                    let existing = self
+                        .project
+                        .audio
+                        .entries
+                        .iter()
+                        .position(|e| e.midi_idx == state.midi_idx);
+                    if let Some(idx) = existing {
+                        self.project.audio.entries[idx] = entry;
+                    } else {
+                        self.project.audio.insert(entry);
+                        // Create audio track clip on first chunk
+                        let audio_idx = self.project.audio.len() - 1;
+                        let entry = self.project.audio.get(audio_idx).unwrap();
+                        let duration = entry.duration_secs as f32;
+                        let id = self.project.timeline_state.data.alloc_clip_id();
+                        let clip = crate::transport::TrackClip::new_audio(
+                            id,
+                            format!("音频: {}", self.cached_midi_name),
+                            audio_idx,
+                            duration,
+                        );
+                        if let Some(empty_track) = self
+                            .project
+                            .timeline_state
+                            .data
+                            .tracks
+                            .iter_mut()
+                            .find(|t| {
+                                t.kind == crate::transport::TrackKind::Audio && t.clips.is_empty()
+                            })
+                        {
+                            empty_track.clips.push(clip);
+                        } else {
+                            let name = crate::transport::next_audio_track_name(
+                                &self.project.timeline_state.data.tracks,
+                            );
+                            let mut track = crate::transport::Track::new_audio(&name);
+                            track.clips.push(clip);
+                            self.project.timeline_state.data.tracks.push(track);
+                        }
+                    }
+
+                    // Re-mix audio for preview so partial audio is playable
+                    let audio_clips = self.project.audio_timeline_clips();
+                    self.audio_player.mix(
+                        &self.project.audio,
+                        &audio_clips,
+                        self.project.duration(),
+                        self.project.render.audio_sample_rate as u32,
+                    );
+                }
+                Ok(AudioRenderEvent::Done) => {
+                    // Finalize: update the entry with final duration
+                    if !state.accumulated_pcm.is_empty() {
+                        let ch = match self.project.render.audio_channels {
+                            nezha_xsynth::ChannelCount::Stereo => 2,
+                            nezha_xsynth::ChannelCount::Mono => 1,
+                        } as f64;
+                        let duration_secs = state.accumulated_pcm.len() as f64
+                            / (self.project.render.audio_sample_rate as f64 * ch);
+
+                        let final_entry = project_state::AudioEntry {
+                            name: self.cached_midi_name.clone(),
+                            sample_rate: self.project.render.audio_sample_rate,
+                            channels: match self.project.render.audio_channels {
+                                nezha_xsynth::ChannelCount::Stereo => 2,
+                                nezha_xsynth::ChannelCount::Mono => 1,
+                            },
+                            duration_secs,
+                            samples: state.accumulated_pcm.clone(),
+                            midi_idx: state.midi_idx,
+                        };
+
+                        let existing = self
+                            .project
+                            .audio
+                            .entries
+                            .iter()
+                            .position(|e| e.midi_idx == state.midi_idx);
+                        if let Some(idx) = existing {
+                            // Update the audio clip end time
+                            self.project.audio.entries[idx] = final_entry;
+                            for track in &mut self.project.timeline_state.data.tracks {
+                                for clip in &mut track.clips {
+                                    if clip.audio_idx == Some(idx)
+                                        && clip.kind == crate::transport::ClipKind::Audio
+                                        && clip.end == 0.0
+                                    {
+                                        clip.end = duration_secs as f32;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.render_progress_open = false;
+                    return;
+                }
+                Ok(AudioRenderEvent::Error(e)) => {
+                    self.project.last_error = Some(format!("音频渲染失败: {}", e));
+                    self.render_progress_open = false;
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.project.last_error = Some("音频渲染线程意外退出".to_string());
+                    self.render_progress_open = false;
+                    return;
+                }
+            }
+        }
+
+        if state.show_progress {
+            self.render_state = Some(state);
         }
     }
 
@@ -225,6 +597,33 @@ impl App {
             }
         }
     }
+
+    /// Add a waterfall clip and optionally ask to render audio.
+    fn add_waterfall_with_audio_prompt(&mut self) {
+        let midi_idx = self.project.midi.highlighted_idx;
+        let duration = midi_idx
+            .and_then(|idx| self.project.midi.entries.get(idx))
+            .map(|e| e.file.duration as f32)
+            .unwrap_or_else(|| self.project.duration() as f32);
+
+        self.project
+            .timeline_state
+            .push_waterfall_clip(midi_idx, duration);
+
+        // Ask about audio render if we have a MIDI selected
+        if let Some(idx) = midi_idx {
+            if let Some(entry) = self.project.midi.entries.get(idx) {
+                let name = PathBuf::from(&entry.path)
+                    .file_stem()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("MIDI")
+                    .to_string();
+                self.cached_midi_name = name;
+                self.cached_midi_path = entry.path.clone();
+                self.render_settings_open = true;
+            }
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -234,6 +633,26 @@ impl eframe::App for App {
 
         self.ui.theme_mode.apply(ui.ctx());
         self.handle_input(ui);
+        self.poll_audio_render();
+
+        // Sync audio playback with UI playback state
+        if self.project.playback.is_playing {
+            if !self.audio_player.is_playing() {
+                self.audio_player.mix(
+                    &self.project.audio,
+                    &self.project.audio_timeline_clips(),
+                    self.project.duration(),
+                    self.project.render.audio_sample_rate as u32,
+                );
+                self.audio_player
+                    .seek_to(self.project.playback.current_time);
+                self.audio_player.play();
+            }
+        } else {
+            if self.audio_player.is_playing() {
+                self.audio_player.pause();
+            }
+        }
 
         // 如果正在导出，每帧推进一帧视频渲染
         if self.export_state.is_some() {
@@ -249,6 +668,82 @@ impl eframe::App for App {
 
             ui.ctx().request_repaint();
         });
+
+        // Audio render settings dialog
+        if self.render_settings_open {
+            use crate::config_panel::project::audio_render_dialog;
+            let mut open = true;
+            let mut sample_rate = self.project.render.audio_sample_rate;
+            let mut use_stereo = matches!(
+                self.project.render.audio_channels,
+                nezha_xsynth::ChannelCount::Stereo
+            );
+            let mut use_limiter = self.project.render.audio_use_limiter;
+            let mut layers = self.project.render.audio_layers;
+            let mut min_velocity = self.project.render.audio_min_velocity;
+
+            let result = audio_render_dialog(
+                ui.ctx(),
+                &self.cached_midi_name,
+                &self.project.soundfonts,
+                &mut sample_rate,
+                &mut use_stereo,
+                &mut use_limiter,
+                &mut layers,
+                &mut min_velocity,
+                &mut open,
+            );
+
+            // Save settings
+            self.project.render.audio_sample_rate = sample_rate;
+            self.project.render.audio_channels = if use_stereo {
+                nezha_xsynth::ChannelCount::Stereo
+            } else {
+                nezha_xsynth::ChannelCount::Mono
+            };
+            self.project.render.audio_use_limiter = use_limiter;
+            self.project.render.audio_layers = layers;
+            self.project.render.audio_min_velocity = min_velocity;
+
+            if !open {
+                self.render_settings_open = false;
+            }
+
+            if let Some(crate::config_panel::project::AudioRenderAction::Start) = result {
+                // Find the midi_idx from cached path
+                let midi_path = self.cached_midi_path.clone();
+                let midi_path2 = midi_path.clone();
+                let midi_idx = self
+                    .project
+                    .midi
+                    .entries
+                    .iter()
+                    .position(|e| e.path == midi_path);
+                if let Some(idx) = midi_idx {
+                    self.start_audio_render(idx, &midi_path2);
+                }
+            }
+        }
+
+        // Audio render progress dialog
+        if self.render_progress_open {
+            let (render_progress, voice_count) = if let Some(ref s) = self.render_state {
+                (s.last_progress, s.last_voice_count)
+            } else {
+                (0.0, 0)
+            };
+
+            crate::config_panel::project::audio_progress_dialog(
+                ui.ctx(),
+                render_progress,
+                voice_count,
+                &mut self.render_progress_open,
+            );
+
+            if !self.render_progress_open {
+                self.render_state = None;
+            }
+        }
 
         self.show_midi_loading(ui);
         self.show_archive_picker(ui);

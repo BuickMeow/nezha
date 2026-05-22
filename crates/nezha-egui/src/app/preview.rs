@@ -320,6 +320,9 @@ impl App {
                 ClipKind::Counter => {
                     unreachable!();
                 }
+                ClipKind::Audio => {
+                    // Audio clips are not rendered visually; only played back
+                }
             }
         }
 

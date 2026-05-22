@@ -18,7 +18,7 @@ mod tracks;
 pub use model::{
     BlendMode, ClipDragMode, ClipDragState, ClipKind, LayerCommon, ScrollbarDrag,
     TimelineInteraction, TimelineState, TimelineView, Track, TrackClip, TrackKind,
-    next_video_track_name,
+    next_audio_track_name, next_video_track_name,
 };
 pub use theme::ThemeColors;
 

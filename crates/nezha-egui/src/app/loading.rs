@@ -34,7 +34,7 @@ impl App {
                         match *result {
                             Ok(midi) => {
                                 let path = loader.path.clone();
-                                self.project.insert_midi(path, midi);
+                                self.on_midi_loaded(path, midi);
                                 self.render_ctx.reset_midi_state();
                             }
                             Err(error) => {

@@ -1,0 +1,11 @@
+[package]
+name = "nezha-xsynth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xsynth-core = { git = "https://github.com/BuickMeow/xsynth.git", branch = "dysonsphere" }
+xsynth-soundfonts = { git = "https://github.com/BuickMeow/xsynth.git", branch = "dysonsphere" }
+midly = "0.5.3"
+hound = "3.5.1"
+thiserror = "2"
