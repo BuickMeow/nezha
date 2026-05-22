@@ -12,6 +12,7 @@ mod style;
 use crate::app::ThemeMode;
 use crate::app::project_state::{MidiEntry, SoundFontEntry};
 use crate::sidebar::SidebarTab;
+use cpal::traits::DeviceTrait;
 use eframe::egui;
 
 /// Truncate a path string by keeping the filename intact and
@@ -64,6 +65,9 @@ pub struct ConfigState<'a> {
     pub theme_mode: &'a mut ThemeMode,
     // SoundFont management
     pub soundfonts: &'a [SoundFontEntry],
+    // Audio device
+    pub audio_device_name: &'a mut Option<String>,
+    pub audio_devices: &'a [String],
 }
 
 #[derive(Clone, Debug)]
@@ -127,7 +131,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                     state.midi_files,
                 ),
                 SidebarTab::Settings => {
-                    settings::show(ui, state.theme_mode);
+                    settings::show(
+                        ui,
+                        state.theme_mode,
+                        state.audio_device_name,
+                        state.audio_devices,
+                    );
                     None
                 }
             };

@@ -117,7 +117,7 @@ impl App {
         let default_w = nezha_renderer::constants::DEFAULT_PREVIEW_WIDTH;
         let default_h = nezha_renderer::constants::DEFAULT_PREVIEW_HEIGHT;
 
-        Self {
+        let mut app = Self {
             render_ctx: RenderContext::new(cc, default_w, default_h),
             export_pipeline: render_context::export::ExportPipeline::new(
                 &wgpu.device,
@@ -137,7 +137,9 @@ impl App {
             render_state: None,
             cached_midi_name: String::new(),
             cached_midi_path: String::new(),
-        }
+        };
+        app.ui.refresh_audio_devices();
+        app
     }
 
     /// Called when a MIDI file has been fully loaded.
@@ -646,7 +648,7 @@ impl eframe::App for App {
                 );
                 self.audio_player
                     .seek_to(self.project.playback.current_time);
-                self.audio_player.play();
+                self.audio_player.play(self.ui.audio_device_name.as_deref());
             }
         } else {
             if self.audio_player.is_playing() {

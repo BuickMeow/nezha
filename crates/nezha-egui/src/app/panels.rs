@@ -122,6 +122,8 @@ impl App {
                     export_path: &mut self.ui.export_path,
                     theme_mode: &mut self.ui.theme_mode,
                     soundfonts: &self.project.soundfonts,
+                    audio_device_name: &mut self.ui.audio_device_name,
+                    audio_devices: &self.ui.audio_devices,
                 };
 
                 if let Some(action) = config_panel::show(ui, &mut state) {

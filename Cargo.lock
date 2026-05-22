@@ -2368,6 +2368,7 @@ dependencies = [
  "cpal",
  "eframe",
  "egui",
+ "hound",
  "nezha-archive",
  "nezha-compositor",
  "nezha-core",
