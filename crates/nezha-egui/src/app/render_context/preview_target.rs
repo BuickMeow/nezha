@@ -35,7 +35,7 @@ impl PreviewTarget {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let texture_id =
-            egui_renderer.register_native_texture(device, &view, wgpu::FilterMode::Linear);
+            egui_renderer.register_native_texture(device, &view, wgpu::FilterMode::Nearest);
 
         Self {
             _texture: texture,
