@@ -112,6 +112,7 @@ impl Renderer {
             Some(m) => instances::build_instances(
                 &mut instances,
                 layouts,
+                width,
                 height,
                 time,
                 speed,

@@ -17,35 +17,39 @@ const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;
 const KEY_BORDER_WIDTH: f32 = 0.5;
 
 /// Compute screen-space x-offset and width for each of the 128 keys.
+///
+/// When `equal_width` is true, all 128 keys get an equal share of the total width.
+/// When `equal_width` is false, the 75 white keys evenly divide the total width
+/// and black keys are placed at the correct boundaries between white keys,
+/// overlaid on top with a narrower width (65% of the white-key width).
 pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f32)> {
     let mut layouts = Vec::with_capacity(128);
     if equal_width {
         let key_w = width as f64 / 128.0;
         for key in 0..128 {
-            let x = (key as f64 * key_w).round() as f32;
-            let next_x = ((key as f64 + 1.0) * key_w).round() as f32;
-            let w = (next_x - x).max(1.0);
-            layouts.push((x, w));
+            let x = (key as f64 * key_w) as f32;
+            layouts.push((x, key_w as f32));
         }
     } else {
-        let white_width = width as f64 / 75.0;
-        /// Width of black keys relative to white keys.
-        const BLACK_KEY_WIDTH_RATIO: f64 = 0.65;
-        /// Horizontal offset to center black keys over the white-key boundary.
-        const BLACK_KEY_OFFSET_RATIO: f64 = 0.5;
-        let black_width = white_width * BLACK_KEY_WIDTH_RATIO;
+        // Piano layout: all white keys evenly divide the total width.
+        // Black keys are centred at the boundary between adjacent white keys
+        // and overlaid on top with a narrower width.
+        let total_w = width as f64;
+        let white_key_count = (0..128u8).filter(|&k| !is_black_key(k)).count() as f64;
+        let white_w = total_w / white_key_count;
+        let black_w = white_w * 0.65;
+
         let mut white_count = 0usize;
         for key in 0..128u8 {
             if is_black_key(key) {
-                let x = (white_count as f64 * white_width - black_width * BLACK_KEY_OFFSET_RATIO)
-                    .round() as f32;
-                let w = black_width.round() as f32;
-                layouts.push((x, w.max(1.0)));
+                // Black key centred at the boundary between
+                // white key (white_count-1) and white key (white_count).
+                let boundary_x = white_count as f64 * white_w;
+                let x = (boundary_x - black_w * 0.5) as f32;
+                layouts.push((x, black_w as f32));
             } else {
-                let x = (white_count as f64 * white_width).round() as f32;
-                let next_x = ((white_count + 1) as f64 * white_width).round() as f32;
-                let w = (next_x - x).max(1.0);
-                layouts.push((x, w));
+                let x = (white_count as f64 * white_w) as f32;
+                layouts.push((x, white_w as f32));
                 white_count += 1;
             }
         }
@@ -57,10 +61,16 @@ pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f3
 ///
 /// `active_keys` / `active_colors` should reflect the top-most currently playing
 /// note per key, already resolved by the main waterfall scan.
+///
+/// When `equal_key_width` is true, the white keys are expanded so that they fill
+/// the entire keyboard bottom without gaps, while black keys keep their original
+/// equal-width positions and are drawn on top.
 pub(crate) fn append_keyboard_instances(
     layouts: &[(f32, f32)],
+    width: u32,
     height: u32,
     keyboard_height: f32,
+    equal_key_width: bool,
     active_keys: &[bool; 128],
     active_colors: &[[f32; 3]; 128],
     out: &mut Vec<NoteInstance>,
@@ -70,10 +80,60 @@ pub(crate) fn append_keyboard_instances(
     let black_h = kh * BLACK_KEY_HEIGHT_RATIO;
     out.reserve(128);
 
+    // In equal-width mode, white keys are grouped by natural piano clusters
+    // (groups of 3 white keys around 2 black keys, and groups of 4 white keys
+    // around 3 black keys). Within each group the white keys evenly divide the
+    // span from the first white key to the next white key outside the group,
+    // so the bottom keyboard is fully covered without gaps.
+    let mut white_expanded = [(0.0f32, 0.0f32); 128];
+    if equal_key_width {
+        let white_keys: Vec<u8> = (0..128u8).filter(|&k| !is_black_key(k)).collect();
+
+        // Split white keys into groups. A new group starts when two white keys
+        // are adjacent (no black key between them), e.g. E-F and B-C.
+        let mut groups: Vec<Vec<u8>> = Vec::new();
+        let mut current_group = Vec::new();
+        for &key in &white_keys {
+            if current_group.is_empty() {
+                current_group.push(key);
+            } else {
+                let last = *current_group.last().unwrap();
+                if key - last == 1 {
+                    // Adjacent white keys → new group
+                    groups.push(current_group);
+                    current_group = vec![key];
+                } else {
+                    current_group.push(key);
+                }
+            }
+        }
+        if !current_group.is_empty() {
+            groups.push(current_group);
+        }
+
+        // Distribute each group's span evenly among its white keys.
+        for group in &groups {
+            let start_x = layouts[group[0] as usize].0;
+            let end_x =
+                if let Some(&next_key) = white_keys.iter().find(|&&k| k > group[group.len() - 1]) {
+                    layouts[next_key as usize].0
+                } else {
+                    width as f32
+                };
+            let group_span = end_x - start_x;
+            let per_key_w = group_span / group.len() as f32;
+            for (i, &key) in group.iter().enumerate() {
+                let x = start_x + i as f32 * per_key_w;
+                white_expanded[key as usize] = (x, per_key_w);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn build_key_instance(
         key: u8,
-        layouts: &[(f32, f32)],
+        x: f32,
+        w: f32,
         key_top: f32,
         height: f32,
         default_color: (f32, f32, f32),
@@ -81,7 +141,6 @@ pub(crate) fn append_keyboard_instances(
         active_keys: &[bool; 128],
         active_colors: &[[f32; 3]; 128],
     ) -> Option<NoteInstance> {
-        let (x, w) = layouts[key as usize];
         if w <= 0.0 {
             return None;
         }
@@ -108,9 +167,15 @@ pub(crate) fn append_keyboard_instances(
         if is_black_key(key) {
             continue;
         }
+        let (x, w) = if equal_key_width {
+            white_expanded[key as usize]
+        } else {
+            layouts[key as usize]
+        };
         if let Some(inst) = build_key_instance(
             key,
-            layouts,
+            x,
+            w,
             key_top,
             kh,
             WHITE_KEY_COLOR,
@@ -127,9 +192,11 @@ pub(crate) fn append_keyboard_instances(
         if !is_black_key(key) {
             continue;
         }
+        let (x, w) = layouts[key as usize];
         if let Some(inst) = build_key_instance(
             key,
-            layouts,
+            x,
+            w,
             key_top,
             black_h,
             BLACK_KEY_COLOR,

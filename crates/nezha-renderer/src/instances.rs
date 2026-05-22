@@ -33,6 +33,7 @@ impl KeyChunkBuildResult {
 pub(crate) fn build_instances(
     instances: &mut Vec<NoteInstance>,
     layouts: &[(f32, f32)],
+    width: u32,
     height: u32,
     time: f64,
     speed: f32,
@@ -89,8 +90,10 @@ pub(crate) fn build_instances(
     if style.keyboard_height > 0.0 {
         keyboard::append_keyboard_instances(
             layouts,
+            width,
             height,
             style.keyboard_height,
+            style.equal_key_width,
             &active_keys,
             &active_colors,
             instances,

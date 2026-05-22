@@ -31,7 +31,7 @@ impl Default for RenderStyle {
             track_index: 0,
             palette: random_palette(),
             background: [0.0, 0.0, 0.0, 1.0],
-            equal_key_width: true,
+            equal_key_width: false,
             keyboard_height: 0.0,
         }
     }
