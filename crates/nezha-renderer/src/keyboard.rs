@@ -80,52 +80,21 @@ pub(crate) fn append_keyboard_instances(
     let black_h = kh * BLACK_KEY_HEIGHT_RATIO;
     out.reserve(128);
 
-    // In equal-width mode, white keys are grouped by natural piano clusters
-    // (groups of 3 white keys around 2 black keys, and groups of 4 white keys
-    // around 3 black keys). Within each group the white keys evenly divide the
-    // span from the first white key to the next white key outside the group,
-    // so the bottom keyboard is fully covered without gaps.
+    // In equal-width mode, white keys are drawn with a uniform width of 12/7 key
+    // widths so they fully cover the keyboard bottom. Black keys keep their
+    // original equal-width positions.
     let mut white_expanded = [(0.0f32, 0.0f32); 128];
     if equal_key_width {
-        let white_keys: Vec<u8> = (0..128u8).filter(|&k| !is_black_key(k)).collect();
-
-        // Split white keys into groups. A new group starts when two white keys
-        // are adjacent (no black key between them), e.g. E-F and B-C.
-        let mut groups: Vec<Vec<u8>> = Vec::new();
-        let mut current_group = Vec::new();
-        for &key in &white_keys {
-            if current_group.is_empty() {
-                current_group.push(key);
-            } else {
-                let last = *current_group.last().unwrap();
-                if key - last == 1 {
-                    // Adjacent white keys → new group
-                    groups.push(current_group);
-                    current_group = vec![key];
-                } else {
-                    current_group.push(key);
-                }
+        let key_w = width as f32 / 128.0;
+        let white_w = key_w * (12.0 / 7.0);
+        let mut white_idx = 0usize;
+        for key in 0..128u8 {
+            if is_black_key(key) {
+                continue;
             }
-        }
-        if !current_group.is_empty() {
-            groups.push(current_group);
-        }
-
-        // Distribute each group's span evenly among its white keys.
-        for group in &groups {
-            let start_x = layouts[group[0] as usize].0;
-            let end_x =
-                if let Some(&next_key) = white_keys.iter().find(|&&k| k > group[group.len() - 1]) {
-                    layouts[next_key as usize].0
-                } else {
-                    width as f32
-                };
-            let group_span = end_x - start_x;
-            let per_key_w = group_span / group.len() as f32;
-            for (i, &key) in group.iter().enumerate() {
-                let x = start_x + i as f32 * per_key_w;
-                white_expanded[key as usize] = (x, per_key_w);
-            }
+            let x = white_idx as f32 * white_w;
+            white_expanded[key as usize] = (x, white_w);
+            white_idx += 1;
         }
     }
 
