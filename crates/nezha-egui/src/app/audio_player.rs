@@ -1,5 +1,5 @@
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
@@ -10,8 +10,10 @@ use crate::app::project_state::AudioStore;
 pub struct AudioPlayback {
     pub is_playing: Arc<AtomicBool>,
     pub current_frame: Arc<AtomicU64>,
-    mixed_buffer: Arc<Vec<f32>>,
+    /// Shared buffer: mix() writes, cpal callback reads.
+    mixed_buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
+    channels: u16,
     stream: Option<cpal::Stream>,
 }
 
@@ -20,8 +22,9 @@ impl AudioPlayback {
         Self {
             is_playing: Arc::new(AtomicBool::new(false)),
             current_frame: Arc::new(AtomicU64::new(0)),
-            mixed_buffer: Arc::new(Vec::new()),
+            mixed_buffer: Arc::new(Mutex::new(Vec::new())),
             sample_rate: 48000,
+            channels: 2,
             stream: None,
         }
     }
@@ -34,38 +37,46 @@ impl AudioPlayback {
         sample_rate: u32,
     ) {
         let mixed = audio_store.mix_timeline(timeline_clips, sample_rate, duration_secs);
-        self.mixed_buffer = Arc::new(mixed);
+        // Update shared buffer in-place (lock briefly)
+        if let Ok(mut buf) = self.mixed_buffer.lock() {
+            *buf = mixed;
+        }
         self.sample_rate = sample_rate;
     }
 
-    pub fn play(&mut self, device_name: Option<&str>) {
+    pub fn play(&mut self, device_name: Option<&str>, start_frame: u64) {
         if self.is_playing.load(Ordering::Relaxed) {
             return;
         }
 
+        // 1. Drop old stream FIRST to eliminate callback races
+        self.stream = None;
+        self.current_frame.store(start_frame, Ordering::SeqCst);
+
         let buffer = self.mixed_buffer.clone();
         let sample_rate = self.sample_rate;
+        let channels = self.channels;
         let is_playing = self.is_playing.clone();
         let current_frame = self.current_frame.clone();
-        let debug_buffer = buffer.clone(); // for debug WAV if play fails
 
-        if buffer.is_empty() || sample_rate == 0 {
-            tracing::warn!("AudioPlayback: buffer empty or sample_rate=0");
-            return;
+        // Check buffer has data
+        {
+            let buf = buffer.lock().unwrap();
+            if buf.is_empty() || sample_rate == 0 {
+                tracing::warn!("AudioPlayback: buffer empty or sample_rate=0");
+                return;
+            }
+            tracing::info!(
+                "AudioPlayback: starting with {} frames at {} Hz",
+                buf.len() / channels as usize,
+                sample_rate
+            );
         }
-
-        let channels = 2u16;
-        tracing::info!(
-            "AudioPlayback: starting with {} frames at {} Hz",
-            buffer.len() / channels as usize,
-            sample_rate
-        );
 
         let result = cpal::default_host()
             .output_devices()
             .ok()
             .and_then(|mut devices| {
-                // If a specific device is requested, try to find it
                 let dev: Option<cpal::Device> = if let Some(name) = device_name {
                     devices.find(|d| d.name().ok().as_deref() == Some(name))
                 } else {
@@ -84,7 +95,6 @@ impl AudioPlayback {
                 dev
             })
             .and_then(|device| {
-                // Use our buffer's sample rate explicitly instead of device default
                 let config = cpal::StreamConfig {
                     channels,
                     sample_rate: cpal::SampleRate(sample_rate),
@@ -108,7 +118,16 @@ impl AudioPlayback {
                             return;
                         }
 
-                        let buf_len = buffer.len();
+                        // Lock the shared buffer briefly to read
+                        let buf = match buffer.lock() {
+                            Ok(b) => b,
+                            Err(_) => {
+                                data.fill(0.0);
+                                return;
+                            }
+                        };
+
+                        let buf_len = buf.len();
                         let frames_avail = if buf_len > 0 {
                             buf_len / channels as usize
                         } else {
@@ -120,21 +139,7 @@ impl AudioPlayback {
                             return;
                         }
 
-                        // Log the first few callbacks
                         let start_frame = current_frame.load(Ordering::Relaxed) as usize;
-                        static CALLBACK_COUNT: std::sync::atomic::AtomicU64 =
-                            std::sync::atomic::AtomicU64::new(0);
-                        let count =
-                            CALLBACK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if count < 5 {
-                            tracing::info!(
-                                "AudioCallback #{}: data_len={} frames_avail={} start_frame={}",
-                                count,
-                                data.len(),
-                                frames_avail,
-                                start_frame
-                            );
-                        }
                         let mut out_idx = 0;
                         let mut write_frame = start_frame;
 
@@ -148,9 +153,9 @@ impl AudioPlayback {
                             let remaining_out = data.len() - out_idx;
                             let copy = samples_to_end.min(remaining_out);
 
-                            if buf_idx + copy <= buffer.len() {
+                            if buf_idx + copy <= buf.len() {
                                 data[out_idx..out_idx + copy]
-                                    .copy_from_slice(&buffer[buf_idx..buf_idx + copy]);
+                                    .copy_from_slice(&buf[buf_idx..buf_idx + copy]);
                             }
                             out_idx += copy;
                             write_frame += copy / channels as usize;
@@ -184,8 +189,8 @@ impl AudioPlayback {
             self.is_playing.store(true, Ordering::Relaxed);
             tracing::info!("AudioPlayback: started successfully");
         } else {
-            tracing::error!("AudioPlayback: FAILED TO START - no stream created");
-            // Try writing to a test WAV to verify PCM data exists
+            tracing::error!("AudioPlayback: FAILED TO START");
+            // Debug: write test WAV
             if let Ok(cwd) = std::env::current_dir() {
                 let test_path = cwd.join("_audio_debug_test.wav");
                 if let Ok(mut w) = hound::WavWriter::create(
@@ -197,8 +202,8 @@ impl AudioPlayback {
                         sample_format: hound::SampleFormat::Float,
                     },
                 ) {
-                    for &s in debug_buffer.iter().take(48000 * 2 * 5) {
-                        // first 5 seconds
+                    let buf = self.mixed_buffer.lock().unwrap();
+                    for &s in buf.iter().take(48000 * 2 * 5) {
                         let _ = w.write_sample(s);
                     }
                     let _ = w.finalize();
@@ -232,7 +237,7 @@ impl AudioPlayback {
     }
 
     pub fn buffer_len(&self) -> usize {
-        self.mixed_buffer.len()
+        self.mixed_buffer.lock().map(|b| b.len()).unwrap_or(0)
     }
 
     pub fn current_time(&self) -> f64 {

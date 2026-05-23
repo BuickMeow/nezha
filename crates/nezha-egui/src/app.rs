@@ -319,10 +319,21 @@ impl App {
                     state.total_seconds = total;
 
                     // Append chunk to accumulated PCM
-                    let had_data_before = !state.accumulated_pcm.is_empty();
                     state.accumulated_pcm.extend(pcm);
 
-                    // Update or create the AudioEntry incrementally for preview
+                    // Recalculate duration from accumulated PCM
+                    let ch = match self.project.render.audio_channels {
+                        nezha_xsynth::ChannelCount::Stereo => 2,
+                        nezha_xsynth::ChannelCount::Mono => 1,
+                    } as f64;
+                    let duration_secs = if self.project.render.audio_sample_rate > 0 && ch > 0.0 {
+                        state.accumulated_pcm.len() as f64
+                            / (self.project.render.audio_sample_rate as f64 * ch)
+                    } else {
+                        0.0
+                    };
+
+                    // Upsert AudioEntry
                     let entry = project_state::AudioEntry {
                         name: self.cached_midi_name.clone(),
                         sample_rate: self.project.render.audio_sample_rate,
@@ -330,45 +341,39 @@ impl App {
                             nezha_xsynth::ChannelCount::Stereo => 2,
                             nezha_xsynth::ChannelCount::Mono => 1,
                         },
-                        duration_secs: if self.project.render.audio_sample_rate > 0
-                            && !had_data_before
-                        {
-                            // Estimate from total when available, otherwise use elapsed
-                            elapsed
-                        } else {
-                            // Recalculate from PCM length
-                            let ch = match self.project.render.audio_channels {
-                                nezha_xsynth::ChannelCount::Stereo => 2,
-                                nezha_xsynth::ChannelCount::Mono => 1,
-                            } as f64;
-                            state.accumulated_pcm.len() as f64
-                                / (self.project.render.audio_sample_rate as f64 * ch)
-                        },
+                        duration_secs,
                         samples: state.accumulated_pcm.clone(),
                         midi_idx: state.midi_idx,
                     };
 
-                    // Upsert: replace or add the entry at audio_store
                     let existing = self
                         .project
                         .audio
                         .entries
                         .iter()
                         .position(|e| e.midi_idx == state.midi_idx);
+
                     if let Some(idx) = existing {
+                        // Update existing entry AND its clip end time
                         self.project.audio.entries[idx] = entry;
+                        for track in &mut self.project.timeline_state.data.tracks {
+                            for clip in &mut track.clips {
+                                if clip.audio_idx == Some(idx)
+                                    && clip.kind == crate::transport::ClipKind::Audio
+                                {
+                                    clip.end = duration_secs as f32;
+                                }
+                            }
+                        }
                     } else {
-                        self.project.audio.insert(entry);
-                        // Create audio track clip on first chunk
-                        let audio_idx = self.project.audio.len() - 1;
-                        let entry = self.project.audio.get(audio_idx).unwrap();
-                        let duration = entry.duration_secs as f32;
+                        // First chunk: insert entry + create audio track clip
+                        let audio_idx = self.project.audio.insert(entry);
                         let id = self.project.timeline_state.data.alloc_clip_id();
                         let clip = crate::transport::TrackClip::new_audio(
                             id,
                             format!("音频: {}", self.cached_midi_name),
                             audio_idx,
-                            duration,
+                            duration_secs as f32,
                         );
                         if let Some(empty_track) = self
                             .project
@@ -391,7 +396,13 @@ impl App {
                         }
                     }
 
-                    // Re-mix audio for preview so partial audio is playable
+                    // Update project timeline duration
+                    self.project
+                        .timeline_state
+                        .data
+                        .update_duration(duration_secs as f32);
+
+                    // Re-mix audio for preview
                     let audio_clips = self.project.audio_timeline_clips();
                     self.audio_player.mix(
                         &self.project.audio,
@@ -401,7 +412,7 @@ impl App {
                     );
                 }
                 Ok(AudioRenderEvent::Done) => {
-                    // Finalize: update the entry with final duration
+                    // Final update with complete PCM
                     if !state.accumulated_pcm.is_empty() {
                         let ch = match self.project.render.audio_channels {
                             nezha_xsynth::ChannelCount::Stereo => 2,
@@ -418,7 +429,7 @@ impl App {
                                 nezha_xsynth::ChannelCount::Mono => 1,
                             },
                             duration_secs,
-                            samples: state.accumulated_pcm.clone(),
+                            samples: state.accumulated_pcm,
                             midi_idx: state.midi_idx,
                         };
 
@@ -429,18 +440,21 @@ impl App {
                             .iter()
                             .position(|e| e.midi_idx == state.midi_idx);
                         if let Some(idx) = existing {
-                            // Update the audio clip end time
                             self.project.audio.entries[idx] = final_entry;
+                            // Update clip end time unconditionally
                             for track in &mut self.project.timeline_state.data.tracks {
                                 for clip in &mut track.clips {
                                     if clip.audio_idx == Some(idx)
                                         && clip.kind == crate::transport::ClipKind::Audio
-                                        && clip.end == 0.0
                                     {
                                         clip.end = duration_secs as f32;
                                     }
                                 }
                             }
+                            self.project
+                                .timeline_state
+                                .data
+                                .update_duration(duration_secs as f32);
                         }
                     }
                     self.render_progress_open = false;
@@ -640,13 +654,6 @@ impl eframe::App for App {
         // Sync audio playback with UI playback state
         if self.project.playback.is_playing {
             let audio_clips = self.project.audio_timeline_clips();
-            tracing::info!(
-                "AudioSync: playing={}, audio_player={}, clips={}, audio_entries={}",
-                self.project.playback.is_playing,
-                self.audio_player.is_playing(),
-                audio_clips.len(),
-                self.project.audio.entries.len(),
-            );
 
             if !self.audio_player.is_playing() {
                 self.audio_player.mix(
@@ -655,17 +662,26 @@ impl eframe::App for App {
                     self.project.duration(),
                     self.project.render.audio_sample_rate as u32,
                 );
-                self.audio_player
-                    .seek_to(self.project.playback.current_time);
+                // Always start playback from the beginning (ct=0)
+                let ct = 0.0_f64;
+                let start_frame = (ct * self.project.render.audio_sample_rate as f64) as u64;
                 tracing::info!(
-                    "AudioSync: calling play(), buffer_len={}",
-                    self.audio_player.buffer_len()
+                    "PLAY: start_fr={} buf={} clips={} dur={:.3}s",
+                    start_frame,
+                    self.audio_player.buffer_len(),
+                    audio_clips.len(),
+                    self.project.duration(),
                 );
-                self.audio_player.play(self.ui.audio_device_name.as_deref());
+                self.audio_player
+                    .play(self.ui.audio_device_name.as_deref(), start_frame);
             }
         } else {
             if self.audio_player.is_playing() {
-                tracing::info!("AudioSync: pausing");
+                tracing::info!(
+                    "PAUSE at ct={:.3}s dur={:.3}s",
+                    self.project.playback.current_time,
+                    self.project.duration()
+                );
                 self.audio_player.pause();
             }
         }

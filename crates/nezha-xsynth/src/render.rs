@@ -185,13 +185,16 @@ fn render_samples(
     scratch.resize(samples_needed, 0.0);
     channel_group.read_samples(scratch);
 
-    // Simple hard limiter
+    // Soft knee limiter to reduce popping
     if config.use_limiter {
+        const THRESHOLD: f32 = 0.85;
+        const KNEE: f32 = 0.15;
         for sample in scratch.iter_mut() {
-            if *sample > 0.99 {
-                *sample = 0.99;
-            } else if *sample < -0.99 {
-                *sample = -0.99;
+            let abs = sample.abs();
+            if abs > THRESHOLD {
+                let over = (abs - THRESHOLD) / KNEE;
+                let gain = 1.0 / (1.0 + over);
+                *sample *= gain;
             }
         }
     }
