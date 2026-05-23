@@ -184,21 +184,6 @@ fn render_samples(
 
     scratch.resize(samples_needed, 0.0);
     channel_group.read_samples(scratch);
-
-    // Soft knee limiter to reduce popping
-    if config.use_limiter {
-        const THRESHOLD: f32 = 0.85;
-        const KNEE: f32 = 0.15;
-        for sample in scratch.iter_mut() {
-            let abs = sample.abs();
-            if abs > THRESHOLD {
-                let over = (abs - THRESHOLD) / KNEE;
-                let gain = 1.0 / (1.0 + over);
-                *sample *= gain;
-            }
-        }
-    }
-
     output.extend_from_slice(scratch);
 }
 
@@ -539,6 +524,21 @@ pub fn render_midi_to_pcm(
         all_pcm.extend(chunk);
         progress(p);
     })?;
+
+    // Apply proper lookahead limiter if enabled
+    if config.use_limiter {
+        let channels = config.channels.count() as usize;
+        let mut limiter = crate::limiter::Limiter::new(
+            config.sample_rate as f32,
+            channels,
+            -1.0,  // threshold: -1 dBFS
+            -0.3,  // ceiling: -0.3 dBFS
+            2.0,   // 2 ms lookahead
+            0.5,   // 0.5 ms attack
+            100.0, // 100 ms release
+        );
+        limiter.process(&mut all_pcm);
+    }
 
     Ok(all_pcm)
 }
