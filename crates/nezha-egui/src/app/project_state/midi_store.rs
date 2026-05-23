@@ -84,13 +84,49 @@ impl MidiStore {
         }
     }
 
+    /// 根据 MIDI 音符数据计算 content_start_offset 和 content_end_offset（帧数）。
+    pub fn calculate_content_offsets(midi: &MidiFile, fps: u32) -> (u32, u32) {
+        let fps_f64 = fps.max(1) as f64;
+
+        let mut first_note_time = f64::MAX;
+        let mut last_note_end = 0.0f64;
+
+        for notes in &midi.key_notes {
+            for note in notes {
+                if note.start < first_note_time {
+                    first_note_time = note.start;
+                }
+                if note.end > last_note_end {
+                    last_note_end = note.end;
+                }
+            }
+        }
+
+        let start_offset = if first_note_time == f64::MAX {
+            0
+        } else {
+            (first_note_time * fps_f64).round() as u32
+        };
+
+        let end_offset = if last_note_end <= 0.0 {
+            0
+        } else {
+            ((midi.duration - last_note_end) * fps_f64).round().max(0.0) as u32
+        };
+
+        (start_offset, end_offset)
+    }
+
     fn bind_unassigned_waterfalls(&mut self, midi_idx: usize, timeline_state: &mut TimelineState) {
-        // 获取 MIDI 文件的真实长度
-        let midi_duration = self
+        // 获取 MIDI 文件的真实数据
+        let (midi_duration, first_offset, end_offset) = self
             .entries
             .get(midi_idx)
-            .map(|e| e.file.duration as f32)
-            .unwrap_or(5.0);
+            .map(|e| {
+                let (so, eo) = Self::calculate_content_offsets(&e.file, timeline_state.fps);
+                (e.file.duration as f32, so, eo)
+            })
+            .unwrap_or((5.0, 0, 0));
 
         // 先尝试绑定已有的未分配 MIDI 的水瀑布 clip
         for track in &mut timeline_state.data.tracks {
@@ -98,6 +134,8 @@ impl MidiStore {
                 if clip.kind == ClipKind::Waterfall && clip.midi_idx.is_none() {
                     clip.midi_idx = Some(midi_idx);
                     clip.end = midi_duration;
+                    clip.content_start_offset = first_offset;
+                    clip.content_end_offset = end_offset;
                     return;
                 }
             }
@@ -107,6 +145,8 @@ impl MidiStore {
         let id = timeline_state.data.alloc_clip_id();
         let mut clip = TrackClip::new_waterfall(id, Some(midi_idx));
         clip.end = midi_duration;
+        clip.content_start_offset = first_offset;
+        clip.content_end_offset = end_offset;
 
         if let Some(track) = timeline_state
             .data

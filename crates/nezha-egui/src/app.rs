@@ -120,13 +120,22 @@ impl App {
 
     fn add_waterfall_with_audio_prompt(&mut self) {
         let midi_idx = self.project.midi.highlighted_idx;
-        let duration = midi_idx
+        let (duration, start_offset, end_offset) = midi_idx
             .and_then(|idx| self.project.midi.entries.get(idx))
-            .map(|e| e.file.duration as f32)
-            .unwrap_or_else(|| self.project.duration() as f32);
-        self.project
-            .timeline_state
-            .push_waterfall_clip(midi_idx, duration);
+            .map(|e| {
+                let (so, eo) = project_state::MidiStore::calculate_content_offsets(
+                    &e.file,
+                    self.project.timeline_state.fps,
+                );
+                (e.file.duration as f32, so, eo)
+            })
+            .unwrap_or_else(|| (self.project.duration() as f32, 0, 0));
+        self.project.timeline_state.push_waterfall_clip(
+            midi_idx,
+            duration,
+            start_offset,
+            end_offset,
+        );
         if let Some(idx) = midi_idx {
             if let Some(entry) = self.project.midi.entries.get(idx) {
                 let name = std::path::Path::new(&entry.path)

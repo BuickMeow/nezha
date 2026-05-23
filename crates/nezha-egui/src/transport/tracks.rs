@@ -3,7 +3,8 @@ use crate::transport::hit_test::clip_hit_areas;
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::timecode::font;
 use crate::transport::{
-    ClipDragMode, ClipDragState, ThemeColors, TimelineState, TimelineView, Track, TrackKind,
+    ClipDragMode, ClipDragState, ClipKind, ThemeColors, TimelineState, TimelineView, Track,
+    TrackKind,
 };
 use eframe::egui;
 
@@ -32,6 +33,7 @@ pub fn draw_tracks(
     let view = &state.view;
     let selected_id = state.selection.selected_clip_id;
     let tracks = &state.data.tracks;
+    let fps = state.fps;
 
     if has_video {
         for (track_index, track) in tracks
@@ -52,6 +54,7 @@ pub fn draw_tracks(
                 &state.interaction.clip_drag,
                 commands,
                 track_index,
+                fps,
             );
             y = new_y;
             clip_clicked = clip_clicked || row_clicked;
@@ -77,6 +80,7 @@ pub fn draw_tracks(
                 &state.interaction.clip_drag,
                 commands,
                 track_index,
+                fps,
             );
             y = new_y;
             clip_clicked = clip_clicked || row_clicked;
@@ -149,6 +153,18 @@ fn draw_track_header_controls(
 }
 
 /// Draw a single clip rectangle with selection highlight and label.
+/// 返回深化的颜色，用于缓冲区显示。
+fn darkened_color(color: egui::Color32) -> egui::Color32 {
+    // 将 RGB 各通道压暗 ~20%
+    egui::Color32::from_rgb(
+        (color.r() as f32 * 0.78) as u8,
+        (color.g() as f32 * 0.78) as u8,
+        (color.b() as f32 * 0.78) as u8,
+    )
+}
+
+/// 绘制 clip 视觉，如果提供了 content_rect 则绘制三段色。
+/// content_start_x / content_end_x 是内容区域的左右 x 边界（clip_rect 坐标系内）。
 fn draw_clip_visual(
     painter: &egui::Painter,
     metrics: &TimelineMetrics,
@@ -157,7 +173,77 @@ fn draw_clip_visual(
     clip_color: egui::Color32,
     clip_name: &str,
     is_selected: bool,
+    content_start_x: Option<f32>,
+    content_end_x: Option<f32>,
 ) {
+    // ── 三段式绘制 ──
+    if let (Some(csx), Some(cex)) = (content_start_x, content_end_x) {
+        let csx = csx.clamp(clip_rect.min.x, clip_rect.max.x);
+        let cex = cex.clamp(clip_rect.min.x, clip_rect.max.x);
+
+        if cex > csx && (csx > clip_rect.min.x || cex < clip_rect.max.x) {
+            // 左缓冲区：clip_rect.min.x .. csx
+            if csx > clip_rect.min.x {
+                let left_rect = egui::Rect::from_min_max(
+                    egui::pos2(clip_rect.min.x, clip_rect.min.y),
+                    egui::pos2(csx, clip_rect.max.y),
+                );
+                painter.rect_filled(left_rect, 3.0, darkened_color(clip_color));
+            }
+
+            // 内容区：csx .. cex
+            let content_rect = egui::Rect::from_min_max(
+                egui::pos2(csx, clip_rect.min.y),
+                egui::pos2(cex, clip_rect.max.y),
+            );
+            painter.rect_filled(content_rect, 3.0, clip_color);
+
+            // 右缓冲区：cex .. clip_rect.max.x
+            if cex < clip_rect.max.x {
+                let right_rect = egui::Rect::from_min_max(
+                    egui::pos2(cex, clip_rect.min.y),
+                    egui::pos2(clip_rect.max.x, clip_rect.max.y),
+                );
+                painter.rect_filled(right_rect, 3.0, darkened_color(clip_color));
+            }
+
+            // 选中边框覆盖整个 clip
+            if is_selected {
+                painter.rect_stroke(
+                    clip_rect,
+                    3.0,
+                    egui::Stroke::new(2.0, egui::Color32::WHITE),
+                    egui::StrokeKind::Inside,
+                );
+                painter.rect_filled(
+                    hit_areas.left_edge,
+                    0.0,
+                    egui::Color32::from_white_alpha(60),
+                );
+                painter.rect_filled(
+                    hit_areas.right_edge,
+                    0.0,
+                    egui::Color32::from_white_alpha(60),
+                );
+            }
+
+            // 标签放在内容区左侧
+            if clip_rect.width() > metrics.clip_label_min_width {
+                let label_x =
+                    csx.max(clip_rect.min.x + metrics.clip_edge_width + metrics.clip_text_padding);
+                painter.text(
+                    egui::pos2(label_x, clip_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    clip_name,
+                    font(10.0),
+                    egui::Color32::WHITE,
+                );
+            }
+            return;
+        }
+    }
+
+    // ── 无偏移，原始单色绘制 ──
     painter.rect_filled(clip_rect, 3.0, clip_color);
 
     if is_selected {
@@ -457,6 +543,7 @@ fn draw_track_row(
     clip_drag: &Option<ClipDragState>,
     commands: &mut Vec<TimelineCommand>,
     track_index: usize,
+    fps: u32,
 ) -> (f32, bool) {
     let mut clip_clicked = false;
     let visible_start = layout.visible_start;
@@ -547,6 +634,23 @@ fn draw_track_row(
                 );
             }
 
+            // 只对 Waterfall clip 计算三段内容区域边界（像素 x 坐标）
+            let (content_start_x, content_end_x) =
+                if track.clips[clip_idx].kind == ClipKind::Waterfall {
+                    let clip = &track.clips[clip_idx];
+                    if clip.content_start_offset > 0 || clip.content_end_offset > 0 {
+                        let cs_time = clip.content_start_time(fps);
+                        let ce_time = clip.content_end_time(fps);
+                        let csx = view.screen_x_for_time(&layout.timeline_rect, cs_time);
+                        let cex = view.screen_x_for_time(&layout.timeline_rect, ce_time);
+                        (Some(csx), Some(cex))
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                };
+
             draw_clip_visual(
                 painter,
                 metrics,
@@ -555,6 +659,8 @@ fn draw_track_row(
                 clip_color,
                 &clip_name,
                 is_selected,
+                content_start_x,
+                content_end_x,
             );
         }
     }
