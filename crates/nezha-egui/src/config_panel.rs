@@ -12,7 +12,6 @@ mod style;
 use crate::app::ThemeMode;
 use crate::app::project_state::{MidiEntry, SoundFontEntry};
 use crate::sidebar::SidebarTab;
-use cpal::traits::DeviceTrait;
 use eframe::egui;
 
 /// Truncate a path string by keeping the filename intact and

@@ -59,13 +59,12 @@ impl App {
             }
             config_panel::ConfigAction::RenderAudio(midi_idx) => {
                 if let Some(entry) = self.project.midi.entries.get(midi_idx) {
-                    self.cached_midi_name = PathBuf::from(&entry.path)
+                    let name = PathBuf::from(&entry.path)
                         .file_stem()
                         .and_then(|n| n.to_str())
                         .unwrap_or("MIDI")
                         .to_string();
-                    self.cached_midi_path = entry.path.clone();
-                    self.render_settings_open = true;
+                    self.audio_manager.prepare_render(name, entry.path.clone());
                 }
             }
         }

@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::project_state::RenderSettings;
-use crate::app::{ThemeMode, project_state::SoundFontEntry};
+use crate::app::ThemeMode;
+use crate::app::project_state::SoundFontEntry;
 
 /// Persisted application configuration.
 #[derive(Clone, Serialize, Deserialize)]

@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod config_panel;
 mod piano_view;
 mod properties_panel;
