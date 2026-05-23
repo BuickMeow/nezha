@@ -15,7 +15,8 @@ pub fn draw_tracks(
     metrics: &TimelineMetrics,
     state: &TimelineState,
     commands: &mut Vec<TimelineCommand>,
-) -> f32 {
+) -> (f32, bool) {
+    let mut clip_clicked = false;
     let has_video = state
         .data
         .tracks
@@ -38,7 +39,7 @@ pub fn draw_tracks(
             .enumerate()
             .filter(|(_, track)| track.kind == TrackKind::Video)
         {
-            y = draw_track_row(
+            let (new_y, row_clicked) = draw_track_row(
                 ui,
                 painter,
                 c,
@@ -52,6 +53,8 @@ pub fn draw_tracks(
                 commands,
                 track_index,
             );
+            y = new_y;
+            clip_clicked = clip_clicked || row_clicked;
         }
     }
 
@@ -61,7 +64,7 @@ pub fn draw_tracks(
             .enumerate()
             .filter(|(_, track)| track.kind == TrackKind::Audio)
         {
-            y = draw_track_row(
+            let (new_y, row_clicked) = draw_track_row(
                 ui,
                 painter,
                 c,
@@ -75,10 +78,12 @@ pub fn draw_tracks(
                 commands,
                 track_index,
             );
+            y = new_y;
+            clip_clicked = clip_clicked || row_clicked;
         }
     }
 
-    y
+    (y, clip_clicked)
 }
 
 fn draw_track_header_controls(
@@ -452,7 +457,8 @@ fn draw_track_row(
     clip_drag: &Option<ClipDragState>,
     commands: &mut Vec<TimelineCommand>,
     track_index: usize,
-) -> f32 {
+) -> (f32, bool) {
+    let mut clip_clicked = false;
     let visible_start = layout.visible_start;
     let visible_end = layout.visible_end;
     let track_bg = match track.kind {
@@ -485,7 +491,6 @@ fn draw_track_row(
 
     draw_track_header_controls(painter, c, header_rect, track);
 
-    let mut clip_clicked = false;
     let mut dragged_clip_id = None;
     let primary_dragging = ui.input(|i| i.pointer.primary_down());
     let mut active_clip_drag = *clip_drag;
@@ -584,5 +589,5 @@ fn draw_track_row(
         }
     }
 
-    y + view.track_height
+    (y + view.track_height, clip_clicked)
 }

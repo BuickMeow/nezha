@@ -12,7 +12,7 @@ pub fn show(
     ui.label("主题");
     ui.horizontal(|ui| {
         if ui
-            .selectable_label(*theme_mode == ThemeMode::Light, "☀️ 浅色")
+            .selectable_label(*theme_mode == ThemeMode::Light, "\u{2600} 浅色")
             .clicked()
         {
             *theme_mode = ThemeMode::Light;

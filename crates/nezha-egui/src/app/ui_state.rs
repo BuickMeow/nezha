@@ -30,6 +30,7 @@ impl ThemeMode {
 
 pub struct UiState {
     pub active_tab: SidebarTab,
+    pub config_panel_visible: bool,
     pub export_format: String,
     pub encoder: String,
     pub export_path: Option<String>,
@@ -45,6 +46,7 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             active_tab: SidebarTab::Style,
+            config_panel_visible: true,
             export_format: "MP4".to_string(),
             encoder: "H.264".to_string(),
             export_path: None,

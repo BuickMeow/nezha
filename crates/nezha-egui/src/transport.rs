@@ -86,13 +86,12 @@ pub fn show(
         &mut commands,
     );
 
-    // ── 轨道 ──
     // 使用裁剪 painter，防止轨道滚动到标尺区域上方
     let track_painter = ui.painter_at(egui::Rect::from_min_max(
         egui::pos2(timeline_rect.min.x, layout.ruler_rect.max.y),
         egui::pos2(timeline_rect.max.x, layout.content_bottom),
     ));
-    let y = draw_tracks(
+    let (y, clip_clicked) = draw_tracks(
         ui,
         &track_painter,
         &c,
@@ -101,6 +100,11 @@ pub fn show(
         state,
         &mut commands,
     );
+
+    // Click on timeline background (not on clip) → deselect
+    if response.clicked() && !clip_clicked {
+        commands.push(TimelineCommand::ClearSelection);
+    }
 
     // ── 标尺 ──（放在轨道之后绘制，覆盖可能滚动上来的轨道内容）
     draw_ruler(

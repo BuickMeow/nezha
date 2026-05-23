@@ -80,7 +80,11 @@ impl App {
             .exact_size(60.0)
             .resizable(false)
             .show_inside(ui, |ui| {
-                sidebar::show(ui, &mut self.ui.active_tab);
+                sidebar::show(
+                    ui,
+                    &mut self.ui.active_tab,
+                    &mut self.ui.config_panel_visible,
+                );
             });
 
         egui::Panel::bottom("transport")
@@ -99,54 +103,63 @@ impl App {
                 self.project.playback.current_time = transport_time as f64;
             });
 
-        egui::Panel::left("config_panel")
-            .exact_size(260.0)
-            .min_size(260.0)
-            .max_size(260.0)
-            .resizable(false)
-            .show_inside(ui, |ui| {
-                // 强制内容宽度 = 可用宽度
-                ui.set_max_width(ui.available_width());
-                ui.set_min_width(ui.available_width());
+        if self.ui.config_panel_visible {
+            egui::Panel::left("config_panel")
+                .exact_size(260.0)
+                .min_size(260.0)
+                .max_size(260.0)
+                .resizable(false)
+                .show_inside(ui, |ui| {
+                    ui.set_max_width(ui.available_width());
+                    ui.set_min_width(ui.available_width());
 
-                let mut state = config_panel::ConfigState {
-                    active_tab: self.ui.active_tab,
-                    midi_files: &self.project.midi.entries,
-                    highlighted_midi_idx: &mut self.project.midi.highlighted_idx,
-                    render_width: &mut self.project.render.width,
-                    render_height: &mut self.project.render.height,
-                    fps: &mut self.project.render.fps,
-                    export_format: &mut self.ui.export_format,
-                    encoder: &mut self.ui.encoder,
-                    export_path: &mut self.ui.export_path,
-                    theme_mode: &mut self.ui.theme_mode,
-                    soundfonts: &self.project.soundfonts,
-                    audio_device_name: &mut self.ui.audio_device_name,
-                    audio_devices: &self.ui.audio_devices,
-                };
+                    let mut state = config_panel::ConfigState {
+                        active_tab: self.ui.active_tab,
+                        midi_files: &self.project.midi.entries,
+                        highlighted_midi_idx: &mut self.project.midi.highlighted_idx,
+                        render_width: &mut self.project.render.width,
+                        render_height: &mut self.project.render.height,
+                        fps: &mut self.project.render.fps,
+                        export_format: &mut self.ui.export_format,
+                        encoder: &mut self.ui.encoder,
+                        export_path: &mut self.ui.export_path,
+                        theme_mode: &mut self.ui.theme_mode,
+                        soundfonts: &self.project.soundfonts,
+                        audio_device_name: &mut self.ui.audio_device_name,
+                        audio_devices: &self.ui.audio_devices,
+                    };
 
-                if let Some(action) = config_panel::show(ui, &mut state) {
-                    config_action = Some(action);
-                }
-            });
+                    if let Some(action) = config_panel::show(ui, &mut state) {
+                        config_action = Some(action);
+                    }
+                });
+        }
 
-        egui::Panel::right("properties_panel")
-            .exact_size(220.0)
-            .min_size(220.0)
-            .max_size(220.0)
-            .resizable(false)
-            .show_inside(ui, |ui| {
-                // 强制内容宽度 = 可用宽度
-                ui.set_max_width(ui.available_width());
-                ui.set_min_width(ui.available_width());
+        // Properties panel: only show when a clip is selected
+        if self
+            .project
+            .timeline_state
+            .selection
+            .selected_clip_id
+            .is_some()
+        {
+            egui::Panel::right("properties_panel")
+                .exact_size(220.0)
+                .min_size(220.0)
+                .max_size(220.0)
+                .resizable(false)
+                .show_inside(ui, |ui| {
+                    ui.set_max_width(ui.available_width());
+                    ui.set_min_width(ui.available_width());
 
-                properties_panel::show(
-                    ui,
-                    &mut self.project.timeline_state,
-                    self.ui.zoom,
-                    &self.project.midi.entries,
-                );
-            });
+                    properties_panel::show(
+                        ui,
+                        &mut self.project.timeline_state,
+                        self.ui.zoom,
+                        &self.project.midi.entries,
+                    );
+                });
+        }
 
         if let Some(action) = config_action {
             self.handle_config_action(action);
