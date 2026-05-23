@@ -2,7 +2,7 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::config::{ExportConfig, QualityPreset, VideoCodec};
+use crate::config::{EncoderBackend, ExportConfig, QualityPreset, VideoCodec};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EncoderError {
@@ -187,14 +187,13 @@ fn bgra_to_yuv420p(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
     let (y_plane, rest) = yuv.split_at_mut(y_size);
     let (u_plane, v_plane) = rest.split_at_mut(uv_size);
 
-    // Y plane — full resolution, clamp at write-time
+    // Y plane — full resolution
     for y in 0..h {
         for x in 0..w {
             let idx = (y * w + x) * 4;
             let b = bgra[idx] as i32;
             let g = bgra[idx + 1] as i32;
             let r = bgra[idx + 2] as i32;
-            // alpha = bgra[idx + 3] is ignored
             let y_val = (77 * r + 150 * g + 29 * b) >> 8;
             y_plane[y * w + x] = y_val.clamp(0, 255) as u8;
         }
@@ -299,7 +298,6 @@ fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<Str
     }
 
     // ── Video input: raw YUV420p from stdin ──
-    // (方案 1: 送 YUV420p 替代 BGRA，pipe 数据量减少 62%)
     args.push("-f".to_string());
     args.push("rawvideo".to_string());
     args.push("-pix_fmt".to_string());
@@ -324,19 +322,24 @@ fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<Str
         args.push("-shortest".to_string());
     }
 
-    // ── 方案 4: 多线程参数 ──
+    // ── Multi-threading ──
     args.push("-threads".to_string());
-    args.push("0".to_string()); // auto-detect
+    args.push("0".to_string());
 
     // ── Video encoder ──
     args.push("-c:v".to_string());
-    args.push(config.codec.ffmpeg_encoder().to_string());
+    args.push(config.ffmpeg_encoder_name());
 
-    // ── Quality settings ──
-    if config.codec.is_hardware() {
-        build_hardware_encoder_args(&mut args, &config.codec, &config.quality);
-    } else {
-        build_software_encoder_args(&mut args, &config.codec, &config.quality);
+    // ── Quality / codec-specific settings ──
+    match &config.backend {
+        EncoderBackend::Software => build_software_args(&mut args, &config.codec, &config.quality),
+        EncoderBackend::VideoToolbox => {
+            build_videotoolbox_args(&mut args, &config.codec, &config.quality)
+        }
+        EncoderBackend::Nvenc => build_nvenc_args(&mut args, &config.codec, &config.quality),
+        EncoderBackend::Amf => build_amf_args(&mut args, &config.codec, &config.quality),
+        EncoderBackend::Qsv => build_qsv_args(&mut args, &config.codec, &config.quality),
+        EncoderBackend::Vaapi => build_vaapi_args(&mut args, &config.codec, &config.quality),
     }
 
     // Audio encoder (copy from source, or re-encode to AAC)
@@ -360,20 +363,14 @@ fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<Str
     args
 }
 
-/// ffmpeg arguments for software encoders (libx264, libx265, prores_ks, libvpx-vp9, libsvtav1).
-fn build_software_encoder_args(
-    args: &mut Vec<String>,
-    codec: &VideoCodec,
-    quality: &QualityPreset,
-) {
+// ---------------------------------------------------------------------------
+// Backend-specific encoder quality arguments
+// ---------------------------------------------------------------------------
+
+/// Software encoders: libx264 / libx265 / prores_ks / libvpx-vp9 / libsvtav1.
+fn build_software_args(args: &mut Vec<String>, codec: &VideoCodec, quality: &QualityPreset) {
     match codec {
-        VideoCodec::H264
-        | VideoCodec::H265
-        | VideoCodec::H264VideoToolbox
-        | VideoCodec::H265VideoToolbox => {
-            // H.264 / H.265 / VideoToolbox variants that fall-through to software
-            // (the VideoToolbox arms are handled in build_hardware_encoder_args,
-            //  so by the time we reach here they're already filtered)
+        VideoCodec::H264 | VideoCodec::H265 => {
             args.push("-crf".to_string());
             args.push(quality.crf().to_string());
             args.push("-preset".to_string());
@@ -401,10 +398,9 @@ fn build_software_encoder_args(
             args.push("yuv420p".to_string());
             // SVT-AV1 threading
             args.push("-svtav1-params".to_string());
-            let num_cpus = num_cpus();
-            args.push(format!("lp={}", num_cpus));
+            args.push(format!("lp={}", num_cpus()));
         }
-        VideoCodec::ProRes | VideoCodec::ProResVideoToolbox => {
+        VideoCodec::ProRes => {
             args.push("-profile:v".to_string());
             args.push("3".to_string());
             args.push("-pix_fmt".to_string());
@@ -415,38 +411,25 @@ fn build_software_encoder_args(
     }
 }
 
-/// ffmpeg arguments for VideoToolbox hardware encoders.
+/// macOS VideoToolbox: h264_videotoolbox / hevc_videotoolbox / prores_videotoolbox.
 ///
-/// These encoders don't support CRF; instead they use a target bitrate
-/// and a (reversed) quality level where 1 = best quality, 4 = fastest.
-fn build_hardware_encoder_args(
-    args: &mut Vec<String>,
-    codec: &VideoCodec,
-    quality: &QualityPreset,
-) {
+/// These use target bitrate and a quality level (1 = best, 4 = fastest) instead of CRF.
+fn build_videotoolbox_args(args: &mut Vec<String>, codec: &VideoCodec, quality: &QualityPreset) {
     match codec {
-        VideoCodec::H264VideoToolbox | VideoCodec::H265VideoToolbox => {
-            let bitrate = match quality {
-                QualityPreset::High => "50M",
-                QualityPreset::Medium => "20M",
-                QualityPreset::Low => "10M",
+        VideoCodec::H264 | VideoCodec::H265 => {
+            let (bitrate, vt_q) = match quality {
+                QualityPreset::High => ("50M", "1"),
+                QualityPreset::Medium => ("20M", "2"),
+                QualityPreset::Low => ("10M", "4"),
             };
             args.push("-b:v".to_string());
             args.push(bitrate.to_string());
-
-            // VideoToolbox quality: 1=best, 2=better, 3=realtime, 4=faster
-            let vt_quality = match quality {
-                QualityPreset::High => "1",
-                QualityPreset::Medium => "2",
-                QualityPreset::Low => "4",
-            };
             args.push("-quality".to_string());
-            args.push(vt_quality.to_string());
-
+            args.push(vt_q.to_string());
             args.push("-pix_fmt".to_string());
             args.push("yuv420p".to_string());
         }
-        VideoCodec::ProResVideoToolbox => {
+        VideoCodec::ProRes => {
             let bitrate = match quality {
                 QualityPreset::High => "100M",
                 QualityPreset::Medium => "50M",
@@ -457,12 +440,100 @@ fn build_hardware_encoder_args(
             args.push("-pix_fmt".to_string());
             args.push("yuv422p".to_string());
         }
-        // Unreachable — caller already guards via is_hardware()
-        _ => {}
+        _ => {
+            // Unsupported codec/backend combo — ffmpeg will error, but we can try.
+            // Just set a generic bitrate.
+            args.push("-b:v".to_string());
+            args.push("20M".to_string());
+        }
     }
 }
 
-/// Return the number of logical CPUs for threading hints.
+/// NVIDIA NVENC: h264_nvenc / hevc_nvenc / av1_nvenc (Windows & Linux).
+///
+/// Uses constant-quality (`-cq`) with VBR rate control, plus a preset (p1–p7).
+fn build_nvenc_args(args: &mut Vec<String>, codec: &VideoCodec, quality: &QualityPreset) {
+    let cq = match quality {
+        QualityPreset::High => "18",
+        QualityPreset::Medium => "23",
+        QualityPreset::Low => "28",
+    };
+    let preset = match quality {
+        // p1 = fastest, p7 = slowest
+        QualityPreset::High => "p5",
+        QualityPreset::Medium => "p4",
+        QualityPreset::Low => "p2",
+    };
+
+    args.push("-cq".to_string());
+    args.push(cq.to_string());
+    args.push("-rc".to_string());
+    args.push("vbr".to_string());
+    args.push("-preset".to_string());
+    args.push(preset.to_string());
+    args.push("-pix_fmt".to_string());
+    args.push(codec.ffmpeg_pix_fmt().to_string());
+}
+
+/// AMD AMF: h264_amf / hevc_amf / av1_amf (Windows).
+///
+/// Uses `-quality` (speed/quality tradeoff) and target bitrate.
+fn build_amf_args(args: &mut Vec<String>, codec: &VideoCodec, quality: &QualityPreset) {
+    let (bitrate, amf_q) = match quality {
+        QualityPreset::High => ("15M", "quality"),
+        QualityPreset::Medium => ("8M", "balanced"),
+        QualityPreset::Low => ("4M", "speed"),
+    };
+    args.push("-b:v".to_string());
+    args.push(bitrate.to_string());
+    args.push("-quality".to_string());
+    args.push(amf_q.to_string());
+    args.push("-pix_fmt".to_string());
+    args.push(codec.ffmpeg_pix_fmt().to_string());
+}
+
+/// Intel QuickSync: h264_qsv / hevc_qsv / av1_qsv / vp9_qsv (Windows & Linux).
+///
+/// Uses `-global_quality` (similar to CRF, 1–51) and a preset.
+fn build_qsv_args(args: &mut Vec<String>, codec: &VideoCodec, quality: &QualityPreset) {
+    let global_q = match quality {
+        QualityPreset::High => "18",
+        QualityPreset::Medium => "23",
+        QualityPreset::Low => "28",
+    };
+    let preset = match quality {
+        QualityPreset::High => "medium",
+        QualityPreset::Medium => "fast",
+        QualityPreset::Low => "veryfast",
+    };
+
+    args.push("-global_quality".to_string());
+    args.push(global_q.to_string());
+    args.push("-preset".to_string());
+    args.push(preset.to_string());
+    args.push("-pix_fmt".to_string());
+    args.push(codec.ffmpeg_pix_fmt().to_string());
+}
+
+/// VAAPI: h264_vaapi / hevc_vaapi / av1_vaapi / vp9_vaapi (Linux).
+///
+/// Uses `-qp` (quantization parameter, like CRF) and target bitrate.
+fn build_vaapi_args(args: &mut Vec<String>, codec: &VideoCodec, quality: &QualityPreset) {
+    let qp = match quality {
+        QualityPreset::High => "18",
+        QualityPreset::Medium => "23",
+        QualityPreset::Low => "28",
+    };
+    args.push("-qp".to_string());
+    args.push(qp.to_string());
+    args.push("-pix_fmt".to_string());
+    args.push(codec.ffmpeg_pix_fmt().to_string());
+}
+
+// ---------------------------------------------------------------------------
+// Helper
+// ---------------------------------------------------------------------------
+
 fn num_cpus() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())

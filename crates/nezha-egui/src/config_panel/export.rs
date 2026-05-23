@@ -1,5 +1,7 @@
 //! 导出标签页 — 导出设置。
 
+use nezha_encoder::EncoderBackend;
+
 use crate::app::project_state::MidiEntry;
 use crate::config_panel::ConfigAction;
 use crate::config_panel::truncate_path;
@@ -9,6 +11,7 @@ pub fn show(
     ui: &mut egui::Ui,
     export_format: &mut String,
     encoder: &mut String,
+    encoder_backend: &mut String,
     export_path: &mut Option<String>,
     midi_files: &[MidiEntry],
 ) -> Option<ConfigAction> {
@@ -38,6 +41,24 @@ pub fn show(
                 ui.selectable_value(encoder, "ProRes".to_string(), "ProRes");
                 ui.selectable_value(encoder, "VP9".to_string(), "VP9");
                 ui.selectable_value(encoder, "AV1".to_string(), "AV1");
+            });
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("加速:");
+        let backends = EncoderBackend::available_on_current_platform();
+        egui::ComboBox::from_id_salt("encoder_backend")
+            .selected_text(encoder_backend.as_str())
+            .show_ui(ui, |ui| {
+                for b in &backends {
+                    let name = b.display_name().to_string();
+                    if ui
+                        .selectable_value(encoder_backend, name.clone(), &name)
+                        .clicked()
+                    {
+                        *encoder_backend = name;
+                    }
+                }
             });
     });
 

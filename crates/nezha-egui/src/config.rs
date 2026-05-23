@@ -21,6 +21,7 @@ pub struct Config {
     pub audio_min_velocity: u8,
     pub export_format: String,
     pub encoder: String,
+    pub encoder_backend: String,
     pub export_path: Option<String>,
 }
 
@@ -40,6 +41,7 @@ impl Default for Config {
             audio_min_velocity: 1,
             export_format: "MP4".to_string(),
             encoder: "H.264".to_string(),
+            encoder_backend: "Software (CPU)".to_string(),
             export_path: None,
         }
     }
@@ -116,6 +118,7 @@ impl Config {
         // Export settings
         ui.export_format = self.export_format.clone();
         ui.encoder = self.encoder.clone();
+        ui.encoder_backend = self.encoder_backend.clone();
         ui.export_path = self.export_path.clone();
     }
 
@@ -146,6 +149,7 @@ impl Config {
             audio_min_velocity: project.render.audio_min_velocity,
             export_format: ui.export_format.clone(),
             encoder: ui.encoder.clone(),
+            encoder_backend: ui.encoder_backend.clone(),
             export_path: ui.export_path.clone(),
         }
     }

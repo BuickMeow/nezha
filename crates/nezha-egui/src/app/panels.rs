@@ -122,6 +122,7 @@ impl App {
                         fps: &mut self.project.render.fps,
                         export_format: &mut self.ui.export_format,
                         encoder: &mut self.ui.encoder,
+                        encoder_backend: &mut self.ui.encoder_backend,
                         export_path: &mut self.ui.export_path,
                         theme_mode: &mut self.ui.theme_mode,
                         soundfonts: &self.project.soundfonts,

@@ -1,7 +1,7 @@
 use super::App;
 use eframe::egui;
 use nezha_encoder::{
-    Container, EncoderError, ExportConfig, FfmpegEncoder, QualityPreset, VideoCodec,
+    Container, EncoderBackend, EncoderError, ExportConfig, FfmpegEncoder, QualityPreset, VideoCodec,
 };
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
@@ -120,6 +120,14 @@ impl App {
             }
         };
 
+        let backend: EncoderBackend = match self.ui.encoder_backend.parse() {
+            Ok(b) => b,
+            Err(e) => {
+                self.export_state = Some(ExportState::Error(format!("加速后端解析失败: {}", e)));
+                return;
+            }
+        };
+
         let duration = self.project.duration();
         let fps = self.project.render.fps as f64;
 
@@ -145,6 +153,7 @@ impl App {
             fps,
             container,
             codec,
+            backend,
             output_path: path,
             quality: QualityPreset::default(),
             audio_pcm,

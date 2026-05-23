@@ -42,27 +42,37 @@ impl std::str::FromStr for Container {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Video codec
+// ---------------------------------------------------------------------------
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VideoCodec {
     H264,
-    H264VideoToolbox,
     H265,
-    H265VideoToolbox,
     ProRes,
-    ProResVideoToolbox,
     Vp9,
     Av1,
 }
 
 impl VideoCodec {
-    pub fn ffmpeg_encoder(&self) -> &'static str {
+    /// Short codec identifier used in ffmpeg encoder names (e.g. "h264", "hevc").
+    pub fn ffmpeg_codec_name(&self) -> &'static str {
+        match self {
+            VideoCodec::H264 => "h264",
+            VideoCodec::H265 => "hevc",
+            VideoCodec::ProRes => "prores",
+            VideoCodec::Vp9 => "vp9",
+            VideoCodec::Av1 => "av1",
+        }
+    }
+
+    /// Software-only encoder name (e.g. "libx264", "libx265").
+    pub fn ffmpeg_software_encoder(&self) -> &'static str {
         match self {
             VideoCodec::H264 => "libx264",
-            VideoCodec::H264VideoToolbox => "h264_videotoolbox",
             VideoCodec::H265 => "libx265",
-            VideoCodec::H265VideoToolbox => "hevc_videotoolbox",
             VideoCodec::ProRes => "prores_ks",
-            VideoCodec::ProResVideoToolbox => "prores_videotoolbox",
             VideoCodec::Vp9 => "libvpx-vp9",
             VideoCodec::Av1 => "libsvtav1",
         }
@@ -75,13 +85,15 @@ impl VideoCodec {
         }
     }
 
-    pub fn is_hardware(&self) -> bool {
-        matches!(
-            self,
-            VideoCodec::H264VideoToolbox
-                | VideoCodec::H265VideoToolbox
-                | VideoCodec::ProResVideoToolbox
-        )
+    /// Display name used in UI dropdown.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            VideoCodec::H264 => "H.264",
+            VideoCodec::H265 => "H.265 / HEVC",
+            VideoCodec::ProRes => "ProRes",
+            VideoCodec::Vp9 => "VP9",
+            VideoCodec::Av1 => "AV1",
+        }
     }
 }
 
@@ -91,17 +103,108 @@ impl std::str::FromStr for VideoCodec {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "H.264" => Ok(VideoCodec::H264),
-            "H.264 (VideoToolbox)" => Ok(VideoCodec::H264VideoToolbox),
             "H.265 / HEVC" => Ok(VideoCodec::H265),
-            "H.265 / HEVC (VideoToolbox)" => Ok(VideoCodec::H265VideoToolbox),
             "ProRes" => Ok(VideoCodec::ProRes),
-            "ProRes (VideoToolbox)" => Ok(VideoCodec::ProResVideoToolbox),
             "VP9" => Ok(VideoCodec::Vp9),
             "AV1" => Ok(VideoCodec::Av1),
             _ => Err(format!("unknown codec: {}", s)),
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Encoder backend (platform-specific hardware acceleration)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EncoderBackend {
+    /// Pure software encoding (libx264, libx265, libvpx-vp9, libsvtav1, prores_ks).
+    Software,
+    /// macOS VideoToolbox (h264_videotoolbox, hevc_videotoolbox, prores_videotoolbox).
+    VideoToolbox,
+    /// NVIDIA NVENC (h264_nvenc, hevc_nvenc, av1_nvenc) — Windows/Linux.
+    Nvenc,
+    /// AMD AMF (h264_amf, hevc_amf, av1_amf) — Windows.
+    Amf,
+    /// Intel QuickSync (h264_qsv, hevc_qsv, av1_qsv, vp9_qsv) — Windows/Linux.
+    Qsv,
+    /// VAAPI (h264_vaapi, hevc_vaapi, av1_vaapi, vp9_vaapi) — Linux.
+    Vaapi,
+}
+
+impl EncoderBackend {
+    /// ffmpeg encoder-name suffix (e.g. "videotoolbox", "nvenc").
+    pub fn ffmpeg_suffix(&self) -> Option<&'static str> {
+        match self {
+            EncoderBackend::Software => None,
+            EncoderBackend::VideoToolbox => Some("videotoolbox"),
+            EncoderBackend::Nvenc => Some("nvenc"),
+            EncoderBackend::Amf => Some("amf"),
+            EncoderBackend::Qsv => Some("qsv"),
+            EncoderBackend::Vaapi => Some("vaapi"),
+        }
+    }
+
+    pub fn is_hardware(&self) -> bool {
+        !matches!(self, EncoderBackend::Software)
+    }
+
+    /// Display name shown in the UI.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            EncoderBackend::Software => "Software (CPU)",
+            EncoderBackend::VideoToolbox => "VideoToolbox (macOS)",
+            EncoderBackend::Nvenc => "NVENC (NVIDIA)",
+            EncoderBackend::Amf => "AMF (AMD)",
+            EncoderBackend::Qsv => "QSV (Intel)",
+            EncoderBackend::Vaapi => "VAAPI (Linux)",
+        }
+    }
+
+    /// Return the list of backends available on the current operating system.
+    pub fn available_on_current_platform() -> Vec<EncoderBackend> {
+        use EncoderBackend::*;
+        let mut list = vec![Software];
+        // macOS
+        #[cfg(target_os = "macos")]
+        list.push(VideoToolbox);
+        // Windows
+        #[cfg(target_os = "windows")]
+        {
+            list.push(Nvenc);
+            list.push(Amf);
+            list.push(Qsv);
+        }
+        // Linux
+        #[cfg(target_os = "linux")]
+        {
+            list.push(Nvenc);
+            list.push(Qsv);
+            list.push(Vaapi);
+        }
+        list
+    }
+}
+
+impl std::str::FromStr for EncoderBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Software (CPU)" => Ok(EncoderBackend::Software),
+            "VideoToolbox (macOS)" => Ok(EncoderBackend::VideoToolbox),
+            "NVENC (NVIDIA)" => Ok(EncoderBackend::Nvenc),
+            "AMF (AMD)" => Ok(EncoderBackend::Amf),
+            "QSV (Intel)" => Ok(EncoderBackend::Qsv),
+            "VAAPI (Linux)" => Ok(EncoderBackend::Vaapi),
+            _ => Err(format!("unknown encoder backend: {}", s)),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Quality preset
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum QualityPreset {
@@ -129,12 +232,17 @@ impl QualityPreset {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ExportConfig
+// ---------------------------------------------------------------------------
+
 pub struct ExportConfig {
     pub width: u32,
     pub height: u32,
     pub fps: f64,
     pub container: Container,
     pub codec: VideoCodec,
+    pub backend: EncoderBackend,
     pub output_path: PathBuf,
     pub quality: QualityPreset,
     // Optional audio data for mixing into the output
@@ -146,5 +254,22 @@ pub struct ExportConfig {
 impl ExportConfig {
     pub fn total_frames(&self, duration_secs: f64) -> u64 {
         (duration_secs * self.fps).ceil() as u64
+    }
+
+    /// Build the full ffmpeg encoder name from codec + backend.
+    ///
+    /// Examples: "libx264", "h264_videotoolbox", "hevc_nvenc".
+    pub fn ffmpeg_encoder_name(&self) -> String {
+        match &self.backend {
+            EncoderBackend::Software => self.codec.ffmpeg_software_encoder().to_string(),
+            _ => {
+                let codec = self.codec.ffmpeg_codec_name();
+                let suffix = self
+                    .backend
+                    .ffmpeg_suffix()
+                    .expect("hardware backend should have a suffix");
+                format!("{}_{}", codec, suffix)
+            }
+        }
     }
 }

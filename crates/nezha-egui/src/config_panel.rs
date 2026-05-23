@@ -60,6 +60,7 @@ pub struct ConfigState<'a> {
     pub fps: &'a mut u32,
     pub export_format: &'a mut String,
     pub encoder: &'a mut String,
+    pub encoder_backend: &'a mut String,
     pub export_path: &'a mut Option<String>,
     pub theme_mode: &'a mut ThemeMode,
     // SoundFont management
@@ -126,6 +127,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                     ui,
                     state.export_format,
                     state.encoder,
+                    state.encoder_backend,
                     state.export_path,
                     state.midi_files,
                 ),
