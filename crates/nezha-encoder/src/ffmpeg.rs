@@ -335,11 +335,14 @@ fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<Str
     args.push("-i".to_string());
     args.push("-".to_string());
 
-    // Map video from the second input (index 1)
-    args.push("-map".to_string());
-    args.push("1:v".to_string());
+    // ── Map streams ──
+    //   When audio is present: input 0 = WAV, input 1 = stdin video
+    //   When audio is absent:  input 0 = stdin video
+    let video_input_idx = if audio_wav.is_some() { 1 } else { 0 };
 
-    // Map audio from the first input (index 0) if present
+    args.push("-map".to_string());
+    args.push(format!("{}:v", video_input_idx));
+
     if audio_wav.is_some() {
         args.push("-map".to_string());
         args.push("0:a".to_string());
