@@ -83,7 +83,8 @@ impl FfmpegEncoder {
             1024 * 1024, // 1 MB buffer to batch writes
             process.stdin.take().expect("ffmpeg stdin piped"),
         );
-        let (tx, rx) = crossbeam_channel::bounded::<Vec<u8>>(256);
+        // 小容量背压：8 帧缓冲 ≈ 64MB @ 1920x1080x4，避免编码速度慢时内存暴涨
+        let (tx, rx) = crossbeam_channel::bounded::<Vec<u8>>(8);
 
         let join_handle = std::thread::spawn(move || {
             for frame_data in rx {
@@ -108,9 +109,8 @@ impl FfmpegEncoder {
 
     /// Write a BGRA frame (width×height×4 bytes) to the encoder.
     ///
-    /// The frame is converted from BGRA to YUV420p internally before being
-    /// sent to ffmpeg. This reduces pipe bandwidth by ~62% and skips the
-    /// costly pixel-format conversion inside ffmpeg.
+    /// The raw BGRA data is sent directly to ffmpeg via stdin; ffmpeg handles
+    /// the pixel format conversion internally.
     pub fn write_frame(&mut self, frame_data: Vec<u8>) -> Result<(), EncoderError> {
         let expected = (self.width * self.height * 4) as usize;
         if frame_data.len() != expected {
@@ -120,11 +120,9 @@ impl FfmpegEncoder {
             });
         }
 
-        let yuv = bgra_to_yuv420p(&frame_data, self.width, self.height);
-
         if let Some(sender) = &self.sender {
             sender
-                .send(yuv)
+                .send(frame_data)
                 .map_err(|_| EncoderError::FfmpegFailed(None))?;
         }
         Ok(())
@@ -178,69 +176,6 @@ impl Drop for FfmpegEncoder {
             let _ = std::fs::remove_file(tmp);
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// BGRA → YUV420p conversion
-// ---------------------------------------------------------------------------
-
-/// Convert a BGRA frame (4 bytes per pixel) to YUV420p (1.5 bytes per pixel).
-///
-/// Uses integer arithmetic based on ITU-R BT.601 full-range coefficients.
-/// YUV420p layout: Y plane (W×H), then U plane (W/2 × H/2), then V plane (W/2 × H/2).
-fn bgra_to_yuv420p(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let w = width as usize;
-    let h = height as usize;
-    let y_size = w * h;
-    let uv_size = (w / 2) * (h / 2);
-    let mut yuv = vec![0u8; y_size + uv_size * 2];
-
-    let (y_plane, rest) = yuv.split_at_mut(y_size);
-    let (u_plane, v_plane) = rest.split_at_mut(uv_size);
-
-    // Y plane — full resolution
-    for y in 0..h {
-        for x in 0..w {
-            let idx = (y * w + x) * 4;
-            let b = bgra[idx] as i32;
-            let g = bgra[idx + 1] as i32;
-            let r = bgra[idx + 2] as i32;
-            let y_val = (77 * r + 150 * g + 29 * b) >> 8;
-            y_plane[y * w + x] = y_val.clamp(0, 255) as u8;
-        }
-    }
-
-    // U/V planes — 2×2 subsampled
-    for y in (0..h).step_by(2) {
-        for x in (0..w).step_by(2) {
-            let mut u_acc: i64 = 0;
-            let mut v_acc: i64 = 0;
-
-            for dy in 0..2 {
-                for dx in 0..2 {
-                    let px = x + dx;
-                    let py = y + dy;
-                    if px < w && py < h {
-                        let idx = (py * w + px) * 4;
-                        let b = bgra[idx] as i32;
-                        let g = bgra[idx + 1] as i32;
-                        let r = bgra[idx + 2] as i32;
-
-                        u_acc += (-43 * r - 85 * g + 128 * b) as i64;
-                        v_acc += (128 * r - 107 * g - 21 * b) as i64;
-                    }
-                }
-            }
-
-            let uv_idx = (y / 2) * (w / 2) + (x / 2);
-            let u_val = ((u_acc / 4) >> 8) + 128;
-            let v_val = ((v_acc / 4) >> 8) + 128;
-            u_plane[uv_idx] = u_val.clamp(0, 255) as u8;
-            v_plane[uv_idx] = v_val.clamp(0, 255) as u8;
-        }
-    }
-
-    yuv
 }
 
 // ---------------------------------------------------------------------------
@@ -321,17 +256,20 @@ fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<Str
         args.push(wav_path.to_string_lossy().to_string());
     }
 
-    // ── Video input: raw YUV420p from stdin ──
+    // ── Video input: raw BGRA from stdin ──
+    //   FFmpeg handles the BGRA→YUV420p conversion internally.
     args.push("-f".to_string());
     args.push("rawvideo".to_string());
     args.push("-pix_fmt".to_string());
-    args.push("yuv420p".to_string());
+    args.push("bgra".to_string());
     args.push("-s".to_string());
     args.push(format!("{}x{}", config.width, config.height));
     args.push("-r".to_string());
     args.push(format!("{:.3}", config.fps));
+    // 限制 ffmpeg 内部输入队列，防止编码速度跟不上时堆积数 GB 内存
+    // 16 帧 ≈ 128MB @ 1920x1080x4，足够平滑速度波动
     args.push("-thread_queue_size".to_string());
-    args.push("2048".to_string());
+    args.push("16".to_string());
     args.push("-i".to_string());
     args.push("-".to_string());
 
