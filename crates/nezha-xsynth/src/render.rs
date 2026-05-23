@@ -155,23 +155,6 @@ fn render_samples(
     if delta_sec <= 0.0 {
         return;
     }
-    // Cap each batch to 10s to avoid huge allocations
-    if delta_sec > 10.0 {
-        let mut remaining = delta_sec;
-        while remaining > 0.0 {
-            let batch = remaining.min(10.0);
-            render_samples(
-                channel_group,
-                batch,
-                config,
-                scratch,
-                missed_samples,
-                output,
-            );
-            remaining -= batch;
-        }
-        return;
-    }
 
     let ch_count = config.channels.count() as usize;
     let sample_count_f = config.sample_rate as f64 * delta_sec + *missed_samples;
@@ -182,9 +165,14 @@ fn render_samples(
         return;
     }
 
-    scratch.resize(samples_needed, 0.0);
-    channel_group.read_samples(scratch);
-    output.extend_from_slice(scratch);
+    // Only grow the scratch buffer; never shrink.
+    // This avoids repeated re-allocation across many small render calls.
+    if scratch.len() < samples_needed {
+        scratch.resize(samples_needed, 0.0);
+    }
+    let buf = &mut scratch[..samples_needed];
+    channel_group.read_samples(buf);
+    output.extend_from_slice(buf);
 }
 
 // ── MIDI parsing ──
@@ -201,12 +189,16 @@ fn parse_midi_events(
         _ => 480,
     };
 
-    // Collect tempo events
+    // Collect tempo events and find max tick across all tracks
+    let mut max_tick = 0u32;
     let mut tempo_events: Vec<(u32, f64)> = Vec::new();
     for track in &smf.tracks {
         let mut tick: u32 = 0;
         for event in track {
             tick += event.delta.as_int();
+            if tick > max_tick {
+                max_tick = tick;
+            }
             if let TrackEventKind::Meta(MetaMessage::Tempo(us)) = event.kind {
                 tempo_events.push((tick, us.as_int() as f64));
             }
@@ -220,27 +212,34 @@ fn parse_midi_events(
         tempo_events.insert(0, (0, DEFAULT_MPQ));
     }
 
-    let tick_to_sec = |tick: u32| -> f64 {
-        let mut sec = 0.0;
-        let mut prev_tick = 0u32;
+    // Pre-compute tick→sec lookup table for O(1) conversion
+    // (was O(n) linear scan per lookup)
+    let mut tick_to_sec_table = Vec::with_capacity(max_tick as usize + 1);
+    {
+        let mut sec = 0.0f64;
+        let mut prev_tempo_tick = 0u32;
         let mut prev_mpq = DEFAULT_MPQ;
-        for &(t, mpq) in &tempo_events {
-            if t > tick {
-                break;
+        let mut tempo_idx = 0;
+
+        for tick in 0..=max_tick {
+            while tempo_idx < tempo_events.len() && tempo_events[tempo_idx].0 <= tick {
+                let (tt, mpq) = tempo_events[tempo_idx];
+                if tt > prev_tempo_tick {
+                    let dt = (tt - prev_tempo_tick) as f64;
+                    sec += dt * prev_mpq / (ticks_per_beat as f64 * 1_000_000.0);
+                }
+                prev_tempo_tick = tt;
+                prev_mpq = mpq;
+                tempo_idx += 1;
             }
-            if t > prev_tick {
-                let dt = (t - prev_tick) as f64;
-                sec += dt * prev_mpq / (ticks_per_beat as f64 * 1_000_000.0);
-            }
-            prev_tick = t;
-            prev_mpq = mpq;
+            let time_at_tick = sec
+                + (tick - prev_tempo_tick) as f64 * prev_mpq
+                    / (ticks_per_beat as f64 * 1_000_000.0);
+            tick_to_sec_table.push(time_at_tick);
         }
-        if tick > prev_tick {
-            let dt = (tick - prev_tick) as f64;
-            sec += dt * prev_mpq / (ticks_per_beat as f64 * 1_000_000.0);
-        }
-        sec
-    };
+    }
+
+    let tick_to_sec = |tick: u32| -> f64 { tick_to_sec_table[tick as usize] };
 
     // Parse events per track with port tracking
     let mut all_events: Vec<TimedEvent> = Vec::new();
@@ -393,31 +392,36 @@ pub fn render_midi_to_pcm_chunked(
         }
     }
 
-    // 5. Render in timestamp batches
-    let _ch_count = audio_params.channels.count() as usize;
+    // 5. Render in fixed-size time blocks (windowed event batching)
+    //
+    // Instead of calling render_samples for every unique event timestamp
+    // (which can be tens/hundreds of thousands of calls for dense MIDI),
+    // we process in ~10ms blocks, accumulating all events within each block.
+    // This drastically reduces the number of xsynth read_samples() calls.
     let mut pcm_buffer: Vec<f32> = Vec::new();
     let mut scratch: Vec<f32> = Vec::new();
     let mut missed_samples: f64 = 0.0;
 
-    // Group events by unique timestamp and process in batches
-    let mut i = 0;
-    let mut prev_time: f64 = 0.0;
     const CHUNK_INTERVAL_SECS: f64 = 3.0; // flush PCM chunk every 3 seconds
     let mut next_chunk_at: f64 = CHUNK_INTERVAL_SECS;
 
-    let mut last_time = 0.0;
+    const RENDER_BLOCK_SAMPLES: usize = 512;
+    let block_sec = RENDER_BLOCK_SAMPLES as f64 / config.sample_rate as f64;
 
-    while i < events.len() {
-        let current_time = events[i].time_sec;
-        last_time = current_time;
+    let events_end_time = if events.is_empty() {
+        0.0
+    } else {
+        events.last().unwrap().time_sec
+    };
 
-        // Collect all events at this exact timestamp
-        let batch_end = (i + 1..events.len())
-            .find(|&j| (events[j].time_sec - current_time).abs() > 1e-9)
-            .unwrap_or(events.len());
+    let mut block_start = 0.0_f64;
+    let mut event_idx = 0;
 
-        // 5a. Render audio for the time span since the last batch
-        let delta = current_time - prev_time;
+    while block_start < events_end_time {
+        let block_end = (block_start + block_sec).min(events_end_time);
+        let delta = block_end - block_start;
+
+        // Render audio for this block
         render_samples(
             &mut channel_group,
             delta,
@@ -426,18 +430,18 @@ pub fn render_midi_to_pcm_chunked(
             &mut missed_samples,
             &mut pcm_buffer,
         );
-        prev_time = current_time;
 
-        // 5b. Send all events in this batch
-        for ev in &events[i..batch_end] {
-            send_command(&mut channel_group, &ev.command);
+        // Dispatch all events falling within this block
+        while event_idx < events.len() && events[event_idx].time_sec < block_end {
+            send_command(&mut channel_group, &events[event_idx].command);
+            event_idx += 1;
         }
 
-        // 5c. Emit chunk if we've accumulated enough audio
-        if current_time >= next_chunk_at {
+        // Emit chunk if we've accumulated enough audio
+        if block_end >= next_chunk_at {
             let chunk = std::mem::take(&mut pcm_buffer);
             let progress = RenderProgress {
-                elapsed_seconds: current_time,
+                elapsed_seconds: block_end,
                 total_seconds,
                 voice_count: channel_group.voice_count(),
             };
@@ -445,22 +449,21 @@ pub fn render_midi_to_pcm_chunked(
             next_chunk_at += CHUNK_INTERVAL_SECS;
         }
 
-        i = batch_end;
+        block_start = block_end;
     }
 
-    // 5d. Final progress report after all events
-    if total_seconds > 0.0 {
+    // Flush remaining PCM buffer after all events
+    if !pcm_buffer.is_empty() || total_seconds > 0.0 {
+        let chunk = std::mem::take(&mut pcm_buffer);
         let progress = RenderProgress {
-            elapsed_seconds: last_time,
+            elapsed_seconds: events_end_time.max(total_seconds),
             total_seconds,
             voice_count: channel_group.voice_count(),
         };
-        // Flush remaining PCM buffer
-        let chunk = std::mem::take(&mut pcm_buffer);
         on_chunk(chunk, progress);
     }
 
-    // 6. Release tail (+ render remaining buffer)
+    // 6. Release tail (let notes fade naturally)
     let release_time = 2.0;
     render_samples(
         &mut channel_group,
@@ -479,10 +482,11 @@ pub fn render_midi_to_pcm_chunked(
         ChannelAudioEvent::ResetControl,
     )));
 
-    // Flush tail audio until silence
-    let mut tail_current = 0.0_f64;
-    while tail_current < 5.0 {
-        let delta = (5.0 - tail_current).min(1.0);
+    // 8. Flush tail audio until silence (larger 2s batches)
+    let mut tail_remaining = 5.0_f64;
+    while tail_remaining > 0.0 {
+        let delta = tail_remaining.min(2.0);
+        let prev_output_len = pcm_buffer.len();
         render_samples(
             &mut channel_group,
             delta,
@@ -491,22 +495,25 @@ pub fn render_midi_to_pcm_chunked(
             &mut missed_samples,
             &mut pcm_buffer,
         );
-        tail_current += delta;
+        tail_remaining -= delta;
 
-        // Check for silence
-        if scratch.iter().all(|s| s.abs() <= 0.0001) {
+        // Check newly rendered samples for silence
+        let new_samples = &pcm_buffer[prev_output_len..];
+        if new_samples.iter().all(|s| s.abs() <= 0.0001) {
             break;
         }
     }
 
     // Final tail chunk
-    let chunk = std::mem::take(&mut pcm_buffer);
-    let progress = RenderProgress {
-        elapsed_seconds: total_seconds,
-        total_seconds,
-        voice_count: channel_group.voice_count(),
-    };
-    on_chunk(chunk, progress);
+    if !pcm_buffer.is_empty() {
+        let chunk = std::mem::take(&mut pcm_buffer);
+        let progress = RenderProgress {
+            elapsed_seconds: total_seconds,
+            total_seconds,
+            voice_count: channel_group.voice_count(),
+        };
+        on_chunk(chunk, progress);
+    }
 
     Ok(())
 }
