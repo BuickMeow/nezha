@@ -656,6 +656,8 @@ impl eframe::App for App {
             let audio_clips = self.project.audio_timeline_clips();
 
             if !self.audio_player.is_playing() {
+                // Always start from the beginning
+                self.project.playback.current_time = 0.0;
                 self.audio_player.mix(
                     &self.project.audio,
                     &audio_clips,
