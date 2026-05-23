@@ -45,8 +45,11 @@ impl std::str::FromStr for Container {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VideoCodec {
     H264,
+    H264VideoToolbox,
     H265,
+    H265VideoToolbox,
     ProRes,
+    ProResVideoToolbox,
     Vp9,
     Av1,
 }
@@ -55,8 +58,11 @@ impl VideoCodec {
     pub fn ffmpeg_encoder(&self) -> &'static str {
         match self {
             VideoCodec::H264 => "libx264",
+            VideoCodec::H264VideoToolbox => "h264_videotoolbox",
             VideoCodec::H265 => "libx265",
+            VideoCodec::H265VideoToolbox => "hevc_videotoolbox",
             VideoCodec::ProRes => "prores_ks",
+            VideoCodec::ProResVideoToolbox => "prores_videotoolbox",
             VideoCodec::Vp9 => "libvpx-vp9",
             VideoCodec::Av1 => "libsvtav1",
         }
@@ -68,6 +74,15 @@ impl VideoCodec {
             _ => "yuv420p",
         }
     }
+
+    pub fn is_hardware(&self) -> bool {
+        matches!(
+            self,
+            VideoCodec::H264VideoToolbox
+                | VideoCodec::H265VideoToolbox
+                | VideoCodec::ProResVideoToolbox
+        )
+    }
 }
 
 impl std::str::FromStr for VideoCodec {
@@ -76,8 +91,11 @@ impl std::str::FromStr for VideoCodec {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "H.264" => Ok(VideoCodec::H264),
+            "H.264 (VideoToolbox)" => Ok(VideoCodec::H264VideoToolbox),
             "H.265 / HEVC" => Ok(VideoCodec::H265),
+            "H.265 / HEVC (VideoToolbox)" => Ok(VideoCodec::H265VideoToolbox),
             "ProRes" => Ok(VideoCodec::ProRes),
+            "ProRes (VideoToolbox)" => Ok(VideoCodec::ProResVideoToolbox),
             "VP9" => Ok(VideoCodec::Vp9),
             "AV1" => Ok(VideoCodec::Av1),
             _ => Err(format!("unknown codec: {}", s)),

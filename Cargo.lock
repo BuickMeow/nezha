@@ -2392,6 +2392,7 @@ dependencies = [
 name = "nezha-encoder"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "hound",
  "thiserror 2.0.18",
 ]
