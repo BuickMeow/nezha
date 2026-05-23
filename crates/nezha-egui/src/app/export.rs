@@ -179,15 +179,9 @@ impl App {
                 });
             }
             Err(EncoderError::FfmpegNotFound) => {
-                let exe_name = if cfg!(target_os = "windows") {
-                    "ffmpeg.exe"
-                } else {
-                    "ffmpeg"
-                };
-                self.export_state = Some(ExportState::Error(format!(
-                    "未找到 {}。请在程序所在目录下放入对应平台的 ffmpeg 二进制文件。",
-                    exe_name
-                )));
+                self.export_state = Some(ExportState::Error(
+                    "未找到 ffmpeg。请将 ffmpeg 放在程序所在目录或加入 PATH 环境变量。".into(),
+                ));
             }
             Err(e) => {
                 self.export_state = Some(ExportState::Error(format!("启动编码器失败: {}", e)));

@@ -154,7 +154,7 @@ pub fn audio_render_dialog(
             ui.separator();
             ui.horizontal(|ui| {
                 if ui.button("取消").clicked() {
-                    action = Some(AudioRenderAction::Start); // signal to close
+                    action = Some(AudioRenderAction::Cancel);
                 }
                 if ui
                     .button(egui::RichText::new("开始渲染").strong())
@@ -211,4 +211,5 @@ pub enum ProjectAction {
 #[derive(Clone, Debug, PartialEq)]
 pub enum AudioRenderAction {
     Start,
+    Cancel,
 }

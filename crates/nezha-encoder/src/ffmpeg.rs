@@ -1,6 +1,7 @@
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
 
 use crate::config::{EncoderBackend, ExportConfig, QualityPreset, VideoCodec};
 
@@ -32,16 +33,9 @@ pub struct FfmpegEncoder {
 
 impl FfmpegEncoder {
     pub fn new(config: &ExportConfig) -> Result<Self, EncoderError> {
-        let ffmpeg = ffmpeg_path();
+        let ffmpeg = ffmpeg_path()?;
 
-        // Check for bundled ffmpeg
-        let is_bundled_path = ffmpeg
-            .file_name()
-            .is_some_and(|n| n == "ffmpeg" || n == "ffmpeg.exe")
-            && ffmpeg.parent().is_some_and(|p| p != "");
-        if is_bundled_path && !ffmpeg.exists() {
-            return Err(EncoderError::FfmpegNotFound);
-        }
+        tracing::info!(path = %ffmpeg.display(), "Starting ffmpeg encoder");
 
         // Write audio PCM to a temp WAV file if present
         let temp_wav: Option<PathBuf> = if let Some(pcm) = &config.audio_pcm {
@@ -54,11 +48,36 @@ impl FfmpegEncoder {
 
         let args = build_ffmpeg_args(config, temp_wav.as_deref());
 
+        tracing::debug!(?args, "ffmpeg arguments");
+
         let mut process = Command::new(&ffmpeg)
             .args(&args)
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
+
+        // ── stderr logger thread: read ffmpeg stderr in real-time ──
+        let stderr = process.stderr.take().expect("ffmpeg stderr piped");
+        thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(stderr);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let trimmed = line.trim_end();
+                        if !trimmed.is_empty() {
+                            tracing::warn!("[ffmpeg] {}", trimmed);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("[ffmpeg] stderr read error: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
 
         let mut stdin = BufWriter::with_capacity(
             1024 * 1024, // 1 MB buffer to batch writes
@@ -125,22 +144,14 @@ impl FfmpegEncoder {
         // Wait for ffmpeg process
         let status = self.process.wait()?;
         if !status.success() {
-            let stderr = self
-                .process
-                .stderr
-                .as_mut()
-                .and_then(|s| {
-                    use std::io::Read;
-                    let mut buf = String::new();
-                    s.read_to_string(&mut buf).ok()?;
-                    Some(buf)
-                })
-                .unwrap_or_default();
-            if !stderr.is_empty() {
-                eprintln!("ffmpeg stderr:\n{}", stderr);
-            }
+            tracing::error!(
+                code = status.code(),
+                "ffmpeg exited with non-zero status"
+            );
             return Err(EncoderError::FfmpegFailed(status.code()));
         }
+
+        tracing::info!("ffmpeg encoding completed successfully");
 
         // Clean up temp WAV
         if let Some(tmp) = &self.temp_wav {
@@ -262,26 +273,39 @@ fn write_wav_file(
 // ---------------------------------------------------------------------------
 
 /// Return the ffmpeg executable path.
-pub fn ffmpeg_path() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let name = if cfg!(target_os = "windows") {
-            "ffmpeg.exe"
-        } else {
-            "ffmpeg"
-        };
-        let bundled = dir.join(name);
-        if bundled.exists() {
-            return bundled;
+///
+/// Checks (in order):
+///   1. Bundled ffmpeg next to the executable.
+///   2. `ffmpeg` / `ffmpeg.exe` available via `PATH`.
+pub fn ffmpeg_path() -> Result<PathBuf, EncoderError> {
+    let exe_name = if cfg!(target_os = "windows") {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+
+    // 1. Bundled next to the executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let bundled = dir.join(exe_name);
+            if bundled.is_file() {
+                return Ok(bundled);
+            }
         }
     }
 
-    if cfg!(target_os = "windows") {
-        PathBuf::from("ffmpeg.exe")
-    } else {
-        PathBuf::from("ffmpeg")
+    // 2. Available via PATH
+    if Command::new(exe_name)
+        .arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+    {
+        return Ok(PathBuf::from(exe_name));
     }
+
+    Err(EncoderError::FfmpegNotFound)
 }
 
 // ---------------------------------------------------------------------------
