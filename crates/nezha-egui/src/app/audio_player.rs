@@ -120,7 +120,21 @@ impl AudioPlayback {
                             return;
                         }
 
+                        // Log the first few callbacks
                         let start_frame = current_frame.load(Ordering::Relaxed) as usize;
+                        static CALLBACK_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let count =
+                            CALLBACK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if count < 5 {
+                            tracing::info!(
+                                "AudioCallback #{}: data_len={} frames_avail={} start_frame={}",
+                                count,
+                                data.len(),
+                                frames_avail,
+                                start_frame
+                            );
+                        }
                         let mut out_idx = 0;
                         let mut write_frame = start_frame;
 
@@ -215,6 +229,10 @@ impl AudioPlayback {
 
     pub fn is_playing(&self) -> bool {
         self.is_playing.load(Ordering::Relaxed)
+    }
+
+    pub fn buffer_len(&self) -> usize {
+        self.mixed_buffer.len()
     }
 
     pub fn current_time(&self) -> f64 {

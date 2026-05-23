@@ -639,19 +639,33 @@ impl eframe::App for App {
 
         // Sync audio playback with UI playback state
         if self.project.playback.is_playing {
+            let audio_clips = self.project.audio_timeline_clips();
+            tracing::info!(
+                "AudioSync: playing={}, audio_player={}, clips={}, audio_entries={}",
+                self.project.playback.is_playing,
+                self.audio_player.is_playing(),
+                audio_clips.len(),
+                self.project.audio.entries.len(),
+            );
+
             if !self.audio_player.is_playing() {
                 self.audio_player.mix(
                     &self.project.audio,
-                    &self.project.audio_timeline_clips(),
+                    &audio_clips,
                     self.project.duration(),
                     self.project.render.audio_sample_rate as u32,
                 );
                 self.audio_player
                     .seek_to(self.project.playback.current_time);
+                tracing::info!(
+                    "AudioSync: calling play(), buffer_len={}",
+                    self.audio_player.buffer_len()
+                );
                 self.audio_player.play(self.ui.audio_device_name.as_deref());
             }
         } else {
             if self.audio_player.is_playing() {
+                tracing::info!("AudioSync: pausing");
                 self.audio_player.pause();
             }
         }
