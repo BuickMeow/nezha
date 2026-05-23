@@ -2381,6 +2381,8 @@ dependencies = [
  "puffin",
  "puffin_http",
  "rfd",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "wgpu",

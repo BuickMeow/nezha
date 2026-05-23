@@ -10,11 +10,12 @@ use crate::app::project_state::AudioStore;
 pub struct AudioPlayback {
     pub is_playing: Arc<AtomicBool>,
     pub current_frame: Arc<AtomicU64>,
-    /// Shared buffer: mix() writes, cpal callback reads.
     mixed_buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
     channels: u16,
     stream: Option<cpal::Stream>,
+    device_name: Option<String>,
+    stream_initialized: bool,
 }
 
 impl AudioPlayback {
@@ -26,6 +27,17 @@ impl AudioPlayback {
             sample_rate: 48000,
             channels: 2,
             stream: None,
+            device_name: None,
+            stream_initialized: false,
+        }
+    }
+
+    /// Set the preferred device name. The stream will be (re)created on next play().
+    pub fn set_device(&mut self, name: Option<String>) {
+        if self.device_name != name {
+            self.device_name = name;
+            self.stream = None; // force re-init on next play
+            self.stream_initialized = false;
         }
     }
 
@@ -37,21 +49,28 @@ impl AudioPlayback {
         sample_rate: u32,
     ) {
         let mixed = audio_store.mix_timeline(timeline_clips, sample_rate, duration_secs);
-        // Update shared buffer in-place (lock briefly)
         if let Ok(mut buf) = self.mixed_buffer.lock() {
             *buf = mixed;
         }
         self.sample_rate = sample_rate;
     }
 
-    pub fn play(&mut self, device_name: Option<&str>, start_frame: u64) {
-        if self.is_playing.load(Ordering::Relaxed) {
-            return;
+    /// Start playback. Lazily creates the cpal stream on first call.
+    pub fn play(&mut self, start_frame: u64) {
+        if !self.stream_initialized {
+            self.init_stream();
         }
-
-        // 1. Drop old stream FIRST to eliminate callback races
-        self.stream = None;
         self.current_frame.store(start_frame, Ordering::SeqCst);
+        self.is_playing.store(true, Ordering::SeqCst);
+        if let Some(ref stream) = self.stream {
+            let _ = stream.play();
+        }
+    }
+
+    fn init_stream(&mut self) {
+        self.stream = None;
+        self.is_playing.store(false, Ordering::Relaxed);
+        self.current_frame.store(0, Ordering::Relaxed);
 
         let buffer = self.mixed_buffer.clone();
         let sample_rate = self.sample_rate;
@@ -59,26 +78,24 @@ impl AudioPlayback {
         let is_playing = self.is_playing.clone();
         let current_frame = self.current_frame.clone();
 
-        // Check buffer has data
-        {
-            let buf = buffer.lock().unwrap();
-            if buf.is_empty() || sample_rate == 0 {
-                tracing::warn!("AudioPlayback: buffer empty or sample_rate=0");
-                return;
-            }
-            tracing::info!(
-                "AudioPlayback: starting with {} frames at {} Hz",
-                buf.len() / channels as usize,
-                sample_rate
-            );
-        }
+        let device_name = self.device_name.clone();
 
         let result = cpal::default_host()
             .output_devices()
             .ok()
             .and_then(|mut devices| {
-                let dev: Option<cpal::Device> = if let Some(name) = device_name {
-                    devices.find(|d| d.name().ok().as_deref() == Some(name))
+                // Try to find the preferred device, or fall back to default
+                let dev: Option<cpal::Device> = if let Some(ref name) = device_name {
+                    let found = devices.find(|d| d.name().ok().as_deref() == Some(name.as_str()));
+                    if found.is_some() {
+                        found
+                    } else {
+                        // Fallback: re-enumerate and take first
+                        cpal::default_host()
+                            .output_devices()
+                            .ok()
+                            .and_then(|mut ds| ds.next())
+                    }
                 } else {
                     devices.next()
                 };
@@ -87,10 +104,7 @@ impl AudioPlayback {
                         tracing::info!("AudioPlayback: using device: {}", name);
                     }
                 } else {
-                    tracing::error!(
-                        "AudioPlayback: no output device found (requested: {:?})",
-                        device_name
-                    );
+                    tracing::error!("AudioPlayback: no output device found");
                 }
                 dev
             })
@@ -100,11 +114,6 @@ impl AudioPlayback {
                     sample_rate: cpal::SampleRate(sample_rate),
                     buffer_size: cpal::BufferSize::Default,
                 };
-                tracing::info!(
-                    "AudioPlayback: config = {} Hz, {} ch",
-                    config.sample_rate.0,
-                    config.channels
-                );
 
                 let err_fn = |err: cpal::StreamError| {
                     tracing::error!("AudioPlayback stream error: {:?}", err);
@@ -118,7 +127,6 @@ impl AudioPlayback {
                             return;
                         }
 
-                        // Lock the shared buffer briefly to read
                         let buf = match buffer.lock() {
                             Ok(b) => b,
                             Err(_) => {
@@ -169,7 +177,10 @@ impl AudioPlayback {
 
                 match stream_result {
                     Ok(s) => {
-                        tracing::info!("AudioPlayback: output stream built successfully");
+                        tracing::info!("AudioPlayback: stream built OK");
+                        if let Err(e) = s.play() {
+                            tracing::error!("AudioPlayback: stream.play() failed: {:?}", e);
+                        }
                         Some(s)
                     }
                     Err(e) => {
@@ -180,55 +191,27 @@ impl AudioPlayback {
             });
 
         if let Some(stream) = result {
-            if let Err(e) = stream.play() {
-                tracing::error!("AudioPlayback: stream.play() failed: {:?}", e);
-            } else {
-                tracing::info!("AudioPlayback: stream.play() OK");
-            }
             self.stream = Some(stream);
-            self.is_playing.store(true, Ordering::Relaxed);
-            tracing::info!("AudioPlayback: started successfully");
+            self.stream_initialized = true;
+            tracing::info!("AudioPlayback: initialized successfully");
         } else {
-            tracing::error!("AudioPlayback: FAILED TO START");
-            // Debug: write test WAV
-            if let Ok(cwd) = std::env::current_dir() {
-                let test_path = cwd.join("_audio_debug_test.wav");
-                if let Ok(mut w) = hound::WavWriter::create(
-                    &test_path,
-                    hound::WavSpec {
-                        channels,
-                        sample_rate,
-                        bits_per_sample: 32,
-                        sample_format: hound::SampleFormat::Float,
-                    },
-                ) {
-                    let buf = self.mixed_buffer.lock().unwrap();
-                    for &s in buf.iter().take(48000 * 2 * 5) {
-                        let _ = w.write_sample(s);
-                    }
-                    let _ = w.finalize();
-                    tracing::info!("AudioPlayback: wrote test WAV to {:?}", test_path);
-                }
-            }
+            tracing::error!("AudioPlayback: FAILED to initialize stream");
         }
     }
 
     pub fn pause(&self) {
-        self.is_playing.store(false, Ordering::Relaxed);
+        self.is_playing.store(false, Ordering::SeqCst);
     }
 
     pub fn stop(&mut self) {
         self.pause();
         self.current_frame.store(0, Ordering::Relaxed);
-        if let Some(stream) = self.stream.take() {
-            let _ = stream.pause();
-        }
     }
 
     pub fn seek_to(&self, time_sec: f64) {
         if self.sample_rate > 0 {
             let frame = (time_sec * self.sample_rate as f64) as u64;
-            self.current_frame.store(frame, Ordering::Relaxed);
+            self.current_frame.store(frame, Ordering::SeqCst);
         }
     }
 

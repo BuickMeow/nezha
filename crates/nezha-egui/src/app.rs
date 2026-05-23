@@ -4,6 +4,7 @@ use std::sync::mpsc;
 
 mod archive_picker;
 mod audio_player;
+mod config;
 mod export;
 mod loading;
 mod panels;
@@ -138,6 +139,12 @@ impl App {
             cached_midi_name: String::new(),
             cached_midi_path: String::new(),
         };
+
+        // Load config
+        let cfg = config::Config::load();
+        cfg.apply(&mut app.ui, &mut app.project);
+
+        // Refresh audio devices now that settings are loaded
         app.ui.refresh_audio_devices();
         app
     }
@@ -156,6 +163,12 @@ impl App {
         self.cached_midi_name = file_name;
         self.cached_midi_path = path;
         self.render_settings_open = true;
+    }
+
+    /// Save current settings to config file.
+    fn save_config(&self) {
+        let cfg = config::Config::from_ui(&self.ui, &self.project);
+        cfg.save();
     }
 
     /// Start the xsynth audio render in a background thread.
@@ -656,26 +669,31 @@ impl eframe::App for App {
             let audio_clips = self.project.audio_timeline_clips();
 
             if !self.audio_player.is_playing() {
-                // Always start from the beginning
-                self.project.playback.current_time = 0.0;
+                // Sync device selection
+                self.audio_player
+                    .set_device(self.ui.audio_device_name.clone());
+
                 self.audio_player.mix(
                     &self.project.audio,
                     &audio_clips,
                     self.project.duration(),
                     self.project.render.audio_sample_rate as u32,
                 );
-                // Always start playback from the beginning (ct=0)
-                let ct = 0.0_f64;
+                let ct = self
+                    .project
+                    .playback
+                    .current_time
+                    .clamp(0.0, self.project.duration());
                 let start_frame = (ct * self.project.render.audio_sample_rate as f64) as u64;
                 tracing::info!(
-                    "PLAY: start_fr={} buf={} clips={} dur={:.3}s",
+                    "PLAY: ct={:.3}s start_fr={} buf={} clips={} dur={:.3}s",
+                    ct,
                     start_frame,
                     self.audio_player.buffer_len(),
                     audio_clips.len(),
                     self.project.duration(),
                 );
-                self.audio_player
-                    .play(self.ui.audio_device_name.as_deref(), start_frame);
+                self.audio_player.play(start_frame);
             }
         } else {
             if self.audio_player.is_playing() {
@@ -702,6 +720,9 @@ impl eframe::App for App {
 
             ui.ctx().request_repaint();
         });
+
+        // Persist config after each frame
+        self.save_config();
 
         // Audio render settings dialog
         if self.render_settings_open {
