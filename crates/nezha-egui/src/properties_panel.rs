@@ -20,6 +20,7 @@ pub fn show(
     zoom: f32,
     midi_files: &[MidiEntry],
 ) {
+    let fps = timeline_state.fps;
     egui::ScrollArea::vertical()
         .id_salt("properties_scroll")
         .auto_shrink([false, false])
@@ -85,7 +86,7 @@ pub fn show(
                         // ── 按类型委托特有属性 ──
                         match clip.kind {
                             ClipKind::Waterfall => {
-                                waterfall::show(ui, clip, midi_files);
+                                waterfall::show(ui, clip, midi_files, fps);
                             }
                             ClipKind::SolidColor => {
                                 solid_color::show(ui, clip);

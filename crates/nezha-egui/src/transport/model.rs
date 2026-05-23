@@ -73,6 +73,12 @@ pub struct TrackClip {
     pub keyboard_height_percent: f32,
     /// 计数器/文本图层的字号（像素）。
     pub font_size: u32,
+    /// 有效内容相对 clip.start 的偏移（帧数），第一个音符在此位置播放。
+    /// 由 MIDI 加载时自动计算，视觉上标记缓冲区结束位置。
+    pub content_start_offset: u32,
+    /// 有效内容相对 clip.end 的提前偏移（帧数），最后一个音符在此处结束。
+    /// 由 MIDI 加载时自动计算，视觉上标记缓冲区开始位置。
+    pub content_end_offset: u32,
     /// 所有图层共有的变换与合成属性。
     pub common: LayerCommon,
 }
@@ -96,6 +102,8 @@ impl TrackClip {
             audio_idx: None,
             keyboard_height_percent: 0.15,
             font_size: 24,
+            content_start_offset: 0,
+            content_end_offset: 0,
             common: LayerCommon::default(),
         }
     }
@@ -118,6 +126,8 @@ impl TrackClip {
             audio_idx: None,
             keyboard_height_percent: 0.0,
             font_size: 24,
+            content_start_offset: 0,
+            content_end_offset: 0,
             common: LayerCommon::default(),
         }
     }
@@ -140,6 +150,8 @@ impl TrackClip {
             audio_idx: None,
             keyboard_height_percent: 0.0,
             font_size: 24,
+            content_start_offset: 0,
+            content_end_offset: 0,
             common: LayerCommon {
                 position_x: 20.0,
                 position_y: 20.0,
@@ -167,8 +179,20 @@ impl TrackClip {
             audio_idx: Some(audio_idx),
             keyboard_height_percent: 0.0,
             font_size: 24,
+            content_start_offset: 0,
+            content_end_offset: 0,
             common: LayerCommon::default(),
         }
+    }
+
+    /// 获取内容区域的起始时间（秒，clip 内部时间轴）。
+    pub fn content_start_time(&self, fps: u32) -> f32 {
+        self.start + self.content_start_offset as f32 / fps.max(1) as f32
+    }
+
+    /// 获取内容区域的结束时间（秒，clip 内部时间轴）。
+    pub fn content_end_time(&self, fps: u32) -> f32 {
+        self.end - self.content_end_offset as f32 / fps.max(1) as f32
     }
 }
 
@@ -389,6 +413,8 @@ impl TimelineData {
         duration: f32,
         midi_idx: Option<usize>,
         color: egui::Color32,
+        content_start_offset: u32,
+        content_end_offset: u32,
     ) -> usize {
         let id = self.alloc_clip_id();
 
@@ -403,6 +429,8 @@ impl TimelineData {
             ClipKind::Waterfall => {
                 let mut c = TrackClip::new_waterfall(id, midi_idx);
                 c.name = format!("默认瀑布流 {}", type_count);
+                c.content_start_offset = content_start_offset;
+                c.content_end_offset = content_end_offset;
                 c
             }
             ClipKind::SolidColor => {
@@ -451,18 +479,26 @@ impl TimelineData {
     }
 
     /// Convenience wrapper to push a waterfall clip.
-    pub fn push_waterfall_clip(&mut self, midi_idx: Option<usize>, duration: f32) -> usize {
+    pub fn push_waterfall_clip(
+        &mut self,
+        midi_idx: Option<usize>,
+        duration: f32,
+        content_start_offset: u32,
+        content_end_offset: u32,
+    ) -> usize {
         self.push_clip(
             ClipKind::Waterfall,
             duration,
             midi_idx,
             egui::Color32::TRANSPARENT,
+            content_start_offset,
+            content_end_offset,
         )
     }
 
     /// Convenience wrapper to push a solid color clip.
     pub fn push_solid_color_clip(&mut self, color: egui::Color32, duration: f32) -> usize {
-        self.push_clip(ClipKind::SolidColor, duration, None, color)
+        self.push_clip(ClipKind::SolidColor, duration, None, color, 0, 0)
     }
 
     /// Convenience wrapper to push a counter clip.
@@ -472,6 +508,8 @@ impl TimelineData {
             duration,
             None,
             egui::Color32::TRANSPARENT,
+            0,
+            0,
         )
     }
 
@@ -660,8 +698,19 @@ impl Default for TimelineState {
 }
 
 impl TimelineState {
-    pub fn push_waterfall_clip(&mut self, midi_idx: Option<usize>, duration: f32) {
-        let id = self.data.push_waterfall_clip(midi_idx, duration);
+    pub fn push_waterfall_clip(
+        &mut self,
+        midi_idx: Option<usize>,
+        duration: f32,
+        content_start_offset: u32,
+        content_end_offset: u32,
+    ) {
+        let id = self.data.push_waterfall_clip(
+            midi_idx,
+            duration,
+            content_start_offset,
+            content_end_offset,
+        );
         self.selection.select(id);
     }
 
