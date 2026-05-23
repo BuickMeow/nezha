@@ -111,21 +111,25 @@ impl Limiter {
                 self.gain = desired_gain + self.release_coeff * (self.gain - desired_gain);
             }
 
-            // 5. Apply gain to the LOOKAHEAD-delayed sample
+            // 5. Save the original sample BEFORE overwriting it with the
+            //    gain-applied delayed sample, so the delay line stores the
+            //    unprocessed signal for the next lookahead cycle.
+            let orig = samples[frame_start..frame_start + ch].to_vec();
+
+            // 6. Write ORIGINAL sample into delay buffer.
+            for c in 0..ch {
+                self.delay_buf[self.delay_write + c] = orig[c];
+            }
+            self.delay_write = (self.delay_write + ch) % delay_len;
+
+            // 7. Read the lookahead-delayed sample, apply gain, write to output.
             let read_idx = (self.delay_write + 1) % delay_len;
             let delayed_frame_start = (read_idx / ch) * ch;
 
             for c in 0..ch {
-                let delayed_sample = self.delay_buf[read_idx + c];
-                // Apply gain + makeup
+                let delayed_sample = self.delay_buf[delayed_frame_start + c];
                 samples[frame_start + c] = delayed_sample * self.gain * self.makeup_gain;
             }
-
-            // 6. Write current sample into delay buffer
-            for c in 0..ch {
-                self.delay_buf[self.delay_write + c] = samples[frame_start + c];
-            }
-            self.delay_write = (self.delay_write + ch) % delay_len;
         }
     }
 }

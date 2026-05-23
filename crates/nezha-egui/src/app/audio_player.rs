@@ -48,7 +48,7 @@ impl AudioPlayback {
         duration_secs: f64,
         sample_rate: u32,
     ) {
-        let mixed = audio_store.mix_timeline(timeline_clips, sample_rate, duration_secs);
+        let mixed = audio_store.mix_master(timeline_clips, sample_rate, duration_secs);
         if let Ok(mut buf) = self.mixed_buffer.lock() {
             *buf = mixed;
         }

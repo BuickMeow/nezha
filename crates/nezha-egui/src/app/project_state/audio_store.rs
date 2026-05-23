@@ -1,3 +1,5 @@
+use nezha_xsynth::Limiter;
+
 /// A rendered audio entry — stores PCM samples in memory.
 #[derive(Clone, Debug)]
 pub struct AudioEntry {
@@ -107,5 +109,37 @@ impl AudioStore {
         }
 
         mix_buf
+    }
+
+    /// Mix all audio entries into a single stereo buffer, then apply
+    /// a lookahead brickwall limiter across the **full mix**.
+    ///
+    /// This is the preferred method for both preview and export, so the
+    /// limiter sees the actual summed waveform and can properly catch
+    /// peaks that exceed the safe range.
+    ///
+    /// Parameters are identical to [`mix_timeline`].
+    pub fn mix_master(
+        &self,
+        timeline_clips: &[(usize, f32, f32)],
+        sample_rate: u32,
+        duration_secs: f64,
+    ) -> Vec<f32> {
+        let mut mix = self.mix_timeline(timeline_clips, sample_rate, duration_secs);
+
+        // mix_timeline always outputs stereo
+        let channels = 2;
+        let mut limiter = Limiter::new(
+            sample_rate as f32,
+            channels,
+            -1.0,  // threshold:  -1 dBFS
+            -0.3,  // ceiling:    -0.3 dBFS
+            2.0,   // lookahead:  2 ms
+            0.5,   // attack:     0.5 ms
+            100.0, // release:    100 ms
+        );
+        limiter.process(&mut mix);
+
+        mix
     }
 }

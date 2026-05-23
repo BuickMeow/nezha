@@ -134,7 +134,7 @@ impl App {
         // Mix audio for export
         let audio_clips = self.project.audio_timeline_clips();
         let audio_pcm = if !audio_clips.is_empty() {
-            Some(self.project.audio.mix_timeline(
+            Some(self.project.audio.mix_master(
                 &audio_clips,
                 self.project.render.audio_sample_rate,
                 duration,
