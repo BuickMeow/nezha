@@ -147,88 +147,6 @@ impl AudioManager {
                         0.0
                     };
                     state.accumulated_pcm.extend(pcm);
-
-                    let ch = match project.render.audio_channels {
-                        ChannelCount::Stereo => 2,
-                        ChannelCount::Mono => 1,
-                    } as f64;
-                    let duration_secs = if project.render.audio_sample_rate > 0 && ch > 0.0 {
-                        state.accumulated_pcm.len() as f64
-                            / (project.render.audio_sample_rate as f64 * ch)
-                    } else {
-                        0.0
-                    };
-
-                    let entry = AudioEntry {
-                        name: self.cached_midi_name.clone(),
-                        sample_rate: project.render.audio_sample_rate,
-                        channels: match project.render.audio_channels {
-                            ChannelCount::Stereo => 2,
-                            ChannelCount::Mono => 1,
-                        },
-                        duration_secs,
-                        samples: state.accumulated_pcm.clone(),
-                        midi_idx: state.midi_idx,
-                    };
-
-                    let existing = project
-                        .audio
-                        .entries
-                        .iter()
-                        .position(|e| e.midi_idx == state.midi_idx);
-
-                    if let Some(idx) = existing {
-                        project.audio.entries[idx] = entry;
-                        for track in &mut project.timeline_state.data.tracks {
-                            for clip in &mut track.clips {
-                                if clip.audio_idx == Some(idx)
-                                    && clip.kind == crate::transport::ClipKind::Audio
-                                {
-                                    clip.end = duration_secs as f32;
-                                }
-                            }
-                        }
-                    } else {
-                        let audio_idx = project.audio.insert(entry);
-                        let id = project.timeline_state.data.alloc_clip_id();
-                        let clip = TrackClip::new_audio(
-                            id,
-                            format!("音频: {}", self.cached_midi_name),
-                            audio_idx,
-                            duration_secs as f32,
-                        );
-
-                        if let Some(empty_track) = project
-                            .timeline_state
-                            .data
-                            .tracks
-                            .iter_mut()
-                            .find(|t| t.kind == TrackKind::Audio && t.clips.is_empty())
-                        {
-                            empty_track.clips.push(clip);
-                        } else {
-                            let name = crate::transport::next_audio_track_name(
-                                &project.timeline_state.data.tracks,
-                            );
-                            let mut track = crate::transport::Track::new_audio(&name);
-                            track.clips.push(clip);
-                            project.timeline_state.data.tracks.push(track);
-                        }
-                    }
-
-                    project
-                        .timeline_state
-                        .data
-                        .update_duration(duration_secs as f32);
-
-                    let audio_clips = project.audio_timeline_clips();
-                    audio_player.mix(
-                        &project.audio,
-                        &audio_clips,
-                        project.duration(),
-                        project.render.audio_sample_rate,
-                    );
-
                     modified = true;
                 }
 
@@ -241,37 +159,85 @@ impl AudioManager {
                         let duration_secs = state.accumulated_pcm.len() as f64
                             / (project.render.audio_sample_rate as f64 * ch);
 
-                        let final_entry = AudioEntry {
-                            name: self.cached_midi_name.clone(),
-                            sample_rate: project.render.audio_sample_rate,
-                            channels: match project.render.audio_channels {
-                                ChannelCount::Stereo => 2,
-                                ChannelCount::Mono => 1,
-                            },
-                            duration_secs,
-                            samples: state.accumulated_pcm,
-                            midi_idx: state.midi_idx,
-                        };
-
+                        let entry_data = state.accumulated_pcm;
                         let existing = project
                             .audio
                             .entries
                             .iter()
                             .position(|e| e.midi_idx == state.midi_idx);
+
                         if let Some(idx) = existing {
-                            project.audio.entries[idx] = final_entry;
+                            project.audio.entries[idx] = AudioEntry {
+                                name: self.cached_midi_name.clone(),
+                                sample_rate: project.render.audio_sample_rate,
+                                channels: match project.render.audio_channels {
+                                    ChannelCount::Stereo => 2,
+                                    ChannelCount::Mono => 1,
+                                },
+                                duration_secs,
+                                samples: entry_data,
+                                midi_idx: state.midi_idx,
+                            };
                             for track in &mut project.timeline_state.data.tracks {
                                 for clip in &mut track.clips {
-                                    if clip.audio_idx == Some(idx) {
+                                    if clip.audio_idx == Some(idx)
+                                        && clip.kind == crate::transport::ClipKind::Audio
+                                    {
                                         clip.end = duration_secs as f32;
                                     }
                                 }
                             }
-                            project
+                        } else {
+                            let entry = AudioEntry {
+                                name: self.cached_midi_name.clone(),
+                                sample_rate: project.render.audio_sample_rate,
+                                channels: match project.render.audio_channels {
+                                    ChannelCount::Stereo => 2,
+                                    ChannelCount::Mono => 1,
+                                },
+                                duration_secs,
+                                samples: entry_data,
+                                midi_idx: state.midi_idx,
+                            };
+                            let audio_idx = project.audio.insert(entry);
+                            let id = project.timeline_state.data.alloc_clip_id();
+                            let clip = TrackClip::new_audio(
+                                id,
+                                format!("音频: {}", self.cached_midi_name),
+                                audio_idx,
+                                duration_secs as f32,
+                            );
+                            if let Some(empty_track) = project
                                 .timeline_state
                                 .data
-                                .update_duration(duration_secs as f32);
+                                .tracks
+                                .iter_mut()
+                                .find(|t| t.kind == TrackKind::Audio && t.clips.is_empty())
+                            {
+                                empty_track.clips.push(clip);
+                            } else {
+                                let name = crate::transport::next_audio_track_name(
+                                    &project.timeline_state.data.tracks,
+                                );
+                                let mut track = crate::transport::Track::new_audio(&name);
+                                track.clips.push(clip);
+                                project.timeline_state.data.tracks.push(track);
+                            }
                         }
+
+                        project
+                            .timeline_state
+                            .data
+                            .update_duration(duration_secs as f32);
+
+                        let audio_clips = project.audio_timeline_clips();
+                        audio_player.mix(
+                            &project.audio,
+                            &audio_clips,
+                            project.duration(),
+                            project.render.audio_sample_rate,
+                        );
+
                         modified = true;
                     }
                     self.render_progress_open = false;
