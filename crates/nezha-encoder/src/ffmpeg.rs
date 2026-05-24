@@ -263,10 +263,10 @@ fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<Str
     args.push(format!("{}x{}", config.width, config.height));
     args.push("-r".to_string());
     args.push(format!("{:.3}", config.fps));
-    // 限制 ffmpeg 内部输入队列，防止编码速度跟不上时堆积数 GB 内存
-    // 16 帧 ≈ 128MB @ 1920x1080x4，足够平滑速度波动
+    // 限制 ffmpeg 各级内部队列，防止编码速度跟不上时堆积数 GB 内存
+    // 8 帧 ≈ 64MB @ 1920x1080x4，配合 muxing queue 兜底
     args.push("-thread_queue_size".to_string());
-    args.push("16".to_string());
+    args.push("8".to_string());
     args.push("-i".to_string());
     args.push("-".to_string());
 
@@ -315,6 +315,10 @@ fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<Str
     // Container format
     args.push("-f".to_string());
     args.push(config.container.ffmpeg_muxer().to_string());
+
+    // Muxing queue: prevent OOM when encoding lags behind muxing
+    args.push("-max_muxing_queue_size".to_string());
+    args.push("64".to_string());
 
     // Overwrite output
     args.push("-y".to_string());
