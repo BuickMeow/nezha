@@ -6,9 +6,7 @@
 /// - Smooth gain reduction (no hard clipping)
 /// - Configurable threshold and ceiling
 pub struct Limiter {
-    sample_rate: f32,
     channels: usize,
-    lookahead_frames: usize,
     attack_coeff: f32,
     release_coeff: f32,
     threshold_linear: f32, // e.g. 0.85
@@ -50,9 +48,7 @@ impl Limiter {
         let makeup_gain = 1.0 + (threshold_db.abs() / 20.0) * 0.5;
 
         Self {
-            sample_rate,
             channels,
-            lookahead_frames,
             attack_coeff,
             release_coeff,
             threshold_linear: 10.0_f32.powf(threshold_db / 20.0),
@@ -75,10 +71,10 @@ impl Limiter {
 
             // 1. Compute peak level across channels for this frame
             let mut peak = 0.0_f32;
-            for c in 0..ch {
-                let s = samples[frame_start + c].abs();
-                if s > peak {
-                    peak = s;
+            for &s in samples[frame_start..frame_start + ch].iter() {
+                let abs_s = s.abs();
+                if abs_s > peak {
+                    peak = abs_s;
                 }
             }
 
@@ -117,18 +113,19 @@ impl Limiter {
             let orig = samples[frame_start..frame_start + ch].to_vec();
 
             // 6. Write ORIGINAL sample into delay buffer.
-            for c in 0..ch {
-                self.delay_buf[self.delay_write + c] = orig[c];
-            }
+            let delay_start = self.delay_write;
+            self.delay_buf[delay_start..delay_start + ch].copy_from_slice(&orig);
             self.delay_write = (self.delay_write + ch) % delay_len;
 
             // 7. Read the lookahead-delayed sample, apply gain, write to output.
             let read_idx = (self.delay_write + 1) % delay_len;
             let delayed_frame_start = (read_idx / ch) * ch;
 
-            for c in 0..ch {
-                let delayed_sample = self.delay_buf[delayed_frame_start + c];
-                samples[frame_start + c] = delayed_sample * self.gain * self.makeup_gain;
+            for (c, delayed) in self.delay_buf[delayed_frame_start..delayed_frame_start + ch]
+                .iter()
+                .enumerate()
+            {
+                samples[frame_start + c] = delayed * self.gain * self.makeup_gain;
             }
         }
     }

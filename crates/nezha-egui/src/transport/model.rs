@@ -446,8 +446,7 @@ impl TimelineData {
             ClipKind::Audio => {
                 // Audio clips should be created via TrackClip::new_audio directly.
                 // This fallback is used only when push_clip is called with kind=Audio.
-                let c = TrackClip::new_audio(id, format!("音频 {}", type_count), 0, 5.0);
-                c
+                TrackClip::new_audio(id, format!("音频 {}", type_count), 0, 5.0)
             }
         };
         clip.end = if duration > 0.0 { duration } else { 5.0 };

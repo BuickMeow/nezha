@@ -165,6 +165,7 @@ fn darkened_color(color: egui::Color32) -> egui::Color32 {
 
 /// 绘制 clip 视觉，如果提供了 content_rect 则绘制三段色。
 /// content_start_x / content_end_x 是内容区域的左右 x 边界（clip_rect 坐标系内）。
+#[allow(clippy::too_many_arguments)]
 fn draw_clip_visual(
     painter: &egui::Painter,
     metrics: &TimelineMetrics,

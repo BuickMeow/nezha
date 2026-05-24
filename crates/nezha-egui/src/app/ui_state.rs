@@ -76,11 +76,11 @@ impl UiState {
         self.audio_devices = devices;
 
         // 保持选中之前选中的设备（如果还在的话）
-        if let Some(ref prev) = prev_selection {
-            if self.audio_devices.iter().any(|d| d == prev) {
-                self.audio_device_name = Some(prev.clone());
-                return;
-            }
+        if let Some(ref prev) = prev_selection
+            && self.audio_devices.iter().any(|d| d == prev)
+        {
+            self.audio_device_name = Some(prev.clone());
+            return;
         }
         // 默认选中第一个设备
         self.audio_device_name = self.audio_devices.first().cloned();

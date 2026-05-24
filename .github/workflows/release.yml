@@ -4,6 +4,10 @@ on:
   push:
     tags: ["v*"]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -12,6 +16,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
@@ -25,7 +31,7 @@ jobs:
           unzip -j ffmpeg.zip "*/bin/ffmpeg.exe" -d assets/ffmpeg/windows-x86_64/
 
       - name: Build release
-        run: cargo build --release -p nezha-egui
+        run: cargo build --release -p nezha-egui --locked
 
       - name: Package
         shell: pwsh
@@ -48,6 +54,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
@@ -60,7 +68,7 @@ jobs:
           cp "$(brew --prefix ffmpeg)/bin/ffmpeg" assets/ffmpeg/macos-aarch64/
 
       - name: Build release
-        run: cargo build --release -p nezha-egui
+        run: cargo build --release -p nezha-egui --locked
 
       - name: Assemble .app
         run: |
@@ -105,13 +113,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release -p nezha-egui
+        run: cargo build --release -p nezha-egui --locked
 
       - name: Package
         run: |

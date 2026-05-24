@@ -4,8 +4,10 @@ use nezha_xsynth::Limiter;
 #[derive(Clone, Debug)]
 pub struct AudioEntry {
     /// Display name (derived from MIDI file name or user-specified).
+    #[allow(dead_code)]
     pub name: String,
     /// Sample rate in Hz (e.g. 48000).
+    #[allow(dead_code)]
     pub sample_rate: u32,
     /// Number of channels (1 = mono, 2 = stereo).
     pub channels: u16,
@@ -24,12 +26,14 @@ impl AudioEntry {
     }
 
     /// Get the frame index at a given time (seconds), clamped.
+    #[allow(dead_code)]
     pub fn frame_at_time(&self, time_sec: f64) -> usize {
         let idx = (time_sec * self.sample_rate as f64) as usize;
         idx.min(self.frame_count().saturating_sub(1))
     }
 
     /// Get the sample index (interleaved) at a given time.
+    #[expect(dead_code)]
     pub fn sample_index_at_time(&self, time_sec: f64) -> usize {
         let ch = self.channels as usize;
         self.frame_at_time(time_sec) * ch
@@ -49,20 +53,24 @@ impl AudioStore {
         idx
     }
 
+    #[expect(dead_code)]
     pub fn remove(&mut self, idx: usize) {
         if idx < self.entries.len() {
             self.entries.remove(idx);
         }
     }
 
+    #[expect(dead_code)]
     pub fn get(&self, idx: usize) -> Option<&AudioEntry> {
         self.entries.get(idx)
     }
 
+    #[expect(dead_code)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    #[expect(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

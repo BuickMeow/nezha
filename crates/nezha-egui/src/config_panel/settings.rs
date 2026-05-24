@@ -50,7 +50,7 @@ pub fn show(
             })
             .show_ui(ui, |ui| {
                 for dev in audio_devices {
-                    let is_selected = audio_device_name.as_deref().map_or(false, |d| d == dev);
+                    let is_selected = audio_device_name.as_deref().is_some_and(|d| d == dev);
                     if ui.selectable_label(is_selected, dev).clicked() {
                         *audio_device_name = Some(dev.clone());
                     }

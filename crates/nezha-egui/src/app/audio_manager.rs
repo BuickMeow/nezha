@@ -61,6 +61,7 @@ impl AudioManager {
     }
 
     /// Start the xsynth render in a background thread.
+    #[allow(clippy::too_many_arguments)]
     pub fn start_render(
         &mut self,
         midi_idx: usize,

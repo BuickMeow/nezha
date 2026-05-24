@@ -136,15 +136,15 @@ impl App {
             start_offset,
             end_offset,
         );
-        if let Some(idx) = midi_idx {
-            if let Some(entry) = self.project.midi.entries.get(idx) {
-                let name = std::path::Path::new(&entry.path)
-                    .file_stem()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("MIDI")
-                    .to_string();
-                self.audio_manager.prepare_render(name, entry.path.clone());
-            }
+        if let Some(idx) = midi_idx
+            && let Some(entry) = self.project.midi.entries.get(idx)
+        {
+            let name = std::path::Path::new(&entry.path)
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("MIDI")
+                .to_string();
+            self.audio_manager.prepare_render(name, entry.path.clone());
         }
     }
 
@@ -305,7 +305,7 @@ impl eframe::App for App {
                     &self.project.audio,
                     &audio_clips,
                     self.project.duration(),
-                    self.project.render.audio_sample_rate as u32,
+                    self.project.render.audio_sample_rate,
                 );
                 let ct = self
                     .project

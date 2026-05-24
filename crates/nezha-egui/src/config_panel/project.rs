@@ -56,20 +56,20 @@ pub fn show(
                 for (i, sf) in soundfonts.iter().enumerate() {
                     ui.horizontal(|ui| {
                         let name = sf.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                        ui.label(format!("{}", name));
+                        ui.label(name.to_string());
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.button("🗑").clicked() {
                                 action = Some(ProjectAction::RemoveSoundfont(i));
                             }
-                            if i + 1 < soundfonts.len() {
-                                if ui.button("↓").clicked() {
-                                    action = Some(ProjectAction::MoveSoundfontDown(i));
-                                }
+                            if i + 1 < soundfonts.len()
+                                && ui.button("↓").clicked()
+                            {
+                                action = Some(ProjectAction::MoveSoundfontDown(i));
                             }
-                            if i > 0 {
-                                if ui.button("↑").clicked() {
-                                    action = Some(ProjectAction::MoveSoundfontUp(i));
-                                }
+                            if i > 0
+                                && ui.button("↑").clicked()
+                            {
+                                action = Some(ProjectAction::MoveSoundfontUp(i));
                             }
                         });
                     });
@@ -85,6 +85,7 @@ pub fn show(
 }
 
 /// Audio render configuration dialog.
+#[allow(clippy::too_many_arguments)]
 pub fn audio_render_dialog(
     ctx: &egui::Context,
     midi_name: &str,
@@ -201,6 +202,7 @@ pub fn audio_progress_dialog(
 }
 
 #[derive(Clone, Debug)]
+#[expect(dead_code)]
 pub enum ProjectAction {
     AddSoundfont(PathBuf),
     RemoveSoundfont(usize),

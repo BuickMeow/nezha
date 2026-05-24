@@ -203,6 +203,7 @@ impl AudioPlayback {
         self.is_playing.store(false, Ordering::SeqCst);
     }
 
+    #[expect(dead_code)]
     pub fn stop(&mut self) {
         self.pause();
         self.current_frame.store(0, Ordering::Relaxed);
@@ -223,6 +224,7 @@ impl AudioPlayback {
         self.mixed_buffer.lock().map(|b| b.len()).unwrap_or(0)
     }
 
+    #[expect(dead_code)]
     pub fn current_time(&self) -> f64 {
         if self.sample_rate > 0 {
             self.current_frame.load(Ordering::Relaxed) as f64 / self.sample_rate as f64

@@ -142,10 +142,7 @@ impl FfmpegEncoder {
         // Wait for ffmpeg process
         let status = self.process.wait()?;
         if !status.success() {
-            tracing::error!(
-                code = status.code(),
-                "ffmpeg exited with non-zero status"
-            );
+            tracing::error!(code = status.code(), "ffmpeg exited with non-zero status");
             return Err(EncoderError::FfmpegFailed(status.code()));
         }
 
@@ -220,12 +217,12 @@ pub fn ffmpeg_path() -> Result<PathBuf, EncoderError> {
     };
 
     // 1. Bundled next to the executable
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let bundled = dir.join(exe_name);
-            if bundled.is_file() {
-                return Ok(bundled);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let bundled = dir.join(exe_name);
+        if bundled.is_file() {
+            return Ok(bundled);
         }
     }
 
