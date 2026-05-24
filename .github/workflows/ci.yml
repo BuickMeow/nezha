@@ -48,6 +48,9 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
 
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -64,6 +67,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - name: cargo check
         run: cargo check --workspace --all-targets --locked
@@ -86,6 +92,10 @@ jobs:
         with:
           key: ${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Install system deps (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
 
       - name: cargo test
         run: cargo test --workspace --locked
