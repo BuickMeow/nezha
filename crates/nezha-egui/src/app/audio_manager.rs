@@ -89,6 +89,7 @@ impl AudioManager {
             use_limiter,
             layers: Some(layers as usize),
             min_velocity,
+            ..Default::default()
         };
 
         let sfonts = soundfont_paths.to_vec();

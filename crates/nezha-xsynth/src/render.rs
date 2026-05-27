@@ -23,6 +23,11 @@ pub struct RenderConfig {
     pub layers: Option<usize>,
     /// 筛除所有力度 ≤ 此值的音符（默认 1 表示只筛掉力度 0 和 1）。
     pub min_velocity: u8,
+    /// 每批渲染的样本数。更大 = 更少 xsynth 调用开销，
+    /// 但事件会在 block 边界被批量 flush，导致时间量化误差。
+    /// 默认 512（~10ms @ 48kHz），人耳听不出误差。
+    /// 不建议超过 1024，否则密集 MIDI 可能出现节奏错乱。
+    pub render_block_samples: usize,
 }
 
 impl Default for RenderConfig {
@@ -33,6 +38,7 @@ impl Default for RenderConfig {
             use_limiter: true,
             layers: Some(32),
             min_velocity: 1,
+            render_block_samples: 512,
         }
     }
 }
@@ -178,10 +184,13 @@ fn render_samples(
 // ── MIDI parsing ──
 
 /// Parse a MIDI file and extract timed events with port-aware channel mapping.
+///
+/// Returns `(events, total_seconds, ticks_per_beat, max_channel)` where `max_channel`
+/// is the highest channel number used in the MIDI file (0-based, port-aware).
 fn parse_midi_events(
     data: &[u8],
     min_velocity: u8,
-) -> Result<(Vec<TimedEvent>, f64, u32), RenderError> {
+) -> Result<(Vec<TimedEvent>, f64, u32, u32), RenderError> {
     let smf = Smf::parse(data)?;
 
     let ticks_per_beat = match smf.header.timing {
@@ -244,6 +253,7 @@ fn parse_midi_events(
     // Parse events per track with port tracking
     let mut all_events: Vec<TimedEvent> = Vec::new();
     let mut global_end_time = 0.0_f64;
+    let mut max_channel: u32 = 0;
 
     for track in &smf.tracks {
         let mut current_tick: u32 = 0;
@@ -265,6 +275,9 @@ fn parse_midi_events(
                 TrackEventKind::Midi { channel, message } => {
                     let time_sec = tick_to_sec(current_tick);
                     let ch = current_port as u32 * 16 + channel.as_int() as u32;
+                    if ch > max_channel {
+                        max_channel = ch;
+                    }
 
                     let command = match message {
                         MidiMessage::NoteOn { key, vel } if vel.as_int() > 0 => {
@@ -324,7 +337,7 @@ fn parse_midi_events(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    Ok((all_events, global_end_time, ticks_per_beat))
+    Ok((all_events, global_end_time, ticks_per_beat, max_channel))
 }
 
 // ── Public API ──
@@ -341,7 +354,7 @@ pub fn render_midi_to_pcm_chunked(
     mut on_chunk: impl FnMut(Vec<f32>, RenderProgress),
 ) -> Result<(), RenderError> {
     // 1. Parse MIDI
-    let (events, total_seconds, _ticks_per_beat) =
+    let (events, total_seconds, _ticks_per_beat, max_channel) =
         parse_midi_events(midi_data, config.min_velocity)?;
 
     // 2. Load soundfonts
@@ -362,18 +375,20 @@ pub fn render_midi_to_pcm_chunked(
         return Err(RenderError::SoundfontLoad("No soundfonts provided".into()));
     }
 
-    // 3. Create synth with 256 channels
+    // 3. Create synth with only the channels actually used by the MIDI file.
+    //    Always keep at least 16 channels so standard MIDI channel 9 (drums) exists.
+    let channel_count = (max_channel + 1).max(16);
     let mut channel_group = ChannelGroup::new(ChannelGroupConfig {
         format: SynthFormat::Custom {
-            channels: TOTAL_CHANNELS,
+            channels: channel_count,
         },
         audio_params,
         channel_init_options: Default::default(),
         parallelism: ParallelismOptions::AUTO_PER_KEY,
     });
 
-    // 4. Assign soundfonts to all channels + percussion
-    for ch in 0..TOTAL_CHANNELS {
+    // 4. Assign soundfonts to all created channels + percussion
+    for ch in 0..channel_count {
         channel_group.send_event(SynthEvent::Channel(
             ch,
             ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(soundfonts.clone())),
@@ -396,8 +411,9 @@ pub fn render_midi_to_pcm_chunked(
     //
     // Instead of calling render_samples for every unique event timestamp
     // (which can be tens/hundreds of thousands of calls for dense MIDI),
-    // we process in ~10ms blocks, accumulating all events within each block.
-    // This drastically reduces the number of xsynth read_samples() calls.
+    // we process in configurable-size blocks, accumulating all events
+    // within each block.  This drastically reduces the number of xsynth
+    // read_samples() calls.
     let mut pcm_buffer: Vec<f32> = Vec::new();
     let mut scratch: Vec<f32> = Vec::new();
     let mut missed_samples: f64 = 0.0;
@@ -405,8 +421,7 @@ pub fn render_midi_to_pcm_chunked(
     const CHUNK_INTERVAL_SECS: f64 = 3.0; // flush PCM chunk every 3 seconds
     let mut next_chunk_at: f64 = CHUNK_INTERVAL_SECS;
 
-    const RENDER_BLOCK_SAMPLES: usize = 512;
-    let block_sec = RENDER_BLOCK_SAMPLES as f64 / config.sample_rate as f64;
+    let block_sec = config.render_block_samples as f64 / config.sample_rate as f64;
 
     let events_end_time = if events.is_empty() {
         0.0
@@ -421,7 +436,15 @@ pub fn render_midi_to_pcm_chunked(
         let block_end = (block_start + block_sec).min(events_end_time);
         let delta = block_end - block_start;
 
-        // Render audio for this block
+        // Dispatch all events falling within this block FIRST so that
+        // xsynth sees them before we call read_samples().  This avoids
+        // delaying every event by one full block.
+        while event_idx < events.len() && events[event_idx].time_sec < block_end {
+            send_command(&mut channel_group, &events[event_idx].command);
+            event_idx += 1;
+        }
+
+        // Render audio for this block (events are now cached inside xsynth)
         render_samples(
             &mut channel_group,
             delta,
@@ -430,12 +453,6 @@ pub fn render_midi_to_pcm_chunked(
             &mut missed_samples,
             &mut pcm_buffer,
         );
-
-        // Dispatch all events falling within this block
-        while event_idx < events.len() && events[event_idx].time_sec < block_end {
-            send_command(&mut channel_group, &events[event_idx].command);
-            event_idx += 1;
-        }
 
         // Emit chunk if we've accumulated enough audio
         if block_end >= next_chunk_at {
