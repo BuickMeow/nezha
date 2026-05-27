@@ -26,6 +26,20 @@ pub(super) struct LayerData {
     pub thousand_separator: nezha_text::Separator,
     /// 是否启用零填充。
     pub zero_padding: bool,
+    /// 是否粗体。
+    pub bold: bool,
+    /// 粗体偏移量。
+    pub bold_offset: f32,
+    /// 是否斜体。
+    pub italic: bool,
+    /// 斜体倾斜量。
+    pub italic_slant: f32,
+    /// 是否启用描边。
+    pub outline_enabled: bool,
+    /// 描边宽度。
+    pub outline_width: f32,
+    /// 描边颜色。
+    pub outline_color: egui::Color32,
 }
 
 impl From<&TrackClip> for LayerData {
@@ -49,6 +63,13 @@ impl From<&TrackClip> for LayerData {
             text_alignment: clip.text_alignment,
             thousand_separator: clip.thousand_separator,
             zero_padding: clip.zero_padding,
+            bold: clip.bold,
+            bold_offset: clip.bold_offset,
+            italic: clip.italic,
+            italic_slant: clip.italic_slant,
+            outline_enabled: clip.outline_enabled,
+            outline_width: clip.outline_width,
+            outline_color: clip.outline_color,
         }
     }
 }

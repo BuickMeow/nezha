@@ -5,15 +5,12 @@ use crate::transport::{ClipKind, LayerCommon};
 use eframe::egui;
 use nezha_compositor::Compositor;
 use nezha_renderer::WaterfallLayer;
-use std::collections::VecDeque;
 
 /// Counter clip 的运行时统计状态。
 #[derive(Clone, Debug, Default)]
 pub struct CounterStats {
     /// 累计已触发的音符数。
     pub total_notes: u64,
-    /// 最近每帧新增音符数（长度不超过 fps）。
-    pub nps_window: VecDeque<u64>,
     /// 历史最大 NPS。
     pub max_nps: u64,
     /// 历史最大复音数。
@@ -221,18 +218,48 @@ impl App {
         note_count
     }
 
-    /// 更新单个 Counter clip 的统计状态。
+    /// 纯函数式统计：计算指定 MIDI 时间点的各项计数。
+    fn compute_midi_stats(midi: &nezha_core::MidiFile, midi_time: f64) -> (u64, u64, u64) {
+        let mut total_notes = 0u64;
+        let mut polyphony = 0u64;
+        let mut nps = 0u64;
+        let window_start = (midi_time - 1.0).max(0.0);
+
+        for key_notes in &midi.key_notes {
+            for note in key_notes {
+                let start = note.start as f64;
+                let end = note.end as f64;
+
+                if start > midi_time {
+                    break;
+                }
+
+                // 累计已触发音符
+                total_notes += 1;
+
+                // 当前复音（start <= t < end）
+                if end >= midi_time {
+                    polyphony += 1;
+                }
+
+                // NPS：最近 1 秒内 start 的音符
+                if start > window_start {
+                    nps += 1;
+                }
+            }
+        }
+
+        (total_notes, polyphony, nps)
+    }
+
+    /// 更新单个 Counter clip 的运行时状态（仅 max_nps / max_polyphony 有状态）。
     fn update_counter_stats(
         &mut self,
         counter: &LayerData,
         midi_time: f64,
-        fps: u32,
     ) -> CounterStats {
         let clip_id = counter.clip_id;
-        let mut stats = self
-            .counter_stats
-            .remove(&clip_id)
-            .unwrap_or_default();
+        let mut stats = self.counter_stats.remove(&clip_id).unwrap_or_default();
 
         let Some(midi_idx) = counter.midi_idx else {
             return stats;
@@ -242,59 +269,12 @@ impl App {
         };
         let midi = &entry.file;
 
-        // 向后跳跃或首次：重新计算累计数与窗口
-        if midi_time < stats.last_midi_time || stats.last_midi_time == 0.0 {
-            stats.total_notes = 0;
-            stats.nps_window.clear();
-            for key_notes in &midi.key_notes {
-                for note in key_notes {
-                    if note.start as f64 <= midi_time {
-                        stats.total_notes += 1;
-                    } else {
-                        break;
-                    }
-                }
-            }
-            // 填充 NPS 窗口（近似：假设均匀分布）
-            // 不精确填充，留空即可，NPS 会在后续帧自然累积
-        } else if midi_time > stats.last_midi_time {
-            // 向前播放：计算新增
-            let mut newly_hit = 0u64;
-            for key_notes in &midi.key_notes {
-                for note in key_notes {
-                    if note.start as f64 > stats.last_midi_time && (note.start as f64) <= midi_time {
-                        newly_hit += 1;
-                    } else if note.start as f64 > midi_time {
-                        break;
-                    }
-                }
-            }
-            stats.total_notes += newly_hit;
-            stats.nps_window.push_back(newly_hit);
-            // 保持窗口不超过 fps（1 秒）
-            while stats.nps_window.len() > fps as usize {
-                stats.nps_window.pop_front();
-            }
-        }
-
-        // 计算当前复音
-        let mut polyphony = 0u64;
-        for key_notes in &midi.key_notes {
-            for note in key_notes {
-                if note.start as f64 <= midi_time && note.end as f64 >= midi_time {
-                    polyphony += 1;
-                } else if note.start as f64 > midi_time {
-                    break;
-                }
-            }
-        }
-
-        let nps: u64 = stats.nps_window.iter().sum();
+        let (total_notes, polyphony, nps) = Self::compute_midi_stats(midi, midi_time);
+        stats.total_notes = total_notes;
         stats.max_nps = stats.max_nps.max(nps);
         stats.max_polyphony = stats.max_polyphony.max(polyphony);
         stats.last_midi_time = midi_time;
 
-        // 存回（下面会重新取出，这里先返回副本）
         let result = stats.clone();
         self.counter_stats.insert(clip_id, stats);
         result
@@ -319,7 +299,7 @@ impl App {
 
         for counter in counter_clips {
             let midi_time = (time - counter.song_start_time).max(0.0) as f64;
-            let stats = self.update_counter_stats(counter, midi_time, fps);
+            let stats = self.update_counter_stats(counter, midi_time);
 
             let Some(midi_idx) = counter.midi_idx else {
                 continue;
@@ -358,6 +338,9 @@ impl App {
                 0.0
             };
 
+            // 纯函数式计算当前复音（与 compute_midi_stats 保持一致）
+            let (_, current_polyphony, current_nps) = Self::compute_midi_stats(midi, midi_time);
+
             let note_percent = if midi.note_count > 0 {
                 stats.total_notes as f64 / midi.note_count as f64 * 100.0
             } else {
@@ -379,9 +362,9 @@ impl App {
                 note_count: stats.total_notes,
                 notes_remaining: midi.note_count.saturating_sub(stats.total_notes),
                 total_notes: midi.note_count,
-                nps: stats.nps_window.iter().sum(),
+                nps: current_nps,
                 max_nps: stats.max_nps,
-                polyphony: stats.max_polyphony, // 当前复音：需要重新计算
+                polyphony: current_polyphony,
                 max_polyphony: stats.max_polyphony,
                 total_instances: total_instances as u64,
                 curr_sec: midi_time,
@@ -426,21 +409,6 @@ impl App {
                 time_percent,
             };
 
-            // 修正：polyphony 应该是当前复音，不是 max
-            // 但由于 update_counter_stats 已经更新了，我们需要再算一次当前的
-            let mut current_polyphony = 0u64;
-            for key_notes in &midi.key_notes {
-                for note in key_notes {
-                    if note.start as f64 <= midi_time && note.end as f64 >= midi_time {
-                        current_polyphony += 1;
-                    } else if note.start as f64 > midi_time {
-                        break;
-                    }
-                }
-            }
-            let mut vars = vars;
-            vars.polyphony = current_polyphony;
-
             let cfg = nezha_text::FormatConfig {
                 separator: counter.thousand_separator,
                 zero_padding: counter.zero_padding,
@@ -455,6 +423,12 @@ impl App {
                 counter.text_color.b() as f32 / 255.0,
                 opacity,
             ];
+            let outline_color_f = [
+                counter.outline_color.r() as f32 / 255.0,
+                counter.outline_color.g() as f32 / 255.0,
+                counter.outline_color.b() as f32 / 255.0,
+                opacity,
+            ];
 
             let mut text_layer = nezha_text::TextLayer::new(
                 &mut self.font_atlas,
@@ -467,6 +441,13 @@ impl App {
             text_layer.set_font_size(counter.font_size);
             text_layer.set_color(color_f);
             text_layer.set_alignment(counter.text_alignment);
+            if counter.outline_enabled {
+                text_layer.set_outline(counter.outline_width, outline_color_f);
+            }
+            text_layer.set_bold(counter.bold);
+            text_layer.set_bold_offset(counter.bold_offset);
+            text_layer.set_italic(counter.italic);
+            text_layer.set_italic_slant(counter.italic_slant);
 
             let rect = make_rect(&counter.common, rw, rh);
             let encoder = self.render_ctx.encoder_mut();

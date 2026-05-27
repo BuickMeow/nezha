@@ -153,6 +153,60 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[crate::app::p
         "启用零填充",
     );
 
+    ui.add_space(8.0);
+
+    // ── 粗体 ──
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut clip.bold, "粗体");
+        if clip.bold {
+            ui.add(
+                egui::Slider::new(&mut clip.bold_offset, 0.5..=4.0)
+                    .step_by(0.1)
+                    .text("px"),
+            );
+        }
+    });
+
+    ui.add_space(4.0);
+
+    // ── 斜体 ──
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut clip.italic, "斜体");
+        if clip.italic {
+            ui.add(
+                egui::Slider::new(&mut clip.italic_slant, -1.0..=1.0)
+                    .step_by(0.05)
+                    .text("倾斜"),
+            );
+        }
+    });
+
+    ui.add_space(4.0);
+
+    // ── 描边 ──
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut clip.outline_enabled, "描边");
+        if clip.outline_enabled {
+            ui.add(
+                egui::Slider::new(&mut clip.outline_width, 0.5..=8.0)
+                    .step_by(0.1)
+                    .text("px"),
+            );
+        }
+    });
+    if clip.outline_enabled {
+        ui.horizontal(|ui| {
+            ui.label("描边颜色");
+            let mut outline_rgb = [
+                clip.outline_color.r(),
+                clip.outline_color.g(),
+                clip.outline_color.b(),
+            ];
+            ui.color_edit_button_srgb(&mut outline_rgb);
+            clip.outline_color = egui::Color32::from_rgb(outline_rgb[0], outline_rgb[1], outline_rgb[2]);
+        });
+    }
+
     ui.add_space(4.0);
     ui.label(
         egui::RichText::new("计数器会统计关联 MIDI 的实时数据并应用模板。\n位置与合成方式在上方「变换 / 合成」中配置。")

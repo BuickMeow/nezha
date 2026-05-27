@@ -9,5 +9,4 @@ pub use template::{
     format_time_mmss, format_time_mmss_frame, format_time_mmss_millis, FormatConfig, Separator,
     TemplateVars, render as render_template,
 };
-pub use text_layer::Alignment as TextAlignment;
-pub use text_layer::TextLayer;
+pub use text_layer::{Alignment as TextAlignment, TextLayer};

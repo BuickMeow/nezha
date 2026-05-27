@@ -29,12 +29,12 @@ pub enum Alignment {
 struct TextVertex {
     position: [f32; 2],
     uv: [f32; 2],
+    color: [f32; 4],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct TextUniforms {
-    color: [f32; 4],
     screen_size: [f32; 2],
     _pad: [f32; 2],
 }
@@ -49,6 +49,16 @@ pub struct TextLayer<'a> {
     font_size: u32,
     position: [f32; 2],
     alignment: Alignment,
+    // ── 描边 ──
+    outline_width: f32,
+    outline_color: [f32; 4],
+    // ── 粗体 ──
+    bold: bool,
+    bold_offset: f32,
+    // ── 斜体 ──
+    italic: bool,
+    italic_slant: f32,
+
     dirty: bool,
 
     vertex_buffer: Buffer,
@@ -85,7 +95,7 @@ impl<'a> TextLayer<'a> {
             entries: &[
                 BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -164,6 +174,11 @@ impl<'a> TextLayer<'a> {
                                 offset: 8,
                                 shader_location: 1,
                             },
+                            VertexAttribute {
+                                format: VertexFormat::Float32x4,
+                                offset: 16,
+                                shader_location: 2,
+                            },
                         ],
                     }],
                     compilation_options: PipelineCompilationOptions::default(),
@@ -200,6 +215,12 @@ impl<'a> TextLayer<'a> {
             font_size: 24,
             position: [0.0, 0.0],
             alignment: Alignment::default(),
+            outline_width: 0.0,
+            outline_color: [0.0, 0.0, 0.0, 1.0],
+            bold: false,
+            bold_offset: 1.0,
+            italic: false,
+            italic_slant: 0.0,
             dirty: true,
             vertex_buffer,
             vertex_capacity: 1,
@@ -243,12 +264,110 @@ impl<'a> TextLayer<'a> {
         }
     }
 
+    pub fn set_outline(&mut self, width: f32, color: [f32; 4]) {
+        self.outline_width = width;
+        self.outline_color = color;
+    }
+
+    pub fn set_bold(&mut self, bold: bool) {
+        if self.bold != bold {
+            self.bold = bold;
+            self.dirty = true;
+        }
+    }
+
+    pub fn set_bold_offset(&mut self, offset: f32) {
+        if self.bold_offset != offset {
+            self.bold_offset = offset;
+            self.dirty = true;
+        }
+    }
+
+    pub fn set_italic(&mut self, italic: bool) {
+        if self.italic != italic {
+            self.italic = italic;
+            self.dirty = true;
+        }
+    }
+
+    pub fn set_italic_slant(&mut self, slant: f32) {
+        if self.italic_slant != slant {
+            self.italic_slant = slant;
+            self.dirty = true;
+        }
+    }
+
+    /// 应用斜切变换到坐标。
+    fn apply_slant(&self, x: f32, y: f32, baseline_y: f32) -> [f32; 2] {
+        if !self.italic || self.italic_slant == 0.0 {
+            return [x, y];
+        }
+        // 以 baseline 为参考：baseline 上方的点向右偏移更多
+        let dy = baseline_y - y;
+        [x + dy * self.italic_slant, y]
+    }
+
+    /// 为单个 glyph 的单个位置生成 6 个顶点（2 个三角形）。
+    fn push_glyph(
+        &self,
+        vertices: &mut Vec<TextVertex>,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        u0: f32,
+        v0: f32,
+        u1: f32,
+        v1: f32,
+        color: [f32; 4],
+        baseline_y: f32,
+    ) {
+        let p00 = self.apply_slant(x0, y0, baseline_y);
+        let p10 = self.apply_slant(x1, y0, baseline_y);
+        let p01 = self.apply_slant(x0, y1, baseline_y);
+        let p11 = self.apply_slant(x1, y1, baseline_y);
+
+        vertices.push(TextVertex {
+            position: p00,
+            uv: [u0, v0],
+            color,
+        });
+        vertices.push(TextVertex {
+            position: p10,
+            uv: [u1, v0],
+            color,
+        });
+        vertices.push(TextVertex {
+            position: p01,
+            uv: [u0, v1],
+            color,
+        });
+        vertices.push(TextVertex {
+            position: p01,
+            uv: [u0, v1],
+            color,
+        });
+        vertices.push(TextVertex {
+            position: p10,
+            uv: [u1, v0],
+            color,
+        });
+        vertices.push(TextVertex {
+            position: p11,
+            uv: [u1, v1],
+            color,
+        });
+    }
+
     fn rebuild_vertices(&mut self) {
-        let mut vertices = Vec::with_capacity(self.text.len() * 6);
+        let mut vertices = Vec::with_capacity(self.text.len() * 6 * 10);
 
         // First pass: measure each line and build glyph positions.
         let lines: Vec<&str> = self.text.lines().collect();
-        let mut line_measurements: Vec<(f32, Vec<(char, f32, crate::atlas::GlyphInfo)>)> = Vec::new();
+        let mut line_measurements: Vec<(
+            f32,
+            Vec<(char, f32, crate::atlas::GlyphInfo)>,
+        )> = Vec::new();
 
         for line in &lines {
             let mut pen_x = 0.0f32;
@@ -267,18 +386,41 @@ impl<'a> TextLayer<'a> {
             line_measurements.push((pen_x, glyphs));
         }
 
-        // Compute total height.
         let line_height = self.font_size as f32 * 1.2;
         let total_height = lines.len() as f32 * line_height;
 
-        // Second pass: build vertices with alignment offsets.
-        for (line_idx, (line_width, glyphs)) in line_measurements.iter().enumerate() {
+        // 描边偏移方向（8 方向）
+        let outline_dirs: &[(f32, f32)] = &[
+            (-1.0, 0.0),
+            (1.0, 0.0),
+            (0.0, -1.0),
+            (0.0, 1.0),
+            (-1.0, -1.0),
+            (1.0, -1.0),
+            (-1.0, 1.0),
+            (1.0, 1.0),
+        ];
+        // 粗体偏移方向（4 方向，对角线也加上更饱满）
+        let bold_dirs: &[(f32, f32)] = &[
+            (-1.0, 0.0),
+            (1.0, 0.0),
+            (0.0, -1.0),
+            (0.0, 1.0),
+            (-1.0, -1.0),
+            (1.0, -1.0),
+            (-1.0, 1.0),
+            (1.0, 1.0),
+        ];
+
+        for (line_idx, (_line_width, glyphs)) in line_measurements.iter().enumerate() {
             let offset_x = match self.alignment {
                 Alignment::TopLeft | Alignment::BottomLeft => 0.0,
-                Alignment::TopRight | Alignment::BottomRight => -line_width,
+                Alignment::TopRight | Alignment::BottomRight => -_line_width,
             };
             let offset_y = match self.alignment {
-                Alignment::TopLeft | Alignment::TopRight => line_idx as f32 * line_height,
+                Alignment::TopLeft | Alignment::TopRight => {
+                    line_idx as f32 * line_height
+                }
                 Alignment::BottomLeft | Alignment::BottomRight => {
                     -(total_height - line_idx as f32 * line_height)
                 }
@@ -289,40 +431,72 @@ impl<'a> TextLayer<'a> {
 
             for (_c, pen_x, glyph) in glyphs.iter() {
                 if glyph.size[0] > 0.0 && glyph.size[1] > 0.0 {
-                    let x0 = baseline_x + pen_x + glyph.offset[0];
-                    let y0 = baseline_y + glyph.offset[1];
-                    let x1 = x0 + glyph.size[0];
-                    let y1 = y0 + glyph.size[1];
+                    let base_x0 = baseline_x + pen_x + glyph.offset[0];
+                    let base_y0 = baseline_y + glyph.offset[1];
+                    let base_x1 = base_x0 + glyph.size[0];
+                    let base_y1 = base_y0 + glyph.size[1];
 
                     let u0 = glyph.uv[0];
                     let v0 = glyph.uv[1];
                     let u1 = u0 + glyph.uv[2];
                     let v1 = v0 + glyph.uv[3];
 
-                    vertices.push(TextVertex {
-                        position: [x0, y0],
-                        uv: [u0, v0],
-                    });
-                    vertices.push(TextVertex {
-                        position: [x1, y0],
-                        uv: [u1, v0],
-                    });
-                    vertices.push(TextVertex {
-                        position: [x0, y1],
-                        uv: [u0, v1],
-                    });
-                    vertices.push(TextVertex {
-                        position: [x0, y1],
-                        uv: [u0, v1],
-                    });
-                    vertices.push(TextVertex {
-                        position: [x1, y0],
-                        uv: [u1, v0],
-                    });
-                    vertices.push(TextVertex {
-                        position: [x1, y1],
-                        uv: [u1, v1],
-                    });
+                    // ── 描边（最底层，8 方向偏移）──
+                    if self.outline_width > 0.0 {
+                        for (dx, dy) in outline_dirs {
+                            let ox = dx * self.outline_width;
+                            let oy = dy * self.outline_width;
+                            self.push_glyph(
+                                &mut vertices,
+                                base_x0 + ox,
+                                base_y0 + oy,
+                                base_x1 + ox,
+                                base_y1 + oy,
+                                u0,
+                                v0,
+                                u1,
+                                v1,
+                                self.outline_color,
+                                baseline_y,
+                            );
+                        }
+                    }
+
+                    // ── 粗体（叠加偏移，用正文颜色）──
+                    if self.bold && self.bold_offset > 0.0 {
+                        for (dx, dy) in bold_dirs {
+                            let ox = dx * self.bold_offset;
+                            let oy = dy * self.bold_offset;
+                            self.push_glyph(
+                                &mut vertices,
+                                base_x0 + ox,
+                                base_y0 + oy,
+                                base_x1 + ox,
+                                base_y1 + oy,
+                                u0,
+                                v0,
+                                u1,
+                                v1,
+                                self.color,
+                                baseline_y,
+                            );
+                        }
+                    }
+
+                    // ── 正文（最上层）──
+                    self.push_glyph(
+                        &mut vertices,
+                        base_x0,
+                        base_y0,
+                        base_x1,
+                        base_y1,
+                        u0,
+                        v0,
+                        u1,
+                        v1,
+                        self.color,
+                        baseline_y,
+                    );
                 }
             }
         }
@@ -357,7 +531,6 @@ impl<'a> LayerRenderer for TextLayer<'a> {
         }
 
         let uniforms = TextUniforms {
-            color: self.color,
             screen_size: [width as f32, height as f32],
             _pad: [0.0; 2],
         };
