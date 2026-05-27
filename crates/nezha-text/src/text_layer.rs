@@ -14,6 +14,16 @@ use wgpu::{
 
 use crate::atlas::FontAtlas;
 
+/// 文本对齐方式。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Alignment {
+    #[default]
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct TextVertex {
@@ -38,6 +48,7 @@ pub struct TextLayer<'a> {
     color: [f32; 4],
     font_size: u32,
     position: [f32; 2],
+    alignment: Alignment,
     dirty: bool,
 
     vertex_buffer: Buffer,
@@ -188,6 +199,7 @@ impl<'a> TextLayer<'a> {
             color: [1.0, 1.0, 1.0, 1.0],
             font_size: 24,
             position: [0.0, 0.0],
+            alignment: Alignment::default(),
             dirty: true,
             vertex_buffer,
             vertex_capacity: 1,
@@ -224,60 +236,95 @@ impl<'a> TextLayer<'a> {
         }
     }
 
+    pub fn set_alignment(&mut self, align: Alignment) {
+        if self.alignment != align {
+            self.alignment = align;
+            self.dirty = true;
+        }
+    }
+
     fn rebuild_vertices(&mut self) {
         let mut vertices = Vec::with_capacity(self.text.len() * 6);
-        let mut pen_x = self.position[0];
-        let baseline_y = self.position[1] + self.font_size as f32;
 
-        for c in self.text.chars() {
-            let Some(glyph) = self
-                .atlas
-                .glyph(c, self.font_size, &self.device, &self.queue)
-            else {
-                // Skip unrenderable glyphs.
-                continue;
+        // First pass: measure each line and build glyph positions.
+        let lines: Vec<&str> = self.text.lines().collect();
+        let mut line_measurements: Vec<(f32, Vec<(char, f32, crate::atlas::GlyphInfo)>)> = Vec::new();
+
+        for line in &lines {
+            let mut pen_x = 0.0f32;
+            let mut glyphs: Vec<(char, f32, crate::atlas::GlyphInfo)> = Vec::new();
+            for c in line.chars() {
+                let Some(glyph) = self
+                    .atlas
+                    .glyph(c, self.font_size, &self.device, &self.queue)
+                else {
+                    continue;
+                };
+                let info = *glyph;
+                glyphs.push((c, pen_x, info));
+                pen_x += info.advance;
+            }
+            line_measurements.push((pen_x, glyphs));
+        }
+
+        // Compute total height.
+        let line_height = self.font_size as f32 * 1.2;
+        let total_height = lines.len() as f32 * line_height;
+
+        // Second pass: build vertices with alignment offsets.
+        for (line_idx, (line_width, glyphs)) in line_measurements.iter().enumerate() {
+            let offset_x = match self.alignment {
+                Alignment::TopLeft | Alignment::BottomLeft => 0.0,
+                Alignment::TopRight | Alignment::BottomRight => -line_width,
+            };
+            let offset_y = match self.alignment {
+                Alignment::TopLeft | Alignment::TopRight => line_idx as f32 * line_height,
+                Alignment::BottomLeft | Alignment::BottomRight => {
+                    -(total_height - line_idx as f32 * line_height)
+                }
             };
 
-            if glyph.size[0] > 0.0 && glyph.size[1] > 0.0 {
-                let x0 = pen_x + glyph.offset[0];
-                let y0 = baseline_y + glyph.offset[1];
-                let x1 = x0 + glyph.size[0];
-                let y1 = y0 + glyph.size[1];
+            let baseline_x = self.position[0] + offset_x;
+            let baseline_y = self.position[1] + self.font_size as f32 + offset_y;
 
-                let u0 = glyph.uv[0];
-                let v0 = glyph.uv[1];
-                let u1 = u0 + glyph.uv[2];
-                let v1 = v0 + glyph.uv[3];
+            for (_c, pen_x, glyph) in glyphs.iter() {
+                if glyph.size[0] > 0.0 && glyph.size[1] > 0.0 {
+                    let x0 = baseline_x + pen_x + glyph.offset[0];
+                    let y0 = baseline_y + glyph.offset[1];
+                    let x1 = x0 + glyph.size[0];
+                    let y1 = y0 + glyph.size[1];
 
-                // Two triangles per glyph.
-                vertices.push(TextVertex {
-                    position: [x0, y0],
-                    uv: [u0, v0],
-                });
-                vertices.push(TextVertex {
-                    position: [x1, y0],
-                    uv: [u1, v0],
-                });
-                vertices.push(TextVertex {
-                    position: [x0, y1],
-                    uv: [u0, v1],
-                });
+                    let u0 = glyph.uv[0];
+                    let v0 = glyph.uv[1];
+                    let u1 = u0 + glyph.uv[2];
+                    let v1 = v0 + glyph.uv[3];
 
-                vertices.push(TextVertex {
-                    position: [x0, y1],
-                    uv: [u0, v1],
-                });
-                vertices.push(TextVertex {
-                    position: [x1, y0],
-                    uv: [u1, v0],
-                });
-                vertices.push(TextVertex {
-                    position: [x1, y1],
-                    uv: [u1, v1],
-                });
+                    vertices.push(TextVertex {
+                        position: [x0, y0],
+                        uv: [u0, v0],
+                    });
+                    vertices.push(TextVertex {
+                        position: [x1, y0],
+                        uv: [u1, v0],
+                    });
+                    vertices.push(TextVertex {
+                        position: [x0, y1],
+                        uv: [u0, v1],
+                    });
+                    vertices.push(TextVertex {
+                        position: [x0, y1],
+                        uv: [u0, v1],
+                    });
+                    vertices.push(TextVertex {
+                        position: [x1, y0],
+                        uv: [u1, v0],
+                    });
+                    vertices.push(TextVertex {
+                        position: [x1, y1],
+                        uv: [u1, v1],
+                    });
+                }
             }
-
-            pen_x += glyph.advance;
         }
 
         self.num_vertices = vertices.len() as u32;

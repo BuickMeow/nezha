@@ -18,6 +18,14 @@ pub(super) struct LayerData {
     pub keyboard_height_percent: f32,
     pub font_size: u32,
     pub common: LayerCommon,
+    /// 计数器模板文本。
+    pub template_text: String,
+    /// 文本对齐方式。
+    pub text_alignment: nezha_text::TextAlignment,
+    /// 千位分隔符。
+    pub thousand_separator: nezha_text::Separator,
+    /// 是否启用零填充。
+    pub zero_padding: bool,
 }
 
 impl From<&TrackClip> for LayerData {
@@ -37,6 +45,10 @@ impl From<&TrackClip> for LayerData {
             keyboard_height_percent: clip.keyboard_height_percent,
             font_size: clip.font_size,
             common: clip.common.clone(),
+            template_text: clip.template_text.clone(),
+            text_alignment: clip.text_alignment,
+            thousand_separator: clip.thousand_separator,
+            zero_padding: clip.zero_padding,
         }
     }
 }

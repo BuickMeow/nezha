@@ -92,7 +92,7 @@ pub fn show(
                                 solid_color::show(ui, clip);
                             }
                             ClipKind::Counter => {
-                                counter::show(ui, clip);
+                                counter::show(ui, clip, midi_files);
                             }
                             ClipKind::Audio => {
                                 ui.label("音频图层");

@@ -62,6 +62,16 @@ pub struct TrackClip {
     pub color: egui::Color32,
     /// 渲染图层时使用的文字颜色（仅 Counter 等文字图层生效）。
     pub text_color: egui::Color32,
+    /// 计数器模板文本。
+    pub template_text: String,
+    /// 文本对齐方式。
+    pub text_alignment: nezha_text::TextAlignment,
+    /// 千位分隔符。
+    pub thousand_separator: nezha_text::Separator,
+    /// 是否启用零填充。
+    pub zero_padding: bool,
+    /// 字体名称（目前仅作标识，实际渲染使用 MiSans）。
+    pub font_name: String,
     pub speed: f32,
     pub border_width: f32,
     pub rounding: f32,
@@ -100,6 +110,11 @@ impl TrackClip {
             end: 0.0,
             color: egui::Color32::from_rgb(80, 150, 220),
             text_color: egui::Color32::WHITE,
+            template_text: String::new(),
+            text_alignment: nezha_text::TextAlignment::TopLeft,
+            thousand_separator: nezha_text::Separator::Comma,
+            zero_padding: false,
+            font_name: "MiSans".to_string(),
             speed: 1.0,
             border_width: 0.1,
             rounding: 0.0,
@@ -126,6 +141,11 @@ impl TrackClip {
             end: 0.0,
             color,
             text_color: egui::Color32::WHITE,
+            template_text: String::new(),
+            text_alignment: nezha_text::TextAlignment::TopLeft,
+            thousand_separator: nezha_text::Separator::Comma,
+            zero_padding: false,
+            font_name: "MiSans".to_string(),
             speed: 1.0,
             border_width: 0.0,
             rounding: 0.0,
@@ -143,7 +163,7 @@ impl TrackClip {
         }
     }
 
-    pub fn new_counter(id: usize) -> Self {
+    pub fn new_counter(id: usize, midi_idx: Option<usize>) -> Self {
         Self {
             id,
             name: format!("计数器 {}", id),
@@ -152,12 +172,17 @@ impl TrackClip {
             end: 0.0,
             color: egui::Color32::from_rgb(0xBB, 0xB0, 0x94),
             text_color: egui::Color32::WHITE,
+            template_text: "Notes: {nc} / {tn}\nBPM: {bpm}\nNPS: {nps}\nPPQ: {ppq}\nPolyphony: {plph}\nTime: {currtime}\nTicks: {currticks}".to_string(),
+            text_alignment: nezha_text::TextAlignment::TopLeft,
+            thousand_separator: nezha_text::Separator::Comma,
+            zero_padding: false,
+            font_name: "MiSans".to_string(),
             speed: 1.0,
             border_width: 0.0,
             rounding: 0.0,
             render_mode: nezha_renderer::RenderMode::TimeBased,
             equal_key_width: false,
-            midi_idx: None,
+            midi_idx,
             audio_idx: None,
             keyboard_height_percent: 0.0,
             font_size: 24,
@@ -183,6 +208,11 @@ impl TrackClip {
             end: duration,
             color: egui::Color32::from_rgb(100, 200, 100),
             text_color: egui::Color32::WHITE,
+            template_text: String::new(),
+            text_alignment: nezha_text::TextAlignment::TopLeft,
+            thousand_separator: nezha_text::Separator::Comma,
+            zero_padding: false,
+            font_name: "MiSans".to_string(),
             speed: 1.0,
             border_width: 0.0,
             rounding: 0.0,
@@ -467,7 +497,7 @@ impl TimelineData {
                 c
             }
             ClipKind::Counter => {
-                let mut c = TrackClip::new_counter(id);
+                let mut c = TrackClip::new_counter(id, midi_idx);
                 c.name = format!("计数器 {}", type_count);
                 c
             }
@@ -534,11 +564,11 @@ impl TimelineData {
     }
 
     /// Convenience wrapper to push a counter clip.
-    pub fn push_counter_clip(&mut self, duration: f32) -> usize {
+    pub fn push_counter_clip(&mut self, duration: f32, midi_idx: Option<usize>) -> usize {
         self.push_clip(
             ClipKind::Counter,
             duration,
-            None,
+            midi_idx,
             egui::Color32::TRANSPARENT,
             0,
             0,
@@ -756,8 +786,8 @@ impl TimelineState {
         self.selection.select(id);
     }
 
-    pub fn push_counter_clip(&mut self, duration: f32) {
-        let id = self.data.push_counter_clip(duration);
+    pub fn push_counter_clip(&mut self, duration: f32, midi_idx: Option<usize>) {
+        let id = self.data.push_counter_clip(duration, midi_idx);
         self.selection.select(id);
     }
 

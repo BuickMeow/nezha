@@ -40,3 +40,21 @@ pub fn seconds_to_ticks(dt: f64, ticks_per_beat: u32, micros_per_quarter: u64) -
 pub fn bpm_from_mpq(mpq: u64) -> f32 {
     (MICROS_PER_MINUTE / mpq as f64) as f32
 }
+
+/// 计算给定 tick 所在的小节号（1-based）。
+///
+/// `bar_divide = ticks_per_beat * numerator / denominator * 4`
+pub fn bar_at_tick(tick: u64, bar_divide: f64) -> u64 {
+    if bar_divide <= 0.0 {
+        return 1;
+    }
+    (tick as f64 / bar_divide).floor() as u64 + 1
+}
+
+/// 计算总小节数（1-based）。
+pub fn total_bars(tick_length: u64, bar_divide: f64) -> u64 {
+    if bar_divide <= 0.0 {
+        return 1;
+    }
+    (tick_length as f64 / bar_divide).floor() as u64
+}

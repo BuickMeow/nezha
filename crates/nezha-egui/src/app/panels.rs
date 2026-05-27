@@ -22,7 +22,8 @@ impl App {
             }
             config_panel::ConfigAction::AddCounter => {
                 let duration = self.project.duration() as f32;
-                self.project.timeline_state.push_counter_clip(duration);
+                let midi_idx = self.project.midi.highlighted_idx;
+                self.project.timeline_state.push_counter_clip(duration, midi_idx);
             }
             config_panel::ConfigAction::RemoveMidi(idx) => {
                 self.project.remove_midi(idx);

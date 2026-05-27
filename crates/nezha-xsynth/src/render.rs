@@ -418,7 +418,7 @@ pub fn render_midi_to_pcm_chunked(
     let mut scratch: Vec<f32> = Vec::new();
     let mut missed_samples: f64 = 0.0;
 
-    const CHUNK_INTERVAL_SECS: f64 = 3.0; // flush PCM chunk every 3 seconds
+    const CHUNK_INTERVAL_SECS: f64 = 0.5; // flush PCM chunk every 0.5 seconds
     let mut next_chunk_at: f64 = CHUNK_INTERVAL_SECS;
 
     let block_sec = config.render_block_samples as f64 / config.sample_rate as f64;

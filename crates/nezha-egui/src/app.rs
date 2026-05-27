@@ -31,6 +31,8 @@ pub struct App {
     pub font_atlas: nezha_text::FontAtlas,
     pub audio_player: AudioPlayback,
     pub audio_manager: AudioManager,
+    /// 每个 Counter clip 的运行时统计状态（按 clip_id）。
+    pub counter_stats: std::collections::HashMap<usize, crate::app::preview::CounterStats>,
 }
 
 impl App {
@@ -95,6 +97,7 @@ impl App {
             font_atlas,
             audio_player: AudioPlayback::new(),
             audio_manager: AudioManager::new(),
+            counter_stats: std::collections::HashMap::new(),
         };
 
         let cfg = crate::config::Config::load();

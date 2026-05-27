@@ -50,6 +50,10 @@ impl MidiParser {
         let tempo_events = Self::collect_tempo_events(&smf.tracks);
         let tempo_segments = Self::build_tempo_segments(tempo_events, ticks_per_beat);
 
+        // Parse time signature from meta events.
+        let (time_sig_numerator, time_sig_denominator) =
+            Self::collect_time_signature(&smf.tracks).unwrap_or((4, 4));
+
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
         let mut global_duration = 0.0f64;
         let total_tracks = smf.tracks.len();
@@ -78,11 +82,22 @@ impl MidiParser {
             });
         }
 
+        let note_count = key_notes.iter().map(|v| v.len() as u64).sum();
+        let tick_length = key_notes
+            .iter()
+            .flat_map(|v| v.iter().map(|n| n.end_tick as u64))
+            .max()
+            .unwrap_or(0);
+
         Ok(MidiFile {
             key_notes,
             duration: global_duration,
             ticks_per_beat,
             tempo_segments,
+            note_count,
+            tick_length,
+            time_sig_numerator,
+            time_sig_denominator,
         })
     }
 
@@ -103,6 +118,23 @@ impl MidiParser {
         events.sort_by_key(|e| e.tick);
         events.dedup_by_key(|e| e.tick);
         events
+    }
+
+    fn collect_time_signature(tracks: &[midly::Track]) -> Option<(u8, u8)> {
+        for track in tracks {
+            for event in track {
+                if let midly::TrackEventKind::Meta(midly::MetaMessage::TimeSignature(
+                    numerator,
+                    denominator,
+                    _,
+                    _,
+                )) = event.kind
+                {
+                    return Some((numerator, denominator));
+                }
+            }
+        }
+        None
     }
 
     fn build_tempo_segments(

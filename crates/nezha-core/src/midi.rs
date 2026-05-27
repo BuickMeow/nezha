@@ -24,6 +24,14 @@ pub struct MidiFile {
     pub ticks_per_beat: u32,
     /// tempo 区间，按 start_tick / start_time 排序
     pub tempo_segments: Vec<TempoSegment>,
+    /// 总音符数。
+    pub note_count: u64,
+    /// 最后一个音符结束时的 tick（总 tick 长度）。
+    pub tick_length: u64,
+    /// 拍号分子（如 4/4 中的 4）。
+    pub time_sig_numerator: u8,
+    /// 拍号分母（如 4/4 中的 4，实际值为 2^4 = 16）。
+    pub time_sig_denominator: u8,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,5 +89,22 @@ impl MidiFile {
             return DEFAULT_BPM as f32;
         };
         bpm_from_mpq(seg.micros_per_quarter)
+    }
+
+    /// 计算每小节的 tick 数（bar divide）。
+    pub fn bar_divide(&self) -> f64 {
+        let num = self.time_sig_numerator as f64;
+        let den = (1u32 << self.time_sig_denominator) as f64;
+        self.ticks_per_beat as f64 * num / den * 4.0
+    }
+
+    /// 计算给定 tick 所在的小节号（1-based）。
+    pub fn bar_at_tick(&self, tick: u64) -> u64 {
+        crate::time::bar_at_tick(tick, self.bar_divide())
+    }
+
+    /// 计算总小节数。
+    pub fn total_bars(&self) -> u64 {
+        crate::time::total_bars(self.tick_length, self.bar_divide())
     }
 }
