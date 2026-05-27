@@ -73,12 +73,19 @@ pub struct TrackClip {
     pub keyboard_height_percent: f32,
     /// 计数器/文本图层的字号（像素）。
     pub font_size: u32,
-    /// 有效内容相对 clip.start 的偏移（帧数），第一个音符在此位置播放。
-    /// 由 MIDI 加载时自动计算，视觉上标记缓冲区结束位置。
+    /// 有效内容相对 clip.start 的偏移（帧数），歌曲在此位置开始。
+    /// 拖动左侧边缘时自动更新，视觉上标记深蓝色区域结束位置。
     pub content_start_offset: u32,
-    /// 有效内容相对 clip.end 的提前偏移（帧数），最后一个音符在此处结束。
-    /// 由 MIDI 加载时自动计算，视觉上标记缓冲区开始位置。
+    /// 有效内容相对 clip.end 的提前偏移（帧数），歌曲在此处结束。
+    /// 拖动右侧边缘时自动更新，视觉上标记深蓝色区域开始位置。
     pub content_end_offset: u32,
+    /// 歌曲在时间轴上的绝对开始时间（秒）。深蓝色结束、浅蓝色开始的锚点。
+    /// 拖动 clip 左/右边缘时保持不变，拖动 clip 整体时随 clip 移动。
+    /// 非 MIDI 图层为 0.0。
+    pub song_start_time: f32,
+    /// MIDI 歌曲的持续时间（秒）。song_start_time + song_duration = 歌曲结束时间。
+    /// 非 MIDI 图层为 0.0。
+    pub song_duration: f32,
     /// 所有图层共有的变换与合成属性。
     pub common: LayerCommon,
 }
@@ -104,6 +111,8 @@ impl TrackClip {
             font_size: 24,
             content_start_offset: 0,
             content_end_offset: 0,
+            song_start_time: 0.0,
+            song_duration: 0.0,
             common: LayerCommon::default(),
         }
     }
@@ -128,6 +137,8 @@ impl TrackClip {
             font_size: 24,
             content_start_offset: 0,
             content_end_offset: 0,
+            song_start_time: 0.0,
+            song_duration: 0.0,
             common: LayerCommon::default(),
         }
     }
@@ -152,6 +163,8 @@ impl TrackClip {
             font_size: 24,
             content_start_offset: 0,
             content_end_offset: 0,
+            song_start_time: 0.0,
+            song_duration: 0.0,
             common: LayerCommon {
                 position_x: 20.0,
                 position_y: 20.0,
@@ -181,6 +194,8 @@ impl TrackClip {
             font_size: 24,
             content_start_offset: 0,
             content_end_offset: 0,
+            song_start_time: 0.0,
+            song_duration: 0.0,
             common: LayerCommon::default(),
         }
     }
@@ -193,6 +208,19 @@ impl TrackClip {
     /// 获取内容区域的结束时间（秒，clip 内部时间轴）。
     pub fn content_end_time(&self, fps: u32) -> f32 {
         self.end - self.content_end_offset as f32 / fps.max(1) as f32
+    }
+
+    /// 根据当前 clip.start / clip.end 和 song_start_time / song_duration 重新计算 content offsets。
+    /// 深蓝色区域 = clip 范围内但歌曲范围外的部分。
+    /// 歌曲范围 = [song_start_time, song_start_time + song_duration]。
+    pub fn update_content_offsets(&mut self, fps: u32) {
+        if self.song_duration <= 0.0 {
+            return;
+        }
+        let fps_f = fps.max(1) as f32;
+        let song_end_time = self.song_start_time + self.song_duration;
+        self.content_start_offset = ((self.song_start_time - self.start).max(0.0) * fps_f).round() as u32;
+        self.content_end_offset = ((self.end - song_end_time).max(0.0) * fps_f).round() as u32;
     }
 }
 
@@ -482,17 +510,22 @@ impl TimelineData {
         &mut self,
         midi_idx: Option<usize>,
         duration: f32,
-        content_start_offset: u32,
-        content_end_offset: u32,
+        song_start_time: f32,
+        song_duration: f32,
     ) -> usize {
-        self.push_clip(
+        let id = self.push_clip(
             ClipKind::Waterfall,
             duration,
             midi_idx,
             egui::Color32::TRANSPARENT,
-            content_start_offset,
-            content_end_offset,
-        )
+            0,
+            0,
+        );
+        if let Some(clip) = self.find_clip_mut(id) {
+            clip.song_start_time = song_start_time;
+            clip.song_duration = song_duration;
+        }
+        id
     }
 
     /// Convenience wrapper to push a solid color clip.
@@ -556,17 +589,22 @@ impl TimelineData {
     pub fn move_clip_to_start(&mut self, clip_id: usize, new_start: f32, fps: u32) {
         let frame_duration = Self::frame_duration(fps);
         if let Some(clip) = self.find_clip_mut(clip_id) {
+            let old_start = clip.start;
             let width = clip.end - clip.start;
             clip.start = snap_to_frame(new_start.max(0.0), frame_duration);
             clip.end = clip.start + width;
+            // 整体移动时，song_start_time 随 clip 一起移动
+            clip.song_start_time += clip.start - old_start;
+            clip.update_content_offsets(fps);
         }
     }
 
     pub fn resize_clip_start_to(&mut self, clip_id: usize, new_start: f32, fps: u32) {
         let frame_duration = Self::frame_duration(fps);
         if let Some(clip) = self.find_clip_mut(clip_id) {
-            clip.start = snap_to_frame(new_start.max(0.0), frame_duration);
+            clip.start = snap_to_frame(new_start, frame_duration);
             clip.start = clip.start.min(clip.end - frame_duration);
+            clip.update_content_offsets(fps);
         }
     }
 
@@ -574,6 +612,7 @@ impl TimelineData {
         let frame_duration = Self::frame_duration(fps);
         if let Some(clip) = self.find_clip_mut(clip_id) {
             clip.end = snap_to_frame(new_end.max(clip.start + frame_duration), frame_duration);
+            clip.update_content_offsets(fps);
         }
     }
 
@@ -701,15 +740,14 @@ impl TimelineState {
         &mut self,
         midi_idx: Option<usize>,
         duration: f32,
-        content_start_offset: u32,
-        content_end_offset: u32,
+        song_start_time: f32,
+        song_duration: f32,
     ) {
-        let id = self.data.push_waterfall_clip(
-            midi_idx,
-            duration,
-            content_start_offset,
-            content_end_offset,
-        );
+        let fps = self.fps;
+        let id = self.data.push_waterfall_clip(midi_idx, duration, song_start_time, song_duration);
+        if let Some(clip) = self.data.find_clip_mut(id) {
+            clip.update_content_offsets(fps);
+        }
         self.selection.select(id);
     }
 

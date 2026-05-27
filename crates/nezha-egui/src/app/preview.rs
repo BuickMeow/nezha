@@ -144,7 +144,7 @@ impl App {
             return 0;
         };
 
-        let clip_time = (time - clip.clip_start).max(0.0) as f64;
+        let clip_time = (time - clip.song_start_time) as f64;
         let keyboard_height_px = render_height as f32 * clip.keyboard_height_percent;
         let opacity = clip.common.opacity as f64;
         let clip_style = nezha_renderer::RenderStyle {

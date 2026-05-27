@@ -85,6 +85,7 @@ impl MidiStore {
     }
 
     /// 根据 MIDI 音符数据计算 content_start_offset 和 content_end_offset（帧数）。
+    #[allow(dead_code)]
     pub fn calculate_content_offsets(midi: &MidiFile, fps: u32) -> (u32, u32) {
         let fps_f64 = fps.max(1) as f64;
 
@@ -117,25 +118,26 @@ impl MidiStore {
         (start_offset, end_offset)
     }
 
+    /// 默认前奏缓冲区（秒），在歌曲开始之前的深蓝色区域。
+    pub const DEFAULT_PRE_SONG_BUFFER: f32 = 0.0;
+
     fn bind_unassigned_waterfalls(&mut self, midi_idx: usize, timeline_state: &mut TimelineState) {
-        // 获取 MIDI 文件的真实数据
-        let (midi_duration, first_offset, end_offset) = self
+        let midi_duration = self
             .entries
             .get(midi_idx)
-            .map(|e| {
-                let (so, eo) = Self::calculate_content_offsets(&e.file, timeline_state.fps);
-                (e.file.duration as f32, so, eo)
-            })
-            .unwrap_or((5.0, 0, 0));
+            .map(|e| e.file.duration as f32)
+            .unwrap_or(5.0);
+        let pre_song = Self::DEFAULT_PRE_SONG_BUFFER;
 
-        // 先尝试绑定已有的未分配 MIDI 的水瀑布 clip
+        // 先尝试绑定已有的未分配 MIDI 的瀑布流 clip
         for track in &mut timeline_state.data.tracks {
             for clip in &mut track.clips {
                 if clip.kind == ClipKind::Waterfall && clip.midi_idx.is_none() {
                     clip.midi_idx = Some(midi_idx);
-                    clip.end = midi_duration;
-                    clip.content_start_offset = first_offset;
-                    clip.content_end_offset = end_offset;
+                    clip.song_start_time = clip.start + pre_song;
+                    clip.song_duration = midi_duration;
+                    clip.end = clip.song_start_time + midi_duration;
+                    clip.update_content_offsets(timeline_state.fps);
                     return;
                 }
             }
@@ -144,9 +146,10 @@ impl MidiStore {
         // 没有未绑定的 clip → 在首个视频轨道上新建一个
         let id = timeline_state.data.alloc_clip_id();
         let mut clip = TrackClip::new_waterfall(id, Some(midi_idx));
-        clip.end = midi_duration;
-        clip.content_start_offset = first_offset;
-        clip.content_end_offset = end_offset;
+        clip.song_start_time = pre_song;
+        clip.song_duration = midi_duration;
+        clip.end = pre_song + midi_duration;
+        clip.update_content_offsets(timeline_state.fps);
 
         if let Some(track) = timeline_state
             .data

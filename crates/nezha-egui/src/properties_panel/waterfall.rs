@@ -1,6 +1,6 @@
 //! 瀑布流图层的属性面板。
 
-use crate::app::project_state::{MidiEntry, MidiStore};
+use crate::app::project_state::MidiEntry;
 use crate::config_panel::truncate_path;
 use crate::transport::TrackClip;
 use eframe::egui;
@@ -34,14 +34,15 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
                     .and_then(|n| n.to_str())
                     .unwrap_or(&entry.path);
                 let selected = clip.midi_idx == Some(idx);
-                if ui.selectable_label(selected, name).clicked() {
+                    if ui.selectable_label(selected, name).clicked() {
                     clip.midi_idx = Some(idx);
                     // 切换到新 MIDI 时自动更新 clip 长度和偏移
                     if let Some(entry) = midi_files.get(idx) {
-                        clip.end = clip.start + entry.file.duration as f32;
-                        let (so, eo) = MidiStore::calculate_content_offsets(&entry.file, fps);
-                        clip.content_start_offset = so;
-                        clip.content_end_offset = eo;
+                        let pre_song = crate::app::project_state::MidiStore::DEFAULT_PRE_SONG_BUFFER;
+                        clip.song_start_time = clip.start + pre_song;
+                        clip.song_duration = entry.file.duration as f32;
+                        clip.end = clip.song_start_time + clip.song_duration;
+                        clip.update_content_offsets(fps);
                     }
                 }
             }

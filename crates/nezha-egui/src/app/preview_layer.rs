@@ -12,7 +12,7 @@ pub(super) struct LayerData {
     pub rounding: f32,
     pub render_mode: RenderMode,
     pub equal_key_width: bool,
-    pub clip_start: f32,
+    pub song_start_time: f32,
     pub color: egui::Color32,
     pub text_color: egui::Color32,
     pub keyboard_height_percent: f32,
@@ -31,7 +31,7 @@ impl From<&TrackClip> for LayerData {
             rounding: clip.rounding,
             render_mode: clip.render_mode,
             equal_key_width: clip.equal_key_width,
-            clip_start: clip.start,
+            song_start_time: clip.song_start_time,
             color: clip.color,
             text_color: clip.text_color,
             keyboard_height_percent: clip.keyboard_height_percent,
@@ -109,7 +109,7 @@ mod tests {
         let clip = make_waterfall_clip(42, 1.0, 5.0);
         let data = LayerData::from(&clip);
         assert_eq!(data.clip_id, 42);
-        assert_eq!(data.clip_start, 1.0);
+        assert_eq!(data.song_start_time, 0.0);
         assert_eq!(data.kind, ClipKind::Waterfall);
     }
 }

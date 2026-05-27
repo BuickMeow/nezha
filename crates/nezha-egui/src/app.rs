@@ -120,21 +120,19 @@ impl App {
 
     fn add_waterfall_with_audio_prompt(&mut self) {
         let midi_idx = self.project.midi.highlighted_idx;
-        let (duration, start_offset, end_offset) = midi_idx
+        let pre_song = crate::app::project_state::MidiStore::DEFAULT_PRE_SONG_BUFFER;
+        let (duration, song_start, song_dur) = midi_idx
             .and_then(|idx| self.project.midi.entries.get(idx))
             .map(|e| {
-                let (so, eo) = project_state::MidiStore::calculate_content_offsets(
-                    &e.file,
-                    self.project.timeline_state.fps,
-                );
-                (e.file.duration as f32, so, eo)
+                let d = e.file.duration as f32;
+                (pre_song + d, pre_song, d)
             })
-            .unwrap_or_else(|| (self.project.duration() as f32, 0, 0));
+            .unwrap_or_else(|| (self.project.duration() as f32, 0.0, 0.0));
         self.project.timeline_state.push_waterfall_clip(
             midi_idx,
             duration,
-            start_offset,
-            end_offset,
+            song_start,
+            song_dur,
         );
         if let Some(idx) = midi_idx
             && let Some(entry) = self.project.midi.entries.get(idx)
