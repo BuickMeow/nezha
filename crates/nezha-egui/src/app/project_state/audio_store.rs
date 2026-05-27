@@ -16,6 +16,7 @@ pub struct AudioEntry {
     /// Interleaved 32-bit float PCM samples, range [-1.0, 1.0].
     pub samples: Vec<f32>,
     /// The MIDI store index this audio was rendered from.
+    #[allow(dead_code)]
     pub midi_idx: usize,
 }
 
@@ -149,5 +150,76 @@ impl AudioStore {
         limiter.process(&mut mix);
 
         mix
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_entry(channels: u16, sample_rate: u32, duration_secs: f64, value: f32) -> AudioEntry {
+        let frames = (duration_secs * sample_rate as f64) as usize;
+        let samples = vec![value; frames * channels as usize];
+        AudioEntry {
+            name: "test".into(),
+            sample_rate,
+            channels,
+            duration_secs,
+            samples,
+            midi_idx: 0,
+        }
+    }
+
+    #[test]
+    fn test_mix_timeline_basic() {
+        let mut store = AudioStore::default();
+        let idx = store.insert(make_entry(2, 48000, 1.0, 0.5));
+        // clip at start=0, end=1
+        let clips = vec![(idx, 0.0f32, 1.0f32)];
+        let mix = store.mix_timeline(&clips, 48000, 1.0);
+        assert_eq!(mix.len(), 48000 * 2);
+        assert!((mix[0] - 0.5).abs() < 1e-6);
+        assert!((mix[1] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_mix_timeline_offset_clip() {
+        let mut store = AudioStore::default();
+        let idx = store.insert(make_entry(2, 48000, 1.0, 0.5));
+        // clip at start=2, end=3 → audio placed at 2 seconds
+        let clips = vec![(idx, 2.0f32, 3.0f32)];
+        let mix = store.mix_timeline(&clips, 48000, 3.0);
+        assert_eq!(mix.len(), 3 * 48000 * 2);
+        // first 2 seconds should be silence
+        assert!((mix[0]).abs() < 1e-6);
+        // at 2 seconds (frame 96000 stereo = index 192000) should have audio
+        assert!((mix[96000 * 2] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_mix_timeline_empty_clips() {
+        let store = AudioStore::default();
+        let clips = vec![];
+        let mix = store.mix_timeline(&clips, 48000, 1.0);
+        assert!(mix.iter().all(|&s| s.abs() < 1e-6));
+    }
+
+    #[test]
+    fn test_mix_timeline_invalid_idx() {
+        let store = AudioStore::default();
+        let clips = vec![(99, 0.0f32, 1.0f32)];
+        let mix = store.mix_timeline(&clips, 48000, 1.0);
+        assert!(mix.iter().all(|&s| s.abs() < 1e-6));
+    }
+
+    #[test]
+    fn test_mix_timeline_mono_entry() {
+        let mut store = AudioStore::default();
+        let idx = store.insert(make_entry(1, 48000, 1.0, 0.3));
+        let clips = vec![(idx, 0.0f32, 1.0f32)];
+        let mix = store.mix_timeline(&clips, 48000, 1.0);
+        // mono should be duplicated to both channels
+        assert!((mix[0] - 0.3).abs() < 1e-6);
+        assert!((mix[1] - 0.3).abs() < 1e-6);
     }
 }

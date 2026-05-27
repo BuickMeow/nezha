@@ -602,7 +602,7 @@ impl TimelineData {
     pub fn resize_clip_start_to(&mut self, clip_id: usize, new_start: f32, fps: u32) {
         let frame_duration = Self::frame_duration(fps);
         if let Some(clip) = self.find_clip_mut(clip_id) {
-            clip.start = snap_to_frame(new_start, frame_duration);
+            clip.start = snap_to_frame(new_start.max(0.0), frame_duration);
             clip.start = clip.start.min(clip.end - frame_duration);
             clip.update_content_offsets(fps);
         }
