@@ -220,6 +220,12 @@ impl AudioPlayback {
         self.is_playing.load(Ordering::Relaxed)
     }
 
+    /// Returns a clone of the internal mixed buffer Arc, allowing external
+    /// threads (e.g. a background mixer) to write into it directly.
+    pub fn mixed_buffer_arc(&self) -> Arc<Mutex<Vec<f32>>> {
+        self.mixed_buffer.clone()
+    }
+
     pub fn buffer_len(&self) -> usize {
         self.mixed_buffer.lock().map(|b| b.len()).unwrap_or(0)
     }

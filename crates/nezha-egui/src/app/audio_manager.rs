@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use crate::app::audio_player::AudioPlayback;
-use crate::app::project_state::{AudioEntry, ProjectState};
+use crate::app::project_state::{AudioEntry, AudioStore, ProjectState};
 use crate::transport::{TrackClip, TrackKind};
 use nezha_xsynth::ChannelCount;
 
@@ -12,6 +12,15 @@ enum AudioRenderEvent {
     Chunk(Vec<f32>, f64, u64, f64),
     Done,
     Error(String),
+}
+
+// ── Work sent to the background mixer thread ──
+
+struct MixerWork {
+    audio_store: AudioStore,
+    timeline_clips: Vec<(usize, f32, f32)>,
+    sample_rate: u32,
+    duration_secs: f64,
 }
 
 // ── Render thread state ──
@@ -34,6 +43,9 @@ pub struct AudioManager {
     pub render_progress_open: bool,
     pub cached_midi_name: String,
     pub cached_midi_path: String,
+    /// 后台混音线程通信句柄。
+    mixer_tx: Option<mpsc::Sender<MixerWork>>,
+    mixer_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl AudioManager {
@@ -44,6 +56,8 @@ impl AudioManager {
             render_progress_open: false,
             cached_midi_name: String::new(),
             cached_midi_path: String::new(),
+            mixer_tx: None,
+            mixer_handle: None,
         }
     }
 
@@ -147,13 +161,8 @@ impl AudioManager {
             .unwrap_or(0.0)
     }
 
-    /// 创建或更新音频 entry 和 Clip，并重新混音。
-    fn upsert_audio(
-        &mut self,
-        state: &mut RenderState,
-        project: &mut ProjectState,
-        audio_player: &mut AudioPlayback,
-    ) {
+    /// 创建或更新音频 entry 和 Clip（不再在 UI 线程混音）。
+    fn upsert_audio(&mut self, state: &mut RenderState, project: &mut ProjectState) {
         if state.accumulated_pcm.is_empty() {
             return;
         }
@@ -174,7 +183,8 @@ impl AudioManager {
             }
             for track in &mut project.timeline_state.data.tracks {
                 for clip in &mut track.clips {
-                    if clip.audio_idx == Some(idx) && clip.kind == crate::transport::ClipKind::Audio
+                    if clip.audio_idx == Some(idx)
+                        && clip.kind == crate::transport::ClipKind::Audio
                     {
                         clip.end = clip.start + duration_secs as f32;
                     }
@@ -224,14 +234,61 @@ impl AudioManager {
             .timeline_state
             .data
             .update_duration(song_start + duration_secs as f32);
+    }
 
-        let audio_clips = project.audio_timeline_clips();
-        audio_player.mix(
-            &project.audio,
-            &audio_clips,
-            project.duration(),
-            project.render.audio_sample_rate,
-        );
+    /// 如果混音线程尚未启动，则从 AudioPlayback 拿到 mixed_buffer Arc
+    /// 并启动一个后台线程专门执行 mix_master。
+    fn ensure_mixer_thread(&mut self, audio_player: &AudioPlayback) {
+        if self.mixer_tx.is_some() {
+            return;
+        }
+
+        let mixed_buffer = audio_player.mixed_buffer_arc();
+        let (tx, rx) = mpsc::channel::<MixerWork>();
+
+        let handle = std::thread::Builder::new()
+            .name("nezha_mixer".to_string())
+            .spawn(move || {
+                while let Ok(work) = rx.recv() {
+                    // 丢弃所有积压的旧 work，只处理最新的一份。
+                    // 这避免当 mix_master 慢于 chunk 到达速度时产生积压。
+                    let mut latest = work;
+                    while let Ok(w) = rx.try_recv() {
+                        latest = w;
+                    }
+
+                    let mixed = latest.audio_store.mix_master(
+                        &latest.timeline_clips,
+                        latest.sample_rate,
+                        latest.duration_secs,
+                    );
+
+                    if let Ok(mut buf) = mixed_buffer.lock() {
+                        *buf = mixed;
+                    }
+                }
+            })
+            .expect("failed to spawn mixer thread");
+
+        self.mixer_tx = Some(tx);
+        self.mixer_handle = Some(handle);
+    }
+
+    /// 将当前 project 的快照发送给后台混音线程。
+    fn trigger_mix(&self, project: &ProjectState) {
+        let Some(ref tx) = self.mixer_tx else {
+            return;
+        };
+
+        let work = MixerWork {
+            audio_store: project.audio.clone(),
+            timeline_clips: project.audio_timeline_clips(),
+            sample_rate: project.render.audio_sample_rate,
+            duration_secs: project.duration(),
+        };
+
+        // 允许失败（通道断开 = 线程已退出）
+        let _ = tx.send(work);
     }
 
     /// Call every frame. Polls the render thread and updates project state.
@@ -254,20 +311,28 @@ impl AudioManager {
                         0.0
                     };
                     state.accumulated_pcm.extend(pcm);
-                    self.upsert_audio(&mut state, project, audio_player);
+                    self.upsert_audio(&mut state, project);
+                    self.ensure_mixer_thread(audio_player);
+                    self.trigger_mix(project);
                     modified = true;
                 }
 
                 Ok(AudioRenderEvent::Done) => {
-                    self.upsert_audio(&mut state, project, audio_player);
+                    self.upsert_audio(&mut state, project);
+                    self.trigger_mix(project);
                     modified = true;
                     self.render_progress_open = false;
+                    // 断开 channel，后台线程 recv 失败后自然退出。
+                    self.mixer_tx = None;
+                    self.mixer_handle = None;
                     return modified;
                 }
 
                 Ok(AudioRenderEvent::Error(e)) => {
                     project.last_error = Some(format!("音频渲染失败: {}", e));
                     self.render_progress_open = false;
+                    self.mixer_tx = None;
+                    self.mixer_handle = None;
                     return modified;
                 }
 
@@ -275,6 +340,8 @@ impl AudioManager {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     project.last_error = Some("音频渲染线程意外退出".to_string());
                     self.render_progress_open = false;
+                    self.mixer_tx = None;
+                    self.mixer_handle = None;
                     return modified;
                 }
             }
