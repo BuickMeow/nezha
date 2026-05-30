@@ -6,16 +6,11 @@ use eframe::egui;
 use nezha_compositor::Compositor;
 use nezha_renderer::WaterfallLayer;
 
-/// Counter clip 的运行时统计状态。
 #[derive(Clone, Debug, Default)]
 pub struct CounterStats {
-    /// 累计已触发的音符数。
     pub total_notes: u64,
-    /// 历史最大 NPS。
     pub max_nps: u64,
-    /// 历史最大复音数。
     pub max_polyphony: u64,
-    /// 上次更新的 MIDI 时间（秒）。
     pub last_midi_time: f64,
 }
 
@@ -27,9 +22,6 @@ impl App {
         }
     }
 
-    /// 渲染指定时间点的画面到预览目标（不显示到 UI）。
-    ///
-    /// 用于预览路径，每层单独 begin_pass/end_pass。
     pub(super) fn render_frame_for_export(&mut self, time: f32) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
@@ -40,12 +32,6 @@ impl App {
         self.render_ctx.end_pass();
     }
 
-    /// 渲染一帧并立即同步读回像素数据。
-    ///
-    /// 将所有图层渲染 + 纹理拷贝合并到单个 CommandEncoder，
-    /// 使用 triple buffering ring 的单槽快速路径。
-    /// 返回 BGRA 像素数据。
-    #[allow(dead_code)]
     pub(super) fn render_frame_combined(&mut self, time: f32) -> Vec<u8> {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
@@ -65,9 +51,6 @@ impl App {
         self.export_pipeline.wait_read()
     }
 
-    /// 将当前帧渲染并推入 staging ring（不阻塞等待读回）。
-    ///
-    /// 用于流水线导出：调用后可通过 try_read_staging / wait_read_staging 获取数据。
     pub(super) fn render_frame_pipelined(&mut self, time: f32) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
@@ -86,7 +69,6 @@ impl App {
             .copy_and_submit(encoder, texture, queue);
     }
 
-    /// Render a solid color clip into the compositor.
     #[allow(clippy::too_many_arguments)]
     fn render_solid_color_layer(
         &mut self,
@@ -136,7 +118,6 @@ impl App {
         );
     }
 
-    /// Render a waterfall (note visualization) clip into the compositor.
     #[allow(clippy::too_many_arguments)]
     fn render_waterfall_layer(
         &mut self,
@@ -218,7 +199,112 @@ impl App {
         note_count
     }
 
-    /// 纯函数式统计：计算指定 MIDI 时间点的各项计数。
+    #[allow(clippy::too_many_arguments)]
+    fn render_image_layer(
+        &mut self,
+        compositor: &mut Compositor,
+        preview_view: &wgpu::TextureView,
+        clip: &LayerData,
+        time: f32,
+        render_width: u32,
+        render_height: u32,
+        rect: (f32, f32, f32, f32),
+        is_first: bool,
+    ) {
+        let Some(media_idx) = clip.media_idx else { return };
+        let Some(entry) = self.project.media.get(media_idx) else { return };
+        let (Some(rgba), w, h) = (&entry.image_rgba, entry.image_width, entry.image_height) else {
+            return;
+        };
+
+        let load_op = if is_first {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            })
+        } else {
+            wgpu::LoadOp::Load
+        };
+
+        let mut image_layer = nezha_compositor::ImageLayer::new(
+            self.render_ctx.device(),
+            self.render_ctx.queue(),
+            self.render_ctx.target_format(),
+            rgba,
+            w,
+            h,
+        );
+        let encoder = self.render_ctx.encoder_mut();
+        compositor.render_layer(
+            encoder,
+            &mut image_layer,
+            preview_view,
+            render_width,
+            render_height,
+            time as f64,
+            load_op,
+            clip.common.blend_mode,
+            rect,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_video_layer(
+        &mut self,
+        compositor: &mut Compositor,
+        preview_view: &wgpu::TextureView,
+        clip: &LayerData,
+        time: f32,
+        render_width: u32,
+        render_height: u32,
+        rect: (f32, f32, f32, f32),
+        is_first: bool,
+    ) {
+        let Some(media_idx) = clip.media_idx else { return };
+        let Some(entry) = self.project.media.get(media_idx) else { return };
+        let w = entry.info.width;
+        let h = entry.info.height;
+        if w == 0 || h == 0 { return; }
+
+        let clip_time = (time - clip.start).max(0.0) as f64;
+        let frame = self.project.media.decode_video_frame(media_idx, clip_time);
+        let Some(frame) = frame else { return };
+
+        let load_op = if is_first {
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            })
+        } else {
+            wgpu::LoadOp::Load
+        };
+
+        let mut video_layer = nezha_compositor::ImageLayer::new(
+            self.render_ctx.device(),
+            self.render_ctx.queue(),
+            self.render_ctx.target_format(),
+            &frame.rgba,
+            frame.width,
+            frame.height,
+        );
+        let encoder = self.render_ctx.encoder_mut();
+        compositor.render_layer(
+            encoder,
+            &mut video_layer,
+            preview_view,
+            render_width,
+            render_height,
+            time as f64,
+            load_op,
+            clip.common.blend_mode,
+            rect,
+        );
+    }
+
     fn compute_midi_stats(midi: &nezha_core::MidiFile, midi_time: f64) -> (u64, u64, u64) {
         let mut total_notes = 0u64;
         let mut polyphony = 0u64;
@@ -234,15 +320,12 @@ impl App {
                     break;
                 }
 
-                // 累计已触发音符
                 total_notes += 1;
 
-                // 当前复音（start <= t < end）
                 if end >= midi_time {
                     polyphony += 1;
                 }
 
-                // NPS：最近 1 秒内 start 的音符
                 if start > window_start {
                     nps += 1;
                 }
@@ -252,7 +335,6 @@ impl App {
         (total_notes, polyphony, nps)
     }
 
-    /// 更新单个 Counter clip 的运行时状态（仅 max_nps / max_polyphony 有状态）。
     fn update_counter_stats(
         &mut self,
         counter: &LayerData,
@@ -280,7 +362,6 @@ impl App {
         result
     }
 
-    /// Render all counter (text overlay) clips after other layers.
     #[allow(clippy::too_many_arguments)]
     fn render_counter_layers(
         &mut self,
@@ -338,7 +419,6 @@ impl App {
                 0.0
             };
 
-            // 纯函数式计算当前复音（与 compute_midi_stats 保持一致）
             let (_, current_polyphony, current_nps) = Self::compute_midi_stats(midi, midi_time);
 
             let note_percent = if midi.note_count > 0 {
@@ -467,7 +547,6 @@ impl App {
         }
     }
 
-    /// Render all visible layers into the current frame encoder.
     fn render_all_layers(&mut self, time: f32, render_width: u32, render_height: u32) {
         let layers =
             preview_layer::collect_visible_layers(&self.project.timeline_state.data.tracks, time);
@@ -531,8 +610,32 @@ impl App {
                 ClipKind::Counter => {
                     unreachable!();
                 }
-                ClipKind::Audio => {
-                    // Audio clips are not rendered visually; only played back
+                ClipKind::Audio => {}
+                ClipKind::Image => {
+                    self.render_image_layer(
+                        &mut compositor,
+                        &preview_view,
+                        clip,
+                        time,
+                        render_width,
+                        render_height,
+                        rect,
+                        is_first,
+                    );
+                    is_first = false;
+                }
+                ClipKind::Video => {
+                    self.render_video_layer(
+                        &mut compositor,
+                        &preview_view,
+                        clip,
+                        time,
+                        render_width,
+                        render_height,
+                        rect,
+                        is_first,
+                    );
+                    is_first = false;
                 }
             }
         }
@@ -551,7 +654,6 @@ impl App {
     }
 
     pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {
-        // 导出期间由 export_step 控制画面渲染，此处仅做显示
         if self.export_state.is_none() {
             self.update_playback();
             let current_time = self.project.playback.current_time as f32;

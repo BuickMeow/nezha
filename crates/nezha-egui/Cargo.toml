@@ -19,6 +19,7 @@ nezha-dms = { path = "../nezha-dms" }
 nezha-encoder = { path = "../nezha-encoder" }
 nezha-text = { path = "../nezha-text" }
 nezha-xsynth = { path = "../nezha-xsynth" }
+nezha-media = { path = "../nezha-media" }
 pollster = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rfd = "0.17.2"

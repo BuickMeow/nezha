@@ -5,6 +5,7 @@ pub enum SidebarTab {
     #[default]
     Style,
     Project,
+    Media,
     Export,
     Settings,
 }
@@ -18,6 +19,7 @@ pub fn show(ui: &mut egui::Ui, active_tab: &mut SidebarTab, panel_visible: &mut 
         let tabs = [
             (SidebarTab::Style, "🎨", "样式"),
             (SidebarTab::Project, "🎵", "项目"),
+            (SidebarTab::Media, "📦", "素材"),
             (SidebarTab::Export, "📤", "导出"),
             (SidebarTab::Settings, "\u{2699}", "设置"),
         ];
@@ -27,10 +29,8 @@ pub fn show(ui: &mut egui::Ui, active_tab: &mut SidebarTab, panel_visible: &mut 
             let response = ui.selectable_label(selected, format!("{}\n{}", icon, label));
             if response.clicked() {
                 if *active_tab == tab && *panel_visible {
-                    // Same tab clicked while panel is open → hide
                     *panel_visible = false;
                 } else {
-                    // Different tab or panel was hidden → show
                     *active_tab = tab;
                     *panel_visible = true;
                 }

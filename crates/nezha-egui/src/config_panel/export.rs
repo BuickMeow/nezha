@@ -4,7 +4,6 @@ use nezha_encoder::EncoderBackend;
 
 use crate::app::project_state::MidiEntry;
 use crate::config_panel::ConfigAction;
-use crate::config_panel::truncate_path;
 use eframe::egui;
 
 pub fn show(
@@ -65,9 +64,12 @@ pub fn show(
     ui.label("导出位置:");
     ui.horizontal(|ui| {
         if let Some(path) = export_path {
-            let display = truncate_path(path, 28);
-            ui.add(
-                egui::Label::new(display)
+            let btn_width = 60.0;
+            let spacing = ui.spacing().item_spacing.x;
+            let available = (ui.available_width() - btn_width - spacing).max(40.0);
+            ui.add_sized(
+                [available, ui.text_style_height(&egui::TextStyle::Body)],
+                egui::Label::new(path.as_str())
                     .truncate()
                     .sense(egui::Sense::hover()),
             )

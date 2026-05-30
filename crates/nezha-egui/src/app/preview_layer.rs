@@ -1,12 +1,13 @@
 use crate::transport::{ClipKind, LayerCommon, TrackClip};
 use nezha_renderer::RenderMode;
 
-/// 图层渲染所需数据（从 [`TrackClip`] 拷贝，避免生命周期问题）。
 #[derive(Clone)]
 pub(super) struct LayerData {
     pub clip_id: usize,
     pub kind: ClipKind,
     pub midi_idx: Option<usize>,
+    pub media_idx: Option<usize>,
+    pub start: f32,
     pub speed: f32,
     pub border_width: f32,
     pub rounding: f32,
@@ -18,31 +19,18 @@ pub(super) struct LayerData {
     pub keyboard_height_percent: f32,
     pub font_size: u32,
     pub common: LayerCommon,
-    /// 计数器模板文本。
     pub template_text: String,
-    /// 文本对齐方式。
     pub text_alignment: nezha_text::TextAlignment,
-    /// 千位分隔符。
     pub thousand_separator: nezha_text::Separator,
-    /// 是否启用零填充。
     pub zero_padding: bool,
-    /// 是否粗体。
     pub bold: bool,
-    /// 粗体偏移量。
     pub bold_offset: f32,
-    /// 是否斜体。
     pub italic: bool,
-    /// 斜体倾斜量。
     pub italic_slant: f32,
-    /// 是否启用描边。
     pub outline_enabled: bool,
-    /// 描边宽度。
     pub outline_width: f32,
-    /// 描边颜色。
     pub outline_color: egui::Color32,
-    /// 字间距。
     pub letter_spacing: f32,
-    /// 最小字符宽度。
     pub min_advance: f32,
 }
 
@@ -52,6 +40,8 @@ impl From<&TrackClip> for LayerData {
             clip_id: clip.id,
             kind: clip.kind,
             midi_idx: clip.midi_idx,
+            media_idx: clip.media_idx,
+            start: clip.start,
             speed: clip.speed,
             border_width: clip.border_width,
             rounding: clip.rounding,
@@ -80,7 +70,6 @@ impl From<&TrackClip> for LayerData {
     }
 }
 
-/// 收集当前时间点所有可见图层数据（Premiere 顺序：底 -> 顶）。
 pub(super) fn collect_visible_layers(
     tracks: &[crate::transport::Track],
     time: f32,
@@ -138,7 +127,6 @@ mod tests {
         track.clips.push(make_waterfall_clip(2, 0.0, 10.0));
         let layers = collect_visible_layers(&[track], 5.0);
         assert_eq!(layers.len(), 2);
-        // First clip is bottom (background), rendered first
         assert_eq!(layers[0].clip_id, 1);
         assert_eq!(layers[1].clip_id, 2);
     }

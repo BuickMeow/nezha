@@ -100,6 +100,18 @@ pub fn show(
                                     ui.label(format!("音频 ID: {}", audio_idx));
                                 }
                             }
+                            ClipKind::Image => {
+                                ui.label("图片图层");
+                                if let Some(media_idx) = clip.media_idx {
+                                    ui.label(format!("素材 ID: {}", media_idx));
+                                }
+                            }
+                            ClipKind::Video => {
+                                ui.label("视频图层");
+                                if let Some(media_idx) = clip.media_idx {
+                                    ui.label(format!("素材 ID: {}", media_idx));
+                                }
+                            }
                         }
 
                         break;

@@ -2,7 +2,6 @@
 
 use crate::app::project_state::MidiEntry;
 use crate::config_panel::ConfigAction;
-use crate::config_panel::truncate_path;
 use eframe::egui;
 
 pub fn show(
@@ -25,15 +24,15 @@ pub fn show(
                 .and_then(|n| n.to_str())
                 .unwrap_or(&entry.path);
             let full_path = &entry.path;
-            let display = truncate_path(raw_name, 22);
-            let text = if is_highlighted {
-                format!("▶ {}", display)
-            } else {
-                format!("  {}", display)
-            };
+            let prefix = if is_highlighted { "▶ " } else { "  " };
+            let text = format!("{}{}", prefix, raw_name);
             ui.horizontal(|ui| {
+                let btn_width = 52.0;
+                let spacing = ui.spacing().item_spacing.x;
+                let available = (ui.available_width() - btn_width - spacing).max(20.0);
                 let response = ui
-                    .add(
+                    .add_sized(
+                        [available, ui.text_style_height(&egui::TextStyle::Body)],
                         egui::Label::new(text)
                             .truncate()
                             .selectable(false)

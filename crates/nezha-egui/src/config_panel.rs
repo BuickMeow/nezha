@@ -1,10 +1,5 @@
-//! 配置面板入口。
-//!
-//! 根据激活的侧边栏标签页，委托给对应的子模块渲染 UI。
-//!
-//! 子模块位于 `config_panel/` 目录（Rust 2018+ 约定）。
-
 mod export;
+pub mod media;
 pub mod project;
 mod settings;
 mod style;
@@ -13,43 +8,6 @@ use crate::app::ThemeMode;
 use crate::app::project_state::{MidiEntry, SoundFontEntry};
 use crate::sidebar::SidebarTab;
 use eframe::egui;
-
-/// Truncate a path string by keeping the filename intact and
-/// truncating the directory portion with an ellipsis in the middle.
-/// e.g. "/very/long/directory/structure/file.mid" → "/very/.../file.mid"
-pub(crate) fn truncate_path(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_string();
-    }
-    let path = std::path::Path::new(s);
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let parent = path.parent().and_then(|p| p.to_str()).unwrap_or("");
-
-    if file_name.is_empty() {
-        s.chars().take(max_chars - 1).collect::<String>() + "…"
-    } else if parent.is_empty() {
-        let keep = max_chars.saturating_sub(1);
-        if file_name.chars().count() <= keep {
-            file_name.to_string()
-        } else {
-            file_name.chars().take(keep - 1).collect::<String>() + "…"
-        }
-    } else {
-        let suffix_len = file_name.chars().count() + 2;
-        if suffix_len >= max_chars {
-            let keep = max_chars.saturating_sub(1);
-            if file_name.chars().count() <= keep {
-                file_name.to_string()
-            } else {
-                file_name.chars().take(keep - 1).collect::<String>() + "…"
-            }
-        } else {
-            let prefix_len = max_chars - suffix_len;
-            let prefix: String = parent.chars().take(prefix_len).collect();
-            format!("{}…/{}", prefix, file_name)
-        }
-    }
-}
 
 pub struct ConfigState<'a> {
     pub active_tab: SidebarTab,
@@ -63,11 +21,12 @@ pub struct ConfigState<'a> {
     pub encoder_backend: &'a mut String,
     pub export_path: &'a mut Option<String>,
     pub theme_mode: &'a mut ThemeMode,
-    // SoundFont management
     pub soundfonts: &'a [SoundFontEntry],
-    // Audio device
     pub audio_device_name: &'a mut Option<String>,
     pub audio_devices: &'a [String],
+    pub media: &'a mut crate::app::project_state::MediaStore,
+    pub timeline: &'a mut crate::transport::TimelineState,
+    pub audio: &'a mut crate::app::project_state::AudioStore,
 }
 
 #[derive(Clone, Debug)]
@@ -78,13 +37,16 @@ pub enum ConfigAction {
     AddCounter,
     RemoveMidi(usize),
     StartExport,
-    // SoundFont actions
     AddSoundfont,
     RemoveSoundfont(usize),
     MoveSoundfontUp(usize),
     MoveSoundfontDown(usize),
-    // Audio render trigger
-    RenderAudio(usize), // midi_idx
+    RenderAudio(usize),
+    ImportMediaVideo,
+    ImportMediaAudio,
+    ImportMediaImage,
+    AddMediaToTimeline(usize),
+    RemoveMedia(usize),
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> {
@@ -123,6 +85,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                     }
                     None => None,
                 },
+                SidebarTab::Media => media::show(ui, state.media, state.timeline, state.audio),
                 SidebarTab::Export => export::show(
                     ui,
                     state.export_format,

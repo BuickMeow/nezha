@@ -1,7 +1,6 @@
 //! 瀑布流图层的属性面板。
 
 use crate::app::project_state::MidiEntry;
-use crate::config_panel::truncate_path;
 use crate::transport::TrackClip;
 use eframe::egui;
 use nezha_renderer::RenderMode;
@@ -22,10 +21,9 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
                 .and_then(|n| n.to_str())
         })
         .unwrap_or("（已删除）");
-    let current_display = truncate_path(current_name, 18);
 
     egui::ComboBox::from_id_salt(format!("midi_source_{}", clip_id))
-        .selected_text(current_display)
+        .selected_text(current_name)
         .width(ui.available_width())
         .show_ui(ui, |ui| {
             for (idx, entry) in midi_files.iter().enumerate() {
