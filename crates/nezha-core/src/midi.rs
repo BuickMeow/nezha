@@ -4,17 +4,7 @@ use crate::parser::MidiParser;
 use crate::time::{DEFAULT_BPM, DEFAULT_MPQ, bpm_from_mpq, seconds_to_ticks};
 use std::path::Path;
 
-#[derive(Clone, Debug)]
-pub struct Note {
-    pub key: u8,         // 0-127 MIDI note number
-    pub start: f64,      // seconds
-    pub end: f64,        // seconds
-    pub start_tick: u32, // absolute MIDI tick
-    pub end_tick: u32,   // absolute MIDI tick
-    pub velocity: u8,    // 0-127
-    pub channel: u8,
-    pub track: u16, // MIDI track index (0-based)
-}
+pub use nezha_types::Note;
 
 #[derive(Clone, Debug)]
 pub struct MidiFile {
@@ -32,6 +22,21 @@ pub struct MidiFile {
     pub time_sig_numerator: u8,
     /// 拍号分母（如 4/4 中的 4，实际值为 2^4 = 16）。
     pub time_sig_denominator: u8,
+}
+
+impl nezha_types::NoteSource for MidiFile {
+    fn key_notes(&self, key: u8) -> &[Note] {
+        &self.key_notes[key as usize]
+    }
+    fn duration(&self) -> f64 {
+        self.duration
+    }
+    fn ticks_per_beat(&self) -> Option<u32> {
+        Some(self.ticks_per_beat)
+    }
+    fn tick_at_time(&self, time: f64) -> Option<f64> {
+        Some(MidiFile::tick_at_time(self, time))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

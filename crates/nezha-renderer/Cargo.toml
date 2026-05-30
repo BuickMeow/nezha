@@ -10,7 +10,7 @@ profiling = ["puffin"]
 wgpu = { workspace = true }
 pollster = { workspace = true }
 bytemuck = { workspace = true }
-nezha-core = { path = "../nezha-core" }
+nezha-types = { path = "../nezha-types" }
 nezha-compositor = { path = "../nezha-compositor" }
 half = "2.7.1"
 rayon = "1.10.0"

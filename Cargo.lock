@@ -2573,6 +2573,7 @@ name = "nezha-core"
 version = "0.1.0"
 dependencies = [
  "midly",
+ "nezha-types",
 ]
 
 [[package]]
@@ -2643,7 +2644,7 @@ dependencies = [
  "half",
  "naga",
  "nezha-compositor",
- "nezha-core",
+ "nezha-types",
  "pollster",
  "puffin",
  "rayon",
@@ -2660,6 +2661,10 @@ dependencies = [
  "nezha-compositor",
  "wgpu",
 ]
+
+[[package]]
+name = "nezha-types"
+version = "0.1.0"
 
 [[package]]
 name = "nezha-xsynth"

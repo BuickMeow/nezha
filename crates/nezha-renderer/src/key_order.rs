@@ -105,9 +105,9 @@ mod tests {
 
     struct SingleKeySource;
     impl NoteSource for SingleKeySource {
-        fn key_notes(&self, key: u8) -> &[nezha_core::Note] {
+        fn key_notes(&self, key: u8) -> &[nezha_types::Note] {
             if key == 60 {
-                static NOTES: [nezha_core::Note; 1] = [nezha_core::Note {
+                static NOTES: [nezha_types::Note; 1] = [nezha_types::Note {
                     key: 60,
                     start: 0.0,
                     end: 10.0,
@@ -144,7 +144,7 @@ mod tests {
     fn test_build_parallel_key_groups_no_active() {
         struct NoKeySource;
         impl NoteSource for NoKeySource {
-            fn key_notes(&self, _key: u8) -> &[nezha_core::Note] {
+            fn key_notes(&self, _key: u8) -> &[nezha_types::Note] {
                 &[]
             }
             fn duration(&self) -> f64 {
@@ -163,8 +163,8 @@ mod tests {
     fn test_build_parallel_key_groups_all_active_same_weight() {
         struct AllKeySource;
         impl NoteSource for AllKeySource {
-            fn key_notes(&self, _key: u8) -> &[nezha_core::Note] {
-                static NOTES: [nezha_core::Note; 1] = [nezha_core::Note {
+            fn key_notes(&self, _key: u8) -> &[nezha_types::Note] {
+                static NOTES: [nezha_types::Note; 1] = [nezha_types::Note {
                     key: 0,
                     start: 0.0,
                     end: 10.0,

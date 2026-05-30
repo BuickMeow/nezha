@@ -1,5 +1,5 @@
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
-pub(crate) use nezha_core::is_black_key;
+pub(crate) use nezha_types::is_black_key;
 
 // ── Keyboard appearance constants ───────────────────────────────────────────
 

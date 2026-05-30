@@ -13,7 +13,7 @@ pub struct KeySeekIndex {
 }
 
 impl KeySeekIndex {
-    pub fn build(notes: &[nezha_core::Note]) -> Self {
+    pub fn build(notes: &[nezha_types::Note]) -> Self {
         let n = notes.len();
         if n == 0 {
             return Self::default();
@@ -41,7 +41,7 @@ impl KeySeekIndex {
         }
     }
 
-    pub fn scan_index_for_time(&self, notes: &[nezha_core::Note], time: f64) -> usize {
+    pub fn scan_index_for_time(&self, notes: &[nezha_types::Note], time: f64) -> usize {
         if self.block_prefix_max_end.is_empty() || notes.is_empty() {
             return 0;
         }
@@ -58,7 +58,7 @@ impl KeySeekIndex {
         scan
     }
 
-    pub fn scan_index_for_tick(&self, notes: &[nezha_core::Note], tick: f64) -> usize {
+    pub fn scan_index_for_tick(&self, notes: &[nezha_types::Note], tick: f64) -> usize {
         if self.block_prefix_max_end_tick.is_empty() || notes.is_empty() {
             return 0;
         }
@@ -107,8 +107,8 @@ pub(crate) fn advance_scan_indices(
     let (threshold, last_field, scan_with_seek, scan_linear): (
         f64,
         &mut f64,
-        fn(&KeySeekIndex, &[nezha_core::Note], f64) -> usize,
-        fn(&nezha_core::Note) -> f64,
+        fn(&KeySeekIndex, &[nezha_types::Note], f64) -> usize,
+        fn(&nezha_types::Note) -> f64,
     ) = match mode {
         RenderMode::TimeBased => (
             time,
@@ -176,8 +176,8 @@ pub(crate) fn scroll_tick_for_mode(midi: &dyn NoteSource, time: f64, style: &Ren
 mod tests {
     use super::*;
 
-    fn make_note(end: f64, end_tick: u32) -> nezha_core::Note {
-        nezha_core::Note {
+    fn make_note(end: f64, end_tick: u32) -> nezha_types::Note {
+        nezha_types::Note {
             key: 60,
             start: 0.0,
             end,
