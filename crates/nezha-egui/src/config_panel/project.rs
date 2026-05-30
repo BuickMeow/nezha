@@ -61,14 +61,10 @@ pub fn show(
                             if ui.button("🗑").clicked() {
                                 action = Some(ProjectAction::RemoveSoundfont(i));
                             }
-                            if i + 1 < soundfonts.len()
-                                && ui.button("↓").clicked()
-                            {
+                            if i + 1 < soundfonts.len() && ui.button("↓").clicked() {
                                 action = Some(ProjectAction::MoveSoundfontDown(i));
                             }
-                            if i > 0
-                                && ui.button("↑").clicked()
-                            {
+                            if i > 0 && ui.button("↑").clicked() {
                                 action = Some(ProjectAction::MoveSoundfontUp(i));
                             }
                         });
@@ -139,7 +135,11 @@ pub fn audio_render_dialog(
 
             ui.horizontal(|ui| {
                 ui.label("层数:");
-                ui.add(egui::DragValue::new(&mut render.audio_layers).speed(1.0).range(1..=256));
+                ui.add(
+                    egui::DragValue::new(&mut render.audio_layers)
+                        .speed(1.0)
+                        .range(1..=256),
+                );
             });
 
             ui.horizontal(|ui| {

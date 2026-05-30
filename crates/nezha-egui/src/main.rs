@@ -11,7 +11,7 @@ fn main() {
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-                .from_env_lossy(),
+                .parse_lossy("symphonia_format_riff=warn"),
         )
         .init();
 

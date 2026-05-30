@@ -34,11 +34,14 @@ pub(crate) fn build_render_key_order(equal_key_width: bool) -> [u8; 128] {
 ///
 /// Splits the 128-key index range into balanced chunks so that parallel
 /// instance building is well-distributed across CPU threads.
+///
+/// Returns `(ranges, weights)` where `weights[i]` is the estimated instance
+/// count for `ranges[i]` (used for Vec pre-allocation).
 pub(crate) fn build_parallel_key_groups(
     render_keys: &[u8; 128],
     scan_indices: &[usize; 128],
     midi: &dyn NoteSource,
-) -> Vec<std::ops::Range<usize>> {
+) -> (Vec<std::ops::Range<usize>>, Vec<usize>) {
     let mut total_weight = 0usize;
     let mut active_key_count = 0usize;
     let mut weights = [0usize; 128];
@@ -55,7 +58,7 @@ pub(crate) fn build_parallel_key_groups(
 
     if active_key_count <= 1 {
         #[allow(clippy::single_range_in_vec_init)]
-        return vec![0..128];
+        return (vec![0..128], vec![total_weight]);
     }
 
     let thread_budget = rayon::current_num_threads().max(1);
@@ -70,6 +73,7 @@ pub(crate) fn build_parallel_key_groups(
 
     let target_weight = total_weight.div_ceil(desired_groups);
     let mut ranges = Vec::with_capacity(desired_groups);
+    let mut range_weights = Vec::with_capacity(desired_groups);
     let mut start = 0usize;
     let mut acc = 0usize;
 
@@ -84,6 +88,7 @@ pub(crate) fn build_parallel_key_groups(
         let should_split = acc >= target_weight && remaining_keys > remaining_groups;
         if should_split {
             ranges.push(start..(i + 1));
+            range_weights.push(acc);
             start = i + 1;
             acc = 0;
         }
@@ -91,11 +96,13 @@ pub(crate) fn build_parallel_key_groups(
 
     if start < 128 {
         ranges.push(start..128);
+        range_weights.push(acc);
     }
     if ranges.is_empty() {
         ranges.push(0..128);
+        range_weights.push(total_weight);
     }
-    ranges
+    (ranges, range_weights)
 }
 
 #[cfg(test)]
@@ -135,7 +142,8 @@ mod tests {
             render_keys[i as usize] = i;
         }
 
-        let groups = build_parallel_key_groups(&render_keys, &scan_indices, &SingleKeySource);
+        let (groups, _weights) =
+            build_parallel_key_groups(&render_keys, &scan_indices, &SingleKeySource);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0], 0..128);
     }
@@ -154,7 +162,8 @@ mod tests {
 
         let render_keys = std::array::from_fn(|i| i as u8);
         let scan_indices = [0usize; 128];
-        let groups = build_parallel_key_groups(&render_keys, &scan_indices, &NoKeySource);
+        let (groups, _weights) =
+            build_parallel_key_groups(&render_keys, &scan_indices, &NoKeySource);
         assert_eq!(groups.len(), 1, "no active keys = full range");
         assert_eq!(groups[0], 0..128);
     }
@@ -183,7 +192,8 @@ mod tests {
 
         let render_keys = std::array::from_fn(|i| i as u8);
         let scan_indices = [0usize; 128];
-        let groups = build_parallel_key_groups(&render_keys, &scan_indices, &AllKeySource);
+        let (groups, _weights) =
+            build_parallel_key_groups(&render_keys, &scan_indices, &AllKeySource);
         // With 128 active keys and default thread count, we should get multiple groups
         assert!(
             groups.len() > 1,

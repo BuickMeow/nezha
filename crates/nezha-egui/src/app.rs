@@ -140,12 +140,9 @@ impl App {
                 (pre_song + d, pre_song, d)
             })
             .unwrap_or_else(|| (self.project.duration() as f32, 0.0, 0.0));
-        self.project.timeline_state.push_waterfall_clip(
-            midi_idx,
-            duration,
-            song_start,
-            song_dur,
-        );
+        self.project
+            .timeline_state
+            .push_waterfall_clip(midi_idx, duration, song_start, song_dur);
         if let Some(idx) = midi_idx
             && let Some(entry) = self.project.midi.entries.get(idx)
         {
@@ -327,16 +324,17 @@ impl App {
                         .map(|sf| sf.path.clone())
                         .collect();
                     let cpath = self.audio_manager.cached_midi_path.clone();
-                    self.audio_manager.start_render(&audio_manager::RenderParams {
-                        midi_idx: idx,
-                        midi_path: &cpath,
-                        sample_rate: self.project.render.audio_sample_rate,
-                        channels: self.project.render.audio_channels,
-                        use_limiter: self.project.render.audio_use_limiter,
-                        layers: self.project.render.audio_layers,
-                        min_velocity: self.project.render.audio_min_velocity,
-                        soundfont_paths: &sf_paths,
-                    });
+                    self.audio_manager
+                        .start_render(&audio_manager::RenderParams {
+                            midi_idx: idx,
+                            midi_path: &cpath,
+                            sample_rate: self.project.render.audio_sample_rate,
+                            channels: self.project.render.audio_channels,
+                            use_limiter: self.project.render.audio_use_limiter,
+                            layers: self.project.render.audio_layers,
+                            min_velocity: self.project.render.audio_min_velocity,
+                            soundfont_paths: &sf_paths,
+                        });
                 }
             }
         }

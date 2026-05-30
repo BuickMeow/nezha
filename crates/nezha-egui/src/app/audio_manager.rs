@@ -185,8 +185,7 @@ impl AudioManager {
             }
             for track in &mut project.timeline_state.data.tracks {
                 for clip in &mut track.clips {
-                    if clip.audio_idx == Some(idx)
-                        && clip.kind == crate::transport::ClipKind::Audio
+                    if clip.audio_idx == Some(idx) && clip.kind == crate::transport::ClipKind::Audio
                     {
                         clip.end = clip.start + duration_secs as f32;
                     }

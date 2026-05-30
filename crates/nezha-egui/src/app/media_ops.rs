@@ -16,7 +16,9 @@ impl App {
             Some(MediaTypeFilter::Video) => {
                 dialog = dialog.add_filter(
                     "视频文件",
-                    &["mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "ts", "m4v"],
+                    &[
+                        "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "ts", "m4v",
+                    ],
                 );
             }
             Some(MediaTypeFilter::Audio) => {
@@ -35,9 +37,9 @@ impl App {
                 dialog = dialog.add_filter(
                     "所有媒体文件",
                     &[
-                        "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "ts", "m4v",
-                        "mp3", "wav", "flac", "ogg", "aac", "m4a", "wma", "opus",
-                        "png", "jpg", "jpeg", "bmp", "webp", "tiff", "gif",
+                        "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "ts", "m4v", "mp3",
+                        "wav", "flac", "ogg", "aac", "m4a", "wma", "opus", "png", "jpg", "jpeg",
+                        "bmp", "webp", "tiff", "gif",
                     ],
                 );
             }

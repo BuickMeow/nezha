@@ -91,24 +91,25 @@ impl App {
         } else {
             wgpu::LoadOp::Load
         };
-        let mut solid = nezha_compositor::SolidColorLayer::new(
-            self.render_ctx.device(),
-            self.render_ctx.queue(),
-            self.render_ctx.target_format(),
-            color,
-        );
-        let encoder = self.render_ctx.encoder_mut();
-        ctx.compositor.render_layer(
-            encoder,
-            &mut solid,
-            ctx.preview_view,
-            ctx.render_width,
-            ctx.render_height,
-            ctx.time as f64,
-            load_op,
-            clip.common.blend_mode,
-            rect,
-        );
+        let blend_mode = clip.common.blend_mode;
+        let preview_view = ctx.preview_view;
+        let render_width = ctx.render_width;
+        let render_height = ctx.render_height;
+        let time = ctx.time;
+        self.render_ctx
+            .with_solid_color_layer(color, |solid, encoder| {
+                ctx.compositor.render_layer(
+                    encoder,
+                    solid,
+                    preview_view,
+                    render_width,
+                    render_height,
+                    time as f64,
+                    load_op,
+                    blend_mode,
+                    rect,
+                );
+            });
     }
 
     fn render_waterfall_layer(
@@ -194,8 +195,12 @@ impl App {
         rect: (f32, f32, f32, f32),
         is_first: bool,
     ) {
-        let Some(media_idx) = clip.media_idx else { return };
-        let Some(entry) = self.project.media.get(media_idx) else { return };
+        let Some(media_idx) = clip.media_idx else {
+            return;
+        };
+        let Some(entry) = self.project.media.get(media_idx) else {
+            return;
+        };
         let (Some(rgba), w, h) = (&entry.image_rgba, entry.image_width, entry.image_height) else {
             return;
         };
@@ -263,11 +268,17 @@ impl App {
         rect: (f32, f32, f32, f32),
         is_first: bool,
     ) {
-        let Some(media_idx) = clip.media_idx else { return };
-        let Some(entry) = self.project.media.get(media_idx) else { return };
+        let Some(media_idx) = clip.media_idx else {
+            return;
+        };
+        let Some(entry) = self.project.media.get(media_idx) else {
+            return;
+        };
         let w = entry.info.width;
         let h = entry.info.height;
-        if w == 0 || h == 0 { return; }
+        if w == 0 || h == 0 {
+            return;
+        }
 
         let clip_time = (ctx.time - clip.start).max(0.0) as f64;
         let frame = match self.project.media.get_video_frame(media_idx, clip_time) {
@@ -331,6 +342,11 @@ impl App {
         }
     }
 
+    /// Compute MIDI statistics using binary search per key.
+    ///
+    /// For black MIDI with millions of notes, the old O(total_notes) scan was
+    /// catastrophic. This uses `partition_point` for `total_notes` and `nps`,
+    /// and a bounded scan for `polyphony`.
     fn compute_midi_stats(midi: &nezha_core::MidiFile, midi_time: f64) -> (u64, u64, u64) {
         let mut total_notes = 0u64;
         let mut polyphony = 0u64;
@@ -338,22 +354,24 @@ impl App {
         let window_start = (midi_time - 1.0).max(0.0);
 
         for key_notes in &midi.key_notes {
-            for note in key_notes {
-                let start = note.start as f64;
-                let end = note.end as f64;
+            if key_notes.is_empty() {
+                continue;
+            }
 
-                if start > midi_time {
-                    break;
-                }
+            // Binary search: first note with start > midi_time
+            let upper = key_notes.partition_point(|n| n.start > midi_time);
+            total_notes += upper as u64;
 
-                total_notes += 1;
+            // Binary search: first note with start > window_start
+            let lower = key_notes.partition_point(|n| n.start > window_start);
+            nps += (upper - lower) as u64;
 
-                if end >= midi_time {
+            // Polyphony: scan notes in [lower..upper] for end >= midi_time.
+            // Since notes overlap randomly, we must check each one in this range.
+            // For black MIDI, this range is typically small relative to total notes.
+            for note in &key_notes[lower..upper] {
+                if note.end >= midi_time {
                     polyphony += 1;
-                }
-
-                if start > window_start {
-                    nps += 1;
                 }
             }
         }
@@ -361,11 +379,7 @@ impl App {
         (total_notes, polyphony, nps)
     }
 
-    fn update_counter_stats(
-        &mut self,
-        counter: &LayerData,
-        midi_time: f64,
-    ) -> CounterStats {
+    fn update_counter_stats(&mut self, counter: &LayerData, midi_time: f64) -> CounterStats {
         let clip_id = counter.clip_id;
         let mut stats = self.counter_stats.remove(&clip_id).unwrap_or_default();
 
@@ -637,13 +651,7 @@ impl App {
             }
         }
 
-        self.render_counter_layers(
-            &mut ctx,
-            &counter_clips,
-            &make_rect,
-            total_instances,
-            fps,
-        );
+        self.render_counter_layers(&mut ctx, &counter_clips, &make_rect, total_instances, fps);
     }
 
     pub(super) fn render_preview(&mut self, ui: &mut egui::Ui) {

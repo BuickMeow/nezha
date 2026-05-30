@@ -5,11 +5,11 @@ use nezha_compositor::{BlendMode, LayerRenderer, blend_state_for, compute_scisso
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferDescriptor, BufferUsages, ColorTargetState,
-    ColorWrites, Device, FragmentState, FrontFace, MultisampleState,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    ShaderModuleDescriptor, ShaderSource, TextureFormat, VertexAttribute,
-    VertexBufferLayout, VertexFormat, VertexState, VertexStepMode,
+    ColorWrites, Device, FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor,
+    ShaderSource, TextureFormat, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
+    VertexStepMode,
 };
 
 use crate::atlas::FontAtlas;
@@ -391,11 +391,8 @@ impl<'a> TextLayer<'a> {
 
         // First pass: measure each line and build glyph positions.
         let lines: Vec<&str> = self.text.lines().collect();
-        let mut line_measurements: Vec<(
-            f32,
-            Vec<(char, f32, crate::atlas::GlyphInfo)>,
-        )>
-        = Vec::new();
+        let mut line_measurements: Vec<(f32, Vec<(char, f32, crate::atlas::GlyphInfo)>)> =
+            Vec::new();
 
         for line in &lines {
             let mut pen_x = 0.0f32;
@@ -447,9 +444,7 @@ impl<'a> TextLayer<'a> {
                 Alignment::TopRight | Alignment::BottomRight => -_line_width,
             };
             let offset_y = match self.alignment {
-                Alignment::TopLeft | Alignment::TopRight => {
-                    line_idx as f32 * line_height
-                }
+                Alignment::TopLeft | Alignment::TopRight => line_idx as f32 * line_height,
                 Alignment::BottomLeft | Alignment::BottomRight => {
                     -(total_height - line_idx as f32 * line_height)
                 }
@@ -548,8 +543,7 @@ impl<'a> TextLayer<'a> {
         }
 
         self.queue
-            .write_buffer(
-                &self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+            .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
     }
 }
 

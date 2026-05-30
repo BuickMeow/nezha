@@ -45,10 +45,8 @@ impl KeySeekIndex {
         if self.block_prefix_max_end.is_empty() || notes.is_empty() {
             return 0;
         }
-        let mut block = 0;
-        while block < self.block_prefix_max_end.len() && self.block_prefix_max_end[block] <= time {
-            block += 1;
-        }
+        // Binary search: find first block whose max_end > time.
+        let block = self.block_prefix_max_end.partition_point(|&v| v <= time);
         let start = block.saturating_sub(1) * SEEK_INDEX_BLOCK_SIZE;
         let end = notes.len().min(start + SEEK_INDEX_BLOCK_SIZE);
         let mut scan = start;
@@ -62,12 +60,10 @@ impl KeySeekIndex {
         if self.block_prefix_max_end_tick.is_empty() || notes.is_empty() {
             return 0;
         }
-        let mut block = 0;
-        while block < self.block_prefix_max_end_tick.len()
-            && self.block_prefix_max_end_tick[block] <= tick
-        {
-            block += 1;
-        }
+        // Binary search: find first block whose max_end_tick > tick.
+        let block = self
+            .block_prefix_max_end_tick
+            .partition_point(|&v| v <= tick);
         let start = block.saturating_sub(1) * SEEK_INDEX_BLOCK_SIZE;
         let end = notes.len().min(start + SEEK_INDEX_BLOCK_SIZE);
         let mut scan = start;
@@ -130,7 +126,7 @@ pub(crate) fn advance_scan_indices(
     if let Some(seek_index) = seek_index {
         state
             .scan_indices
-            .par_iter_mut()
+            .iter_mut()
             .enumerate()
             .for_each(|(key, scan_slot)| {
                 let notes = midi.key_notes(key as u8);
@@ -142,7 +138,7 @@ pub(crate) fn advance_scan_indices(
         }
         state
             .scan_indices
-            .par_iter_mut()
+            .iter_mut()
             .enumerate()
             .for_each(|(key, scan_slot)| {
                 let notes = midi.key_notes(key as u8);

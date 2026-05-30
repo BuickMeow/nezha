@@ -1,24 +1,32 @@
+use crate::transport::TimelineDrawContext;
 use crate::transport::controller::TimelineCommand;
 use crate::transport::hit_test::{is_content_hit, playhead_hit_rect};
 use crate::transport::timecode::snap_to_frame;
-use crate::transport::TimelineDrawContext;
 use eframe::egui;
 
 pub fn draw_playhead(ctx: &mut TimelineDrawContext<'_>, current_time: f32) {
     let timeline_rect = ctx.layout.timeline_rect;
-    let playhead_x = ctx.state.view.screen_x_for_time(&timeline_rect, current_time);
+    let playhead_x = ctx
+        .state
+        .view
+        .screen_x_for_time(&timeline_rect, current_time);
     let hit_rect = playhead_hit_rect(ctx.layout, &ctx.state.view, current_time);
-    let hovering_playhead = ctx.response.hover_pos().is_some_and(|p| hit_rect.contains(p));
+    let hovering_playhead = ctx
+        .response
+        .hover_pos()
+        .is_some_and(|p| hit_rect.contains(p));
 
     if ctx.response.drag_started_by(egui::PointerButton::Primary)
         && hovering_playhead
         && !ctx.ui.input(|i| i.modifiers.shift)
         && ctx.state.interaction.scrollbar_drag.is_none()
     {
-        ctx.commands.push(TimelineCommand::SetPlayheadDragging(true));
+        ctx.commands
+            .push(TimelineCommand::SetPlayheadDragging(true));
     }
     if !ctx.response.dragged_by(egui::PointerButton::Primary) {
-        ctx.commands.push(TimelineCommand::SetPlayheadDragging(false));
+        ctx.commands
+            .push(TimelineCommand::SetPlayheadDragging(false));
     }
 
     if ctx.state.interaction.dragging_playhead

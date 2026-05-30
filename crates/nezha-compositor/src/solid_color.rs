@@ -131,22 +131,24 @@ impl LayerRenderer for SolidColorLayer {
 
     fn render(&mut self, params: crate::layer::LayerRenderParams<'_>) {
         let (sx, sy, sw, sh) = compute_scissor_rect(params.rect, params.width, params.height);
-        let mut pass = params.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("solid_color_pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: params.target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: params.load_op,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-            timestamp_writes: None,
-        });
+        let mut pass = params
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("solid_color_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: params.target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: params.load_op,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+                timestamp_writes: None,
+            });
         pass.set_scissor_rect(sx, sy, sw, sh);
 
         let pipeline = self.pipelines.get(&params.blend_mode).unwrap_or_else(|| {

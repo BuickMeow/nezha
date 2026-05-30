@@ -24,5 +24,3 @@ pub const MIN_INSTANCE_BUFFER_CAPACITY: usize = 4_096;
 /// Puffin profiling server port.
 #[cfg(feature = "profiling")]
 pub const PUFFIN_PORT: u16 = 8585;
-
-

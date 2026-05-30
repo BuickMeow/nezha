@@ -1,7 +1,7 @@
 use eframe::egui;
 
-use super::types::{Track, TrackClip, TrackKind, ClipKind};
 use super::interaction::TimelineInteraction;
+use super::types::{ClipKind, Track, TrackClip, TrackKind};
 
 pub fn next_video_track_name(tracks: &[Track]) -> String {
     let count = tracks.iter().filter(|t| t.kind == TrackKind::Video).count();
@@ -82,15 +82,9 @@ impl TimelineData {
                 c.name = format!("计数器 {}", type_count);
                 c
             }
-            ClipKind::Audio => {
-                TrackClip::new_audio(id, format!("音频 {}", type_count), 0, 5.0)
-            }
-            ClipKind::Image => {
-                TrackClip::new_image(id, format!("图片 {}", type_count), 0, 5.0)
-            }
-            ClipKind::Video => {
-                TrackClip::new_video(id, format!("视频 {}", type_count), 0, 5.0)
-            }
+            ClipKind::Audio => TrackClip::new_audio(id, format!("音频 {}", type_count), 0, 5.0),
+            ClipKind::Image => TrackClip::new_image(id, format!("图片 {}", type_count), 0, 5.0),
+            ClipKind::Video => TrackClip::new_video(id, format!("视频 {}", type_count), 0, 5.0),
         };
         clip.end = if duration > 0.0 { duration } else { 5.0 };
 

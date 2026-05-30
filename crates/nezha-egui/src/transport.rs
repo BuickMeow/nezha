@@ -37,12 +37,12 @@ mod types;
 mod view;
 
 pub use data::{next_audio_track_name, next_video_track_name};
-pub use interaction::{ClipDragMode, ClipDragState, ScrollbarDrag, TimelineInteraction};
+pub use interaction::{ClipDragMode, ClipDragState, ScrollbarDrag};
 pub use model::TimelineState;
+pub use nezha_compositor::BlendMode;
 pub use theme::ThemeColors;
 pub use types::{ClipKind, LayerCommon, Track, TrackClip, TrackKind};
 pub use view::TimelineView;
-pub use nezha_compositor::BlendMode;
 
 use controller::{TimelineCommand, apply_timeline_commands};
 use controls::draw_controls;

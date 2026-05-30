@@ -277,7 +277,8 @@ impl App {
                         if smoothed_fps == 0.0 {
                             smoothed_fps = instant_fps;
                         } else {
-                            smoothed_fps = smoothed_fps * Self::EMA_SMOOTHING_PREV + instant_fps * Self::EMA_SMOOTHING_CURR;
+                            smoothed_fps = smoothed_fps * Self::EMA_SMOOTHING_PREV
+                                + instant_fps * Self::EMA_SMOOTHING_CURR;
                         }
                         last_stat_time = now;
                         frames_since_stat = 0;
@@ -303,7 +304,8 @@ impl App {
                         if smoothed_fps == 0.0 {
                             smoothed_fps = instant_fps;
                         } else {
-                            smoothed_fps = smoothed_fps * Self::EMA_SMOOTHING_PREV + instant_fps * Self::EMA_SMOOTHING_CURR;
+                            smoothed_fps = smoothed_fps * Self::EMA_SMOOTHING_PREV
+                                + instant_fps * Self::EMA_SMOOTHING_CURR;
                         }
                     }
                 }

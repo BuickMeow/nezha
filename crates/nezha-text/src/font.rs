@@ -49,7 +49,10 @@ mod tests {
 
         let px = 16.0;
         let lm = font.line_metrics(px).unwrap();
-        println!("ascent={:.2} descent={:.2} line_gap={:.2}", lm.ascent, lm.descent, lm.line_gap);
+        println!(
+            "ascent={:.2} descent={:.2} line_gap={:.2}",
+            lm.ascent, lm.descent, lm.line_gap
+        );
 
         let units_per_em = font.inner.units_per_em().unwrap_or(1000.0);
         let scale = PxScale::from(px);

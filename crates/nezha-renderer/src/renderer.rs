@@ -1,4 +1,5 @@
 use nezha_compositor::compute_scissor_rect;
+use std::sync::Arc;
 use wgpu::*;
 
 use crate::buffer::{self, InstanceBufferSlot};
@@ -6,6 +7,7 @@ use crate::constants::MAX_INSTANCE_COUNT;
 use crate::constants::MIN_INSTANCE_BUFFER_CAPACITY;
 use crate::gpu_timer::GpuTimer;
 use crate::instances;
+use crate::key_order;
 use crate::keyboard;
 use crate::pipeline::RenderPipelineState;
 use crate::scan::NoteSeekIndex;
@@ -35,10 +37,12 @@ pub struct Renderer {
     cached_layouts: Vec<(f32, f32)>,
     cached_layout_width: u32,
     cached_layout_equal_key_width: bool,
+    cached_render_keys: [u8; 128],
+    cached_render_keys_eq_width: bool,
     current_batch_counts: Vec<usize>,
     current_note_count: usize,
     pub state: MidiRenderState,
-    pub seek_index: Option<NoteSeekIndex>,
+    pub seek_index: Option<Arc<NoteSeekIndex>>,
 }
 
 impl Renderer {
@@ -63,6 +67,8 @@ impl Renderer {
             cached_layouts: Vec::new(),
             cached_layout_width: 0,
             cached_layout_equal_key_width: false,
+            cached_render_keys: std::array::from_fn(|i| i as u8),
+            cached_render_keys_eq_width: false,
             current_batch_counts: Vec::new(),
             current_note_count: 0,
             state: MidiRenderState::default(),
@@ -106,6 +112,7 @@ impl Renderer {
         let mut instances = std::mem::take(&mut self.instance_scratch);
         instances.clear();
         self.ensure_cached_key_layouts(width, style.equal_key_width);
+        self.ensure_cached_render_keys(style.equal_key_width);
         let layouts = &self.cached_layouts;
 
         self.current_note_count = match midi {
@@ -119,8 +126,9 @@ impl Renderer {
                     speed,
                     midi: m,
                     state: &mut self.state,
-                    seek_index: self.seek_index.as_ref(),
+                    seek_index: self.seek_index.as_deref(),
                     style,
+                    render_keys: &self.cached_render_keys,
                 };
                 instances::build_instances(&mut params)
             }
@@ -231,7 +239,7 @@ impl Renderer {
 
     pub fn upload_note_data(&mut self, source: &dyn NoteSource) {
         profile_scope!("upload_note_data");
-        self.seek_index = Some(NoteSeekIndex::build(source));
+        self.seek_index = Some(Arc::new(NoteSeekIndex::build(source)));
     }
 
     pub fn clear_note_data(&mut self) {
@@ -263,6 +271,13 @@ impl Renderer {
             self.cached_layouts = keyboard::compute_key_layouts(width, equal_key_width);
             self.cached_layout_width = width;
             self.cached_layout_equal_key_width = equal_key_width;
+        }
+    }
+
+    fn ensure_cached_render_keys(&mut self, equal_key_width: bool) {
+        if self.cached_render_keys_eq_width != equal_key_width {
+            self.cached_render_keys = key_order::build_render_key_order(equal_key_width);
+            self.cached_render_keys_eq_width = equal_key_width;
         }
     }
 }

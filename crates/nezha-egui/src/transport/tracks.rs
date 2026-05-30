@@ -10,12 +10,14 @@ use eframe::egui;
 
 pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -> (f32, bool) {
     let mut clip_clicked = false;
-    let has_video = ctx.state
+    let has_video = ctx
+        .state
         .data
         .tracks
         .iter()
         .any(|track| track.kind == TrackKind::Video);
-    let has_audio = ctx.state
+    let has_audio = ctx
+        .state
         .data
         .tracks
         .iter()

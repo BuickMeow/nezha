@@ -19,7 +19,10 @@ pub enum ClipKind {
 
 impl ClipKind {
     pub fn is_video_track_kind(&self) -> bool {
-        matches!(self, Self::Waterfall | Self::SolidColor | Self::Counter | Self::Image | Self::Video)
+        matches!(
+            self,
+            Self::Waterfall | Self::SolidColor | Self::Counter | Self::Image | Self::Video
+        )
     }
 }
 
@@ -216,7 +219,8 @@ impl TrackClip {
         }
         let fps_f = fps.max(1) as f32;
         let song_end_time = self.song_start_time + self.song_duration;
-        self.content_start_offset = ((self.song_start_time - self.start).max(0.0) * fps_f).round() as u32;
+        self.content_start_offset =
+            ((self.song_start_time - self.start).max(0.0) * fps_f).round() as u32;
         self.content_end_offset = ((self.end - song_end_time).max(0.0) * fps_f).round() as u32;
     }
 }

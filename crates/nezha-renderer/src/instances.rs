@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 
 use crate::constants::{MIN_SPEED, PIXELS_PER_SEC_BASE};
-use crate::key_order::{build_parallel_key_groups, build_render_key_order};
+use crate::key_order::build_parallel_key_groups;
 use crate::keyboard;
 use crate::scan::{NoteSeekIndex, advance_scan_indices, scroll_tick_for_mode};
 use crate::source::NoteSource;
@@ -17,9 +17,9 @@ pub(crate) struct KeyChunkBuildResult {
 }
 
 impl KeyChunkBuildResult {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn with_capacity(estimated: usize) -> Self {
         Self {
-            instances: Vec::new(),
+            instances: Vec::with_capacity(estimated),
             active_keys: [false; 128],
             active_colors: [[0.0; 3]; 128],
         }
@@ -38,6 +38,7 @@ pub(crate) struct BuildInstancesParams<'a> {
     pub state: &'a mut MidiRenderState,
     pub seek_index: Option<&'a NoteSeekIndex>,
     pub style: &'a RenderStyle,
+    pub render_keys: &'a [u8; 128],
 }
 
 /// Build note instances for the current frame.
@@ -57,13 +58,13 @@ pub(crate) fn build_instances(p: &mut BuildInstancesParams<'_>) -> usize {
         p.seek_index,
     );
     let scan_indices = p.state.scan_indices;
-    let render_keys = build_render_key_order(p.style.equal_key_width);
+    let render_keys = p.render_keys;
 
     match p.style.render_mode {
         RenderMode::TimeBased => build_instances_time(
             p.instances,
             p.layouts,
-            &render_keys,
+            render_keys,
             &scan_indices,
             &mut active_keys,
             &mut active_colors,
@@ -76,7 +77,7 @@ pub(crate) fn build_instances(p: &mut BuildInstancesParams<'_>) -> usize {
         RenderMode::TickBased => build_instances_tick(
             p.instances,
             p.layouts,
-            &render_keys,
+            render_keys,
             &scan_indices,
             &mut active_keys,
             &mut active_colors,
@@ -163,11 +164,12 @@ fn build_instances_parallel(
     active_colors: &mut [[f32; 3]; 128],
     per_key_fn: impl Fn(&mut KeyChunkBuildResult, u8, usize) + Sync,
 ) {
-    let key_groups = build_parallel_key_groups(render_keys, scan_indices, midi);
+    let (key_groups, weights) = build_parallel_key_groups(render_keys, scan_indices, midi);
     let chunk_results = key_groups
         .into_par_iter()
-        .map(|range| {
-            let mut result = KeyChunkBuildResult::new();
+        .zip(weights)
+        .map(|(range, weight)| {
+            let mut result = KeyChunkBuildResult::with_capacity(weight);
             for &key in &render_keys[range] {
                 per_key_fn(&mut result, key, scan_indices[key as usize]);
             }
@@ -207,7 +209,16 @@ fn build_instances_time(
         active_colors,
         |result, key, scan| {
             append_key_instances_time(
-                result, key, layouts, scan, time, time_top, time_bottom, screen_top, pps, midi,
+                result,
+                key,
+                layouts,
+                scan,
+                time,
+                time_top,
+                time_bottom,
+                screen_top,
+                pps,
+                midi,
                 style,
             );
         },
@@ -247,8 +258,17 @@ fn build_instances_tick(
         active_colors,
         |result, key, scan| {
             append_key_instances_tick(
-                result, key, layouts, scan, time, tick_at_top, scroll_tick, screen_bottom, ppt,
-                midi, style,
+                result,
+                key,
+                layouts,
+                scan,
+                time,
+                tick_at_top,
+                scroll_tick,
+                screen_bottom,
+                ppt,
+                midi,
+                style,
             );
         },
     );
@@ -292,9 +312,17 @@ fn append_key_instances_time(
         let note_bottom = (screen_top - note.start * pps) as f32;
         let note_top = (screen_top - note.end * pps) as f32;
         let h = (note_bottom - note_top).max(1.0);
-        result
-            .instances
-            .push(build_note_instance(x, note_top, w, h, r, g, b, note.velocity, style));
+        result.instances.push(build_note_instance(
+            x,
+            note_top,
+            w,
+            h,
+            r,
+            g,
+            b,
+            note.velocity,
+            style,
+        ));
     }
 }
 
@@ -336,9 +364,17 @@ fn append_key_instances_tick(
         let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
         let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
         let h = (note_bottom - note_top).max(1.0);
-        result
-            .instances
-            .push(build_note_instance(x, note_top, w, h, r, g, b, note.velocity, style));
+        result.instances.push(build_note_instance(
+            x,
+            note_top,
+            w,
+            h,
+            r,
+            g,
+            b,
+            note.velocity,
+            style,
+        ));
     }
 }
 
@@ -348,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_key_chunk_build_result_new() {
-        let result = KeyChunkBuildResult::new();
+        let result = KeyChunkBuildResult::with_capacity(0);
         assert!(result.instances.is_empty());
         assert_eq!(result.active_keys, [false; 128]);
         for c in &result.active_colors {
@@ -358,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_key_chunk_build_result_accumulate() {
-        let mut result = KeyChunkBuildResult::new();
+        let mut result = KeyChunkBuildResult::with_capacity(16);
 
         result.active_keys[60] = true;
         result.active_colors[60] = [1.0, 0.0, 0.0];

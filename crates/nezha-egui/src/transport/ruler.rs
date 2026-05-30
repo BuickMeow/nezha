@@ -1,9 +1,9 @@
+use crate::transport::TimelineDrawContext;
 use crate::transport::controller::TimelineCommand;
 use crate::transport::hit_test::is_ruler_hit;
 use crate::transport::timecode::{
     font, format_timecode_frames, format_timecode_seconds, snap_to_frame,
 };
-use crate::transport::TimelineDrawContext;
 use eframe::egui;
 
 pub fn draw_ruler(ctx: &mut TimelineDrawContext<'_>, _current_time: f32) {

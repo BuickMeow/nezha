@@ -87,11 +87,16 @@ impl StreamingDecoder {
 
         let child = Command::new(&ffmpeg)
             .args([
-                "-v", "quiet",
-                "-ss", &format!("{:.4}", seek_secs),
-                "-i", &self.path,
-                "-f", "rawvideo",
-                "-pix_fmt", "rgba",
+                "-v",
+                "quiet",
+                "-ss",
+                &format!("{:.4}", seek_secs),
+                "-i",
+                &self.path,
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgba",
                 "-",
             ])
             .stdin(Stdio::null())
@@ -178,8 +183,12 @@ impl StreamingDecoder {
         }
     }
 
-    pub fn width(&self) -> u32 { self.width }
-    pub fn height(&self) -> u32 { self.height }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 }
 
 impl Drop for StreamingDecoder {

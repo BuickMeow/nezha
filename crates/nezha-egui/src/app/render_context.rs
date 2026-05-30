@@ -12,7 +12,8 @@ pub struct RenderContext {
     preview: PreviewTarget,
     frame_encoder: FrameEncoder,
     waterfall_renderers: HashMap<usize, nezha_renderer::Renderer>,
-    seek_indices: HashMap<usize, nezha_renderer::NoteSeekIndex>,
+    seek_indices: HashMap<usize, Arc<nezha_renderer::NoteSeekIndex>>,
+    solid_color_layer: Option<nezha_compositor::SolidColorLayer>,
 }
 
 impl RenderContext {
@@ -35,6 +36,7 @@ impl RenderContext {
             frame_encoder: FrameEncoder::default(),
             waterfall_renderers: HashMap::new(),
             seek_indices: HashMap::new(),
+            solid_color_layer: None,
         }
     }
 
@@ -102,7 +104,7 @@ impl RenderContext {
     ) -> &mut nezha_renderer::Renderer {
         self.seek_indices
             .entry(midi_idx)
-            .or_insert_with(|| nezha_renderer::NoteSeekIndex::build(midi));
+            .or_insert_with(|| Arc::new(nezha_renderer::NoteSeekIndex::build(midi)));
         let seek_index = self.seek_indices.get(&midi_idx).cloned();
 
         self.waterfall_renderers.entry(clip_id).or_insert_with(|| {
@@ -123,6 +125,29 @@ impl RenderContext {
         let encoder = self.frame_encoder.encoder_mut();
         let renderer = self.waterfall_renderers.get_mut(&clip_id).unwrap();
         f(renderer, encoder);
+    }
+
+    /// Access the cached `SolidColorLayer` and `CommandEncoder` simultaneously.
+    ///
+    /// This avoids recreating GPU resources (shader, pipelines, bind groups)
+    /// every frame — only the uniform buffer is updated via `set_color`.
+    pub fn with_solid_color_layer(
+        &mut self,
+        color: [f64; 4],
+        f: impl FnOnce(&mut nezha_compositor::SolidColorLayer, &mut wgpu::CommandEncoder),
+    ) {
+        if self.solid_color_layer.is_none() {
+            self.solid_color_layer = Some(nezha_compositor::SolidColorLayer::new(
+                &self.wgpu_state.device,
+                &self.wgpu_state.queue,
+                self.wgpu_state.target_format,
+                color,
+            ));
+        }
+        let layer = self.solid_color_layer.as_mut().unwrap();
+        layer.set_color(&self.wgpu_state.queue, color);
+        let encoder = self.frame_encoder.encoder_mut();
+        f(layer, encoder);
     }
 
     pub fn reset_midi_state(&mut self) {

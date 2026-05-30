@@ -36,12 +36,7 @@ impl MediaStore {
 
     pub fn add_video(&mut self, info: MediaInfo) -> usize {
         let idx = self.entries.len();
-        let decoder = StreamingDecoder::new(
-            &info.path,
-            info.width,
-            info.height,
-            info.fps,
-        );
+        let decoder = StreamingDecoder::new(&info.path, info.width, info.height, info.fps);
         self.video_decoders.insert(idx, decoder);
         self.entries.push(MediaEntry {
             info,
@@ -72,11 +67,7 @@ impl MediaStore {
         decoder.get_frame(time_secs)
     }
 
-    pub fn decode_audio(
-        &self,
-        media_idx: usize,
-        target_sample_rate: u32,
-    ) -> Option<DecodedAudio> {
+    pub fn decode_audio(&self, media_idx: usize, target_sample_rate: u32) -> Option<DecodedAudio> {
         let entry = self.entries.get(media_idx)?;
         if entry.info.media_type != MediaType::Audio {
             return None;

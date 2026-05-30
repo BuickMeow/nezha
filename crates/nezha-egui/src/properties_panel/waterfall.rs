@@ -32,7 +32,7 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
                     .and_then(|n| n.to_str())
                     .unwrap_or(&entry.path);
                 let selected = clip.midi_idx == Some(idx);
-                    if ui.selectable_label(selected, name).clicked() {
+                if ui.selectable_label(selected, name).clicked() {
                     clip.midi_idx = Some(idx);
                     // 切换到新 MIDI 时自动更新 clip 长度和偏移
                     if let Some(entry) = midi_files.get(idx) {

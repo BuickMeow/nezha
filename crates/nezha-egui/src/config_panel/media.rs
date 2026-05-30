@@ -1,7 +1,7 @@
+use crate::app::project_state::AudioStore;
 use crate::app::project_state::MediaStore;
 use crate::config_panel::ConfigAction;
 use crate::transport::TimelineState;
-use crate::app::project_state::AudioStore;
 use eframe::egui;
 use nezha_media::MediaType;
 
@@ -43,19 +43,20 @@ pub fn show(
                 let spacing = ui.spacing().item_spacing.x * 3.0;
                 let reserved = btn_width + duration_width + icon_width + spacing;
                 let available = ui.available_width() - reserved;
-                let label = egui::Label::new(format!("{} {}", icon, name))
-                    .truncate();
-                ui.add_sized([available.max(20.0), ui.text_style_height(&egui::TextStyle::Body)], label);
+                let label = egui::Label::new(format!("{} {}", icon, name)).truncate();
+                ui.add_sized(
+                    [
+                        available.max(20.0),
+                        ui.text_style_height(&egui::TextStyle::Body),
+                    ],
+                    label,
+                );
                 ui.label(
                     egui::RichText::new(&duration_text)
                         .small()
                         .color(egui::Color32::GRAY),
                 );
-                if ui
-                    .button("➕")
-                    .on_hover_text("添加到时间线")
-                    .clicked()
-                {
+                if ui.button("➕").on_hover_text("添加到时间线").clicked() {
                     action = Some(ConfigAction::AddMediaToTimeline(idx));
                 }
                 if ui.button("🗑").on_hover_text("移除素材").clicked() {

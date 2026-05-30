@@ -3,7 +3,11 @@
 use crate::transport::TrackClip;
 use eframe::egui;
 
-pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[crate::app::project_state::MidiEntry]) {
+pub fn show(
+    ui: &mut egui::Ui,
+    clip: &mut TrackClip,
+    midi_files: &[crate::app::project_state::MidiEntry],
+) {
     ui.heading("计数器");
     ui.add_space(2.0);
 
@@ -30,7 +34,10 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[crate::app::p
         )
         .show_ui(ui, |ui| {
             for (idx, name) in midi_names.iter().enumerate() {
-                if ui.selectable_label(clip.midi_idx == Some(idx), name).clicked() {
+                if ui
+                    .selectable_label(clip.midi_idx == Some(idx), name)
+                    .clicked()
+                {
                     clip.midi_idx = Some(idx);
                 }
             }
@@ -149,9 +156,7 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[crate::app::p
     ui.add_space(4.0);
 
     // ── 零填充 ──
-    ui.checkbox(&mut clip.zero_padding,
-        "启用零填充",
-    );
+    ui.checkbox(&mut clip.zero_padding, "启用零填充");
 
     ui.add_space(8.0);
 
@@ -203,7 +208,8 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[crate::app::p
                 clip.outline_color.b(),
             ];
             ui.color_edit_button_srgb(&mut outline_rgb);
-            clip.outline_color = egui::Color32::from_rgb(outline_rgb[0], outline_rgb[1], outline_rgb[2]);
+            clip.outline_color =
+                egui::Color32::from_rgb(outline_rgb[0], outline_rgb[1], outline_rgb[2]);
         });
     }
 

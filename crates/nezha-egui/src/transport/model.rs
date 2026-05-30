@@ -35,7 +35,9 @@ impl TimelineState {
         song_duration: f32,
     ) {
         let fps = self.fps;
-        let id = self.data.push_waterfall_clip(midi_idx, duration, song_start_time, song_duration);
+        let id = self
+            .data
+            .push_waterfall_clip(midi_idx, duration, song_start_time, song_duration);
         if let Some(clip) = self.data.find_clip_mut(id) {
             clip.update_content_offsets(fps);
         }

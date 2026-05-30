@@ -95,9 +95,13 @@ pub fn render(template: &str, vars: &TemplateVars, cfg: &FormatConfig) -> String
     };
 
     let _bpm_fmt = if cfg.zero_padding {
-        format!("{:0>width_int$}.{:0>width_dec$}", "", "",
+        format!(
+            "{:0>width_int$}.{:0>width_dec$}",
+            "",
+            "",
             width_int = cfg.bpm_int_pad,
-            width_dec = cfg.bpm_dec_pad)
+            width_dec = cfg.bpm_dec_pad
+        )
     } else {
         "0.00".to_string()
     };
@@ -140,7 +144,7 @@ pub fn render(template: &str, vars: &TemplateVars, cfg: &FormatConfig) -> String
         let dec_str = format!("{:0>pad_dec$}", dec_part);
         let sign = if int_part < 0 { "-" } else { "" };
         if sep.is_empty() || int_part.abs() < 1000 {
-            format!("{}{}.{}" , sign, int_str, dec_str)
+            format!("{}{}.{}", sign, int_str, dec_str)
         } else {
             let mut out = String::new();
             let digits: Vec<char> = int_str.chars().collect();
@@ -240,7 +244,13 @@ pub fn format_time_mmss_frame(seconds: f64, frame: u64, fps: u32) -> String {
     let mins = total_secs / 60;
     let secs = total_secs % 60;
     let fps_digits = fps.to_string().len();
-    format!("{:02}:{:02};{:0>width$}", mins, secs, frame, width = fps_digits)
+    format!(
+        "{:02}:{:02};{:0>width$}",
+        mins,
+        secs,
+        frame,
+        width = fps_digits
+    )
 }
 
 #[cfg(test)]

@@ -7,7 +7,8 @@ pub fn draw_scrollbar(ctx: &mut TimelineDrawContext<'_>) {
     let scrollbar_rect = ctx.layout.scrollbar_rect;
     let content_width = ctx.layout.content_width;
 
-    ctx.painter.rect_filled(scrollbar_rect, 2.0, ctx.c.scrollbar_bg);
+    ctx.painter
+        .rect_filled(scrollbar_rect, 2.0, ctx.c.scrollbar_bg);
     ctx.painter.rect_stroke(
         scrollbar_rect,
         2.0,
@@ -22,12 +23,15 @@ pub fn draw_scrollbar(ctx: &mut TimelineDrawContext<'_>) {
     let (visible_start, visible_end) = ctx.state.view.visible_range(content_width);
     let vis_start = visible_start.clamp(0.0, ctx.duration);
     let vis_end = visible_end.clamp(vis_start, ctx.duration);
-    let Some(hit_areas) = scrollbar_hit_areas(ctx.layout, ctx.metrics, ctx.duration, &ctx.state.view) else {
+    let Some(hit_areas) =
+        scrollbar_hit_areas(ctx.layout, ctx.metrics, ctx.duration, &ctx.state.view)
+    else {
         return;
     };
     let thumb_rect = hit_areas.thumb_rect;
 
-    ctx.painter.rect_filled(thumb_rect, 2.0, ctx.c.scrollbar_thumb);
+    ctx.painter
+        .rect_filled(thumb_rect, 2.0, ctx.c.scrollbar_thumb);
     if let Some(left) = hit_areas.left_handle {
         ctx.painter.rect_filled(left, 1.0, ctx.c.scrollbar_handle);
         let center = left.center();
@@ -143,7 +147,8 @@ pub fn draw_scrollbar(ctx: &mut TimelineDrawContext<'_>) {
                 let time_offset = mouse_time - anchor_time;
                 let visible_dur = vis_end - vis_start;
                 ctx.commands.push(TimelineCommand::SetScrollOffset(
-                    (anchor_vis_start + time_offset).clamp(0.0, (ctx.duration - visible_dur).max(0.0)),
+                    (anchor_vis_start + time_offset)
+                        .clamp(0.0, (ctx.duration - visible_dur).max(0.0)),
                 ));
             }
             ScrollbarDrag::LeftEdge => {
@@ -155,7 +160,8 @@ pub fn draw_scrollbar(ctx: &mut TimelineDrawContext<'_>) {
                 });
             }
             ScrollbarDrag::RightEdge => {
-                let new_end = mouse_time.clamp(vis_start + 1.0 / ctx.fps.max(1) as f32, ctx.duration);
+                let new_end =
+                    mouse_time.clamp(vis_start + 1.0 / ctx.fps.max(1) as f32, ctx.duration);
                 let new_zoom = content_width / (new_end - vis_start);
                 ctx.commands.push(TimelineCommand::SetZoomAndScroll {
                     zoom: new_zoom,

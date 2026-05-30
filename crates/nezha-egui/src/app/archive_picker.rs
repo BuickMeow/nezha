@@ -48,7 +48,8 @@ impl App {
             match result {
                 Ok((archive, entries)) => {
                     if entries.is_empty() {
-                        self.project.last_error = Some(AppError::Other("压缩包内没有找到 MIDI 文件".into()));
+                        self.project.last_error =
+                            Some(AppError::Other("压缩包内没有找到 MIDI 文件".into()));
                         self.archive_picker = None;
                         return;
                     }
@@ -77,8 +78,7 @@ impl App {
                                 });
                             }
                             Err(e) => {
-                                self.project.last_error =
-                                    Some(AppError::archive_read(e));
+                                self.project.last_error = Some(AppError::archive_read(e));
                             }
                         }
                         self.archive_picker = None;
