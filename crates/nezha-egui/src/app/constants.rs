@@ -1,0 +1,9 @@
+pub const DEFAULT_PREVIEW_WIDTH: u32 = 1920;
+pub const DEFAULT_PREVIEW_HEIGHT: u32 = 1080;
+pub const DEFAULT_FPS: u32 = 60;
+pub const DEFAULT_AUDIO_SAMPLE_RATE: u32 = 48000;
+pub const DEFAULT_DURATION_SECS: f64 = 120.0;
+pub const DEFAULT_IMAGE_DURATION_SECS: f32 = 5.0;
+pub const DEFAULT_PRE_SONG_BUFFER: f32 = 3.0;
+pub const DEFAULT_FONT_NAME: &str = "MiSans";
+pub const DEFAULT_FONT_SIZE: u32 = 24;

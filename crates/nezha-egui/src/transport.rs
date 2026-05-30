@@ -4,23 +4,29 @@ use eframe::egui;
 
 mod controller;
 mod controls;
+mod data;
 mod hit_test;
 mod input;
+mod interaction;
 mod layout;
 mod model;
 mod playhead;
 mod ruler;
 mod scrollbar;
+mod selection;
 mod theme;
 mod timecode;
 mod tracks;
+mod types;
+mod view;
 
-pub use model::{
-    BlendMode, ClipDragMode, ClipDragState, ClipKind, LayerCommon, ScrollbarDrag,
-    TimelineInteraction, TimelineState, TimelineView, Track, TrackClip, TrackKind,
-    next_audio_track_name, next_video_track_name,
-};
+pub use data::{next_audio_track_name, next_video_track_name};
+pub use interaction::{ClipDragMode, ClipDragState, ScrollbarDrag, TimelineInteraction};
+pub use model::TimelineState;
 pub use theme::ThemeColors;
+pub use types::{ClipKind, LayerCommon, Track, TrackClip, TrackKind};
+pub use view::TimelineView;
+pub use nezha_compositor::BlendMode;
 
 use controller::{TimelineCommand, apply_timeline_commands};
 use controls::draw_controls;
@@ -54,10 +60,8 @@ pub fn show(
     let layout = TimelineLayout::new(timeline_rect, &state.view, &metrics);
     let fps = state.fps;
 
-    // ── 输入处理 ──
     handle_input(ui, &response, &mut state.view, &layout);
 
-    // 在绘制之前就限制垂直滚动范围，避免绘制时 y 偏移过大
     let total_track_height = state
         .data
         .tracks
@@ -71,7 +75,6 @@ pub fn show(
 
     let layout = TimelineLayout::new(timeline_rect, &state.view, &metrics);
 
-    // ── 滚动条 ──
     draw_scrollbar(
         ui,
         &painter,
@@ -86,7 +89,6 @@ pub fn show(
         &mut commands,
     );
 
-    // 使用裁剪 painter，防止轨道滚动到标尺区域上方
     let track_painter = ui.painter_at(egui::Rect::from_min_max(
         egui::pos2(timeline_rect.min.x, layout.ruler_rect.max.y),
         egui::pos2(timeline_rect.max.x, layout.content_bottom),
@@ -101,12 +103,10 @@ pub fn show(
         &mut commands,
     );
 
-    // Click on timeline background (not on clip) → deselect
     if response.clicked() && !clip_clicked {
         commands.push(TimelineCommand::ClearSelection);
     }
 
-    // ── 标尺 ──（放在轨道之后绘制，覆盖可能滚动上来的轨道内容）
     draw_ruler(
         ui,
         &painter,
@@ -121,7 +121,6 @@ pub fn show(
         &mut commands,
     );
 
-    // 底部填充（min 取 y 和标尺底部的大值，避免误覆盖标尺）
     if y < layout.content_bottom {
         painter.rect_filled(
             egui::Rect::from_min_max(
@@ -133,7 +132,6 @@ pub fn show(
         );
     }
 
-    // ── 播放头 ──
     draw_playhead(
         ui,
         &painter,
@@ -148,7 +146,6 @@ pub fn show(
         &mut commands,
     );
 
-    // ── 底部控制栏 ──
     draw_controls(
         ui,
         &painter,

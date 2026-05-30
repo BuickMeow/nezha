@@ -202,3 +202,143 @@ fn parse_fps_from_stream(line: &str) -> f64 {
     }
     0.0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_hhmmss_basic() {
+        assert!((parse_hhmmss("00:03:45.67") - 225.67).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_hhmmss_zero() {
+        assert!((parse_hhmmss("00:00:00.00") - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_hhmmss_one_hour() {
+        assert!((parse_hhmmss("01:00:00.00") - 3600.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_hhmmss_invalid() {
+        assert_eq!(parse_hhmmss("invalid"), 0.0);
+    }
+
+    #[test]
+    fn test_parse_duration_from_ffmpeg_output() {
+        let stderr = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'test.mp4':
+  Duration: 00:02:30.50, start: 0.000000, bitrate: 1234 kb/s
+    Stream #0:0: Video: h264, yuv420p, 1920x1080, 30 fps, 30 tbr, 15360 tbn
+    Stream #0:1: Audio: aac, 44100 Hz, stereo";
+        assert!((parse_duration(stderr) - 150.50).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_duration_missing() {
+        assert_eq!(parse_duration("no duration here"), 0.0);
+    }
+
+    #[test]
+    fn test_parse_resolution_1080p() {
+        let line = "Stream #0:0: Video: h264, yuv420p, 1920x1080 [SAR 1:1 DAR 16:9]";
+        assert_eq!(parse_resolution(line), Some((1920, 1080)));
+    }
+
+    #[test]
+    fn test_parse_resolution_720p() {
+        let line = "Video: h264, yuv420p, 1280x720";
+        assert_eq!(parse_resolution(line), Some((1280, 720)));
+    }
+
+    #[test]
+    fn test_parse_resolution_4k() {
+        let line = "Video: hevc, yuv420p10le, 3840x2160";
+        assert_eq!(parse_resolution(line), Some((3840, 2160)));
+    }
+
+    #[test]
+    fn test_parse_resolution_none() {
+        let line = "Stream #0:1: Audio: aac, 44100 Hz, stereo";
+        assert_eq!(parse_resolution(line), None);
+    }
+
+    #[test]
+    fn test_parse_resolution_no_match() {
+        let line = "some random text without resolution";
+        assert_eq!(parse_resolution(line), None);
+    }
+
+    #[test]
+    fn test_parse_fps_30() {
+        let line = "Stream #0:0: Video: h264, yuv420p, 1920x1080, 30 fps, 30 tbr";
+        assert!((parse_fps_from_stream(line) - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_fps_29_97() {
+        let line = "Stream #0:0: Video: h264, yuv420p, 1920x1080, 29.97 fps, 29.97 tbr";
+        assert!((parse_fps_from_stream(line) - 29.97).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_fps_60() {
+        let line = "Video: h264, yuv420p, 3840x2160, 60 fps, 60 tbr, 15360 tbn";
+        assert!((parse_fps_from_stream(line) - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_fps_no_fps() {
+        let line = "Stream #0:1: Audio: aac, 44100 Hz, stereo";
+        assert_eq!(parse_fps_from_stream(line), 0.0);
+    }
+
+    #[test]
+    fn test_parse_video_stream_full() {
+        let stderr = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'test.mp4':
+  Duration: 00:01:00.00, start: 0.000000, bitrate: 5000 kb/s
+    Stream #0:0(und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080 [SAR 1:1 DAR 16:9], 4500 kb/s, 29.97 fps, 29.97 tbr, 16k tbn, 59.94 tbc (default)
+    Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)";
+        let (w, h, fps, has_video) = parse_video_stream(stderr);
+        assert_eq!(w, 1920);
+        assert_eq!(h, 1080);
+        assert!((fps - 29.97).abs() < 0.01);
+        assert!(has_video);
+    }
+
+    #[test]
+    fn test_parse_video_stream_no_video() {
+        let stderr = "Input #0, mp3, from 'test.mp3':
+  Duration: 00:03:00.00, start: 0.000000, bitrate: 320 kb/s
+    Stream #0: Audio: mp3, 44100 Hz, stereo, 320 kb/s";
+        let (w, h, fps, has_video) = parse_video_stream(stderr);
+        assert_eq!(w, 0);
+        assert_eq!(h, 0);
+        assert_eq!(fps, 0.0);
+        assert!(!has_video);
+    }
+
+    #[test]
+    fn test_is_image_extension() {
+        assert!(is_image_extension("png"));
+        assert!(is_image_extension("jpg"));
+        assert!(is_image_extension("jpeg"));
+        assert!(is_image_extension("bmp"));
+        assert!(is_image_extension("webp"));
+        assert!(!is_image_extension("mp4"));
+        assert!(!is_image_extension("mp3"));
+    }
+
+    #[test]
+    fn test_is_audio_extension() {
+        assert!(is_audio_extension("mp3"));
+        assert!(is_audio_extension("wav"));
+        assert!(is_audio_extension("flac"));
+        assert!(is_audio_extension("ogg"));
+        assert!(is_audio_extension("aac"));
+        assert!(!is_audio_extension("mp4"));
+        assert!(!is_audio_extension("png"));
+    }
+}
