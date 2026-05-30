@@ -362,12 +362,20 @@ impl<'a> TextLayer<'a> {
     fn rebuild_vertices(&mut self) {
         let mut vertices = Vec::with_capacity(self.text.len() * 6 * 10);
 
+        // 获取字体真实 metrics，用 ascent 作为 baseline 到顶部的距离。
+        let ascent = self
+            .atlas
+            .line_metrics(self.font_size)
+            .map(|m| m.ascent)
+            .unwrap_or(self.font_size as f32);
+
         // First pass: measure each line and build glyph positions.
         let lines: Vec<&str> = self.text.lines().collect();
         let mut line_measurements: Vec<(
             f32,
             Vec<(char, f32, crate::atlas::GlyphInfo)>,
-        )> = Vec::new();
+        )>
+        = Vec::new();
 
         for line in &lines {
             let mut pen_x = 0.0f32;
@@ -427,7 +435,7 @@ impl<'a> TextLayer<'a> {
             };
 
             let baseline_x = self.position[0] + offset_x;
-            let baseline_y = self.position[1] + self.font_size as f32 + offset_y;
+            let baseline_y = self.position[1] + ascent + offset_y;
 
             for (_c, pen_x, glyph) in glyphs.iter() {
                 if glyph.size[0] > 0.0 && glyph.size[1] > 0.0 {
@@ -519,7 +527,8 @@ impl<'a> TextLayer<'a> {
         }
 
         self.queue
-            .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+            .write_buffer(
+                &self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
     }
 }
 

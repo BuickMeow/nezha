@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
-fontdue = "0.9"
+ab_glyph = "0.2"
 nezha-compositor = { path = "../nezha-compositor" }

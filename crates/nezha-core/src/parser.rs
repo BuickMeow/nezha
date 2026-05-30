@@ -438,5 +438,4 @@ mod tests {
         assert!(!is_black_key(4)); // E
         assert!(!is_black_key(12)); // 下一个 C
     }
-
 }
