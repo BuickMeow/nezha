@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 nezha-core = { path = "../nezha-core" }
-midly = "0.5.3"
-flate2 = "1.1.9"
-thiserror = "2.0.18"
+midly = { workspace = true }
+flate2 = { workspace = true }
+thiserror = { workspace = true }
 encoding_rs = "0.8.35"

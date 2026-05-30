@@ -84,50 +84,13 @@ impl MidiStore {
         }
     }
 
-    /// 根据 MIDI 音符数据计算 content_start_offset 和 content_end_offset（帧数）。
-    #[allow(dead_code)]
-    pub fn calculate_content_offsets(midi: &MidiFile, fps: u32) -> (u32, u32) {
-        let fps_f64 = fps.max(1) as f64;
-
-        let mut first_note_time = f64::MAX;
-        let mut last_note_end = 0.0f64;
-
-        for notes in &midi.key_notes {
-            for note in notes {
-                if note.start < first_note_time {
-                    first_note_time = note.start;
-                }
-                if note.end > last_note_end {
-                    last_note_end = note.end;
-                }
-            }
-        }
-
-        let start_offset = if first_note_time == f64::MAX {
-            0
-        } else {
-            (first_note_time * fps_f64).round() as u32
-        };
-
-        let end_offset = if last_note_end <= 0.0 {
-            0
-        } else {
-            ((midi.duration - last_note_end) * fps_f64).round().max(0.0) as u32
-        };
-
-        (start_offset, end_offset)
-    }
-
-    /// 默认前奏缓冲区（秒），在歌曲开始之前的深蓝色区域。
-    pub const DEFAULT_PRE_SONG_BUFFER: f32 = 0.0;
-
     fn bind_unassigned_waterfalls(&mut self, midi_idx: usize, timeline_state: &mut TimelineState) {
         let midi_duration = self
             .entries
             .get(midi_idx)
             .map(|e| e.file.duration as f32)
             .unwrap_or(5.0);
-        let pre_song = Self::DEFAULT_PRE_SONG_BUFFER;
+        let pre_song = crate::app::constants::DEFAULT_PRE_SONG_BUFFER;
 
         // 先尝试绑定已有的未分配 MIDI 的瀑布流 clip
         for track in &mut timeline_state.data.tracks {

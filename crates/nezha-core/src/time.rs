@@ -21,11 +21,6 @@ pub struct TempoSegment {
     pub micros_per_quarter: u64,
 }
 
-/// 判断 MIDI key 是否为黑键。
-pub const fn is_black_key(key: u8) -> bool {
-    matches!(key % 12, 1 | 3 | 6 | 8 | 10)
-}
-
 /// 将 tick 差值转换为秒数。
 pub fn ticks_to_seconds(dtick: u32, ticks_per_beat: u32, micros_per_quarter: u64) -> f64 {
     (dtick as u64 * micros_per_quarter) as f64 / (ticks_per_beat as f64 * MICROS_PER_SEC)

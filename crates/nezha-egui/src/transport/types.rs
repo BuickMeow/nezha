@@ -89,52 +89,12 @@ pub struct TrackClip {
 }
 
 impl TrackClip {
-    pub fn new_waterfall(id: usize, midi_idx: Option<usize>) -> Self {
+    /// Private base constructor with shared defaults.
+    fn new_base(id: usize, kind: ClipKind, name: String, color: egui::Color32) -> Self {
         Self {
             id,
-            name: format!("默认瀑布流 {}", id),
-            kind: ClipKind::Waterfall,
-            start: 0.0,
-            end: 0.0,
-            color: egui::Color32::from_rgb(80, 150, 220),
-            text_color: egui::Color32::WHITE,
-            template_text: String::new(),
-            text_alignment: nezha_text::TextAlignment::TopLeft,
-            thousand_separator: nezha_text::Separator::Comma,
-            zero_padding: false,
-            font_name: "MiSans".to_string(),
-            bold: false,
-            bold_offset: 1.0,
-            italic: false,
-            italic_slant: 0.0,
-            outline_enabled: false,
-            outline_width: 2.0,
-            outline_color: egui::Color32::BLACK,
-            letter_spacing: 0.0,
-            min_advance: 0.0,
-            speed: 1.0,
-            border_width: 0.1,
-            rounding: 0.0,
-            render_mode: nezha_renderer::RenderMode::TimeBased,
-            equal_key_width: false,
-            midi_idx,
-            audio_idx: None,
-            media_idx: None,
-            keyboard_height_percent: 0.15,
-            font_size: 24,
-            content_start_offset: 0,
-            content_end_offset: 0,
-            song_start_time: 0.0,
-            song_duration: 0.0,
-            common: LayerCommon::default(),
-        }
-    }
-
-    pub fn new_solid_color(id: usize, color: egui::Color32) -> Self {
-        Self {
-            id,
-            name: format!("纯色 {}", id),
-            kind: ClipKind::SolidColor,
+            name,
+            kind,
             start: 0.0,
             end: 0.0,
             color,
@@ -171,172 +131,75 @@ impl TrackClip {
         }
     }
 
-    pub fn new_counter(id: usize, midi_idx: Option<usize>) -> Self {
-        Self {
+    pub fn new_waterfall(id: usize, midi_idx: Option<usize>) -> Self {
+        let mut clip = Self::new_base(
             id,
-            name: format!("计数器 {}", id),
-            kind: ClipKind::Counter,
-            start: 0.0,
-            end: 0.0,
-            color: egui::Color32::from_rgb(0xBB, 0xB0, 0x94),
-            text_color: egui::Color32::WHITE,
-            template_text: "Notes: {nc} / {tn}\nBPM: {bpm}\nNPS: {nps}\nPPQ: {ppq}\nPolyphony: {plph}\nTime: {currtime}\nTicks: {currticks}".to_string(),
-            text_alignment: nezha_text::TextAlignment::TopLeft,
-            thousand_separator: nezha_text::Separator::Comma,
-            zero_padding: false,
-            font_name: "MiSans".to_string(),
-            bold: false,
-            bold_offset: 1.0,
-            italic: false,
-            italic_slant: 0.0,
-            outline_enabled: false,
-            outline_width: 2.0,
-            outline_color: egui::Color32::BLACK,
-            letter_spacing: 0.0,
-            min_advance: 0.0,
-            speed: 1.0,
-            border_width: 0.0,
-            rounding: 0.0,
-            render_mode: nezha_renderer::RenderMode::TimeBased,
-            equal_key_width: false,
-            midi_idx,
-            audio_idx: None,
-            media_idx: None,
-            keyboard_height_percent: 0.0,
-            font_size: 24,
-            content_start_offset: 0,
-            content_end_offset: 0,
-            song_start_time: 0.0,
-            song_duration: 0.0,
-            common: LayerCommon {
-                position_x: 20.0,
-                position_y: 20.0,
-                ..Default::default()
-            },
-        }
+            ClipKind::Waterfall,
+            format!("默认瀑布流 {}", id),
+            egui::Color32::from_rgb(80, 150, 220),
+        );
+        clip.border_width = 0.1;
+        clip.midi_idx = midi_idx;
+        clip.keyboard_height_percent = 0.15;
+        clip
+    }
+
+    pub fn new_solid_color(id: usize, color: egui::Color32) -> Self {
+        Self::new_base(id, ClipKind::SolidColor, format!("纯色 {}", id), color)
+    }
+
+    pub fn new_counter(id: usize, midi_idx: Option<usize>) -> Self {
+        let mut clip = Self::new_base(
+            id,
+            ClipKind::Counter,
+            format!("计数器 {}", id),
+            egui::Color32::from_rgb(0xBB, 0xB0, 0x94),
+        );
+        clip.midi_idx = midi_idx;
+        clip.template_text =
+            "Notes: {nc} / {tn}\nBPM: {bpm}\nNPS: {nps}\nPPQ: {ppq}\nPolyphony: {plph}\nTime: {currtime}\nTicks: {currticks}".to_string();
+        clip.common = LayerCommon {
+            position_x: 20.0,
+            position_y: 20.0,
+            ..Default::default()
+        };
+        clip
     }
 
     pub fn new_audio(id: usize, name: String, audio_idx: usize, duration: f32) -> Self {
-        Self {
+        let mut clip = Self::new_base(
             id,
+            ClipKind::Audio,
             name,
-            kind: ClipKind::Audio,
-            start: 0.0,
-            end: duration,
-            color: egui::Color32::from_rgb(100, 200, 100),
-            text_color: egui::Color32::WHITE,
-            template_text: String::new(),
-            text_alignment: nezha_text::TextAlignment::TopLeft,
-            thousand_separator: nezha_text::Separator::Comma,
-            zero_padding: false,
-            font_name: "MiSans".to_string(),
-            bold: false,
-            bold_offset: 1.0,
-            italic: false,
-            italic_slant: 0.0,
-            outline_enabled: false,
-            outline_width: 2.0,
-            outline_color: egui::Color32::BLACK,
-            letter_spacing: 0.0,
-            min_advance: 0.0,
-            speed: 1.0,
-            border_width: 0.0,
-            rounding: 0.0,
-            render_mode: nezha_renderer::RenderMode::TimeBased,
-            equal_key_width: false,
-            midi_idx: None,
-            audio_idx: Some(audio_idx),
-            media_idx: None,
-            keyboard_height_percent: 0.0,
-            font_size: 24,
-            content_start_offset: 0,
-            content_end_offset: 0,
-            song_start_time: 0.0,
-            song_duration: 0.0,
-            common: LayerCommon::default(),
-        }
+            egui::Color32::from_rgb(100, 200, 100),
+        );
+        clip.end = duration;
+        clip.audio_idx = Some(audio_idx);
+        clip
     }
 
     pub fn new_image(id: usize, name: String, media_idx: usize, duration: f32) -> Self {
-        Self {
+        let mut clip = Self::new_base(
             id,
+            ClipKind::Image,
             name,
-            kind: ClipKind::Image,
-            start: 0.0,
-            end: duration,
-            color: egui::Color32::from_rgb(180, 120, 220),
-            text_color: egui::Color32::WHITE,
-            template_text: String::new(),
-            text_alignment: nezha_text::TextAlignment::TopLeft,
-            thousand_separator: nezha_text::Separator::Comma,
-            zero_padding: false,
-            font_name: "MiSans".to_string(),
-            bold: false,
-            bold_offset: 1.0,
-            italic: false,
-            italic_slant: 0.0,
-            outline_enabled: false,
-            outline_width: 2.0,
-            outline_color: egui::Color32::BLACK,
-            letter_spacing: 0.0,
-            min_advance: 0.0,
-            speed: 1.0,
-            border_width: 0.0,
-            rounding: 0.0,
-            render_mode: nezha_renderer::RenderMode::TimeBased,
-            equal_key_width: false,
-            midi_idx: None,
-            audio_idx: None,
-            media_idx: Some(media_idx),
-            keyboard_height_percent: 0.0,
-            font_size: 24,
-            content_start_offset: 0,
-            content_end_offset: 0,
-            song_start_time: 0.0,
-            song_duration: 0.0,
-            common: LayerCommon::default(),
-        }
+            egui::Color32::from_rgb(180, 120, 220),
+        );
+        clip.end = duration;
+        clip.media_idx = Some(media_idx);
+        clip
     }
 
     pub fn new_video(id: usize, name: String, media_idx: usize, duration: f32) -> Self {
-        Self {
+        let mut clip = Self::new_base(
             id,
+            ClipKind::Video,
             name,
-            kind: ClipKind::Video,
-            start: 0.0,
-            end: duration,
-            color: egui::Color32::from_rgb(220, 160, 60),
-            text_color: egui::Color32::WHITE,
-            template_text: String::new(),
-            text_alignment: nezha_text::TextAlignment::TopLeft,
-            thousand_separator: nezha_text::Separator::Comma,
-            zero_padding: false,
-            font_name: "MiSans".to_string(),
-            bold: false,
-            bold_offset: 1.0,
-            italic: false,
-            italic_slant: 0.0,
-            outline_enabled: false,
-            outline_width: 2.0,
-            outline_color: egui::Color32::BLACK,
-            letter_spacing: 0.0,
-            min_advance: 0.0,
-            speed: 1.0,
-            border_width: 0.0,
-            rounding: 0.0,
-            render_mode: nezha_renderer::RenderMode::TimeBased,
-            equal_key_width: false,
-            midi_idx: None,
-            audio_idx: None,
-            media_idx: Some(media_idx),
-            keyboard_height_percent: 0.0,
-            font_size: 24,
-            content_start_offset: 0,
-            content_end_offset: 0,
-            song_start_time: 0.0,
-            song_duration: 0.0,
-            common: LayerCommon::default(),
-        }
+            egui::Color32::from_rgb(220, 160, 60),
+        );
+        clip.end = duration;
+        clip.media_idx = Some(media_idx);
+        clip
     }
 
     pub fn content_start_time(&self, fps: u32) -> f32 {

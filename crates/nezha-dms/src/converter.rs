@@ -3,14 +3,34 @@ use crate::model::{DmsDocument, RawMidiEventKind};
 use midly::num::{u4, u7, u15, u24, u28};
 use midly::{Format, Header, MetaMessage, MidiMessage, Timing, TrackEvent, TrackEventKind};
 
+/// Owns byte buffers and produces `&'static [u8]` references for midly's API.
+///
+/// # Safety
+///
+/// The returned `&'static [u8]` references are only valid for the lifetime of
+/// the arena. This is sound as long as the arena outlives all consumers of the
+/// references (i.e., `midly::write_std`).
+struct StringArena {
+    bufs: Vec<Vec<u8>>,
+}
+
+impl StringArena {
+    fn new() -> Self {
+        Self { bufs: Vec::new() }
+    }
+
+    fn alloc(&mut self, s: &str) -> &'static [u8] {
+        self.bufs.push(s.as_bytes().to_vec());
+        // SAFETY: The buffer is owned by `self.bufs` and will not be moved or
+        // freed until the arena is dropped. The caller must ensure the arena
+        // outlives all uses of the returned reference.
+        unsafe { &*(self.bufs.last().unwrap().as_slice() as *const [u8]) }
+    }
+}
+
 /// 将 `DmsDocument` 序列化为标准 SMF 字节流。
 pub(crate) fn to_smf_bytes(doc: &DmsDocument) -> Result<Vec<u8>, DmsError> {
-    let mut leaked: Vec<&'static [u8]> = Vec::new();
-    let mut leak = |s: String| -> &'static [u8] {
-        let b: &'static [u8] = Box::leak(s.into_bytes().into_boxed_slice());
-        leaked.push(b);
-        b
-    };
+    let mut arena = StringArena::new();
 
     let mut smf_tracks: Vec<Vec<TrackEvent<'static>>> = Vec::new();
 
@@ -80,13 +100,13 @@ pub(crate) fn to_smf_bytes(doc: &DmsDocument) -> Result<Vec<u8>, DmsError> {
                     },
                 },
                 RawMidiEventKind::TrackName { name } => {
-                    TrackEventKind::Meta(MetaMessage::TrackName(leak(name.clone())))
+                    TrackEventKind::Meta(MetaMessage::TrackName(arena.alloc(name)))
                 }
                 RawMidiEventKind::Lyric { text } => {
-                    TrackEventKind::Meta(MetaMessage::Lyric(leak(text.clone())))
+                    TrackEventKind::Meta(MetaMessage::Lyric(arena.alloc(text)))
                 }
                 RawMidiEventKind::Marker { name } => {
-                    TrackEventKind::Meta(MetaMessage::Marker(leak(name.clone())))
+                    TrackEventKind::Meta(MetaMessage::Marker(arena.alloc(name)))
                 }
                 RawMidiEventKind::EndOfTrack => TrackEventKind::Meta(MetaMessage::EndOfTrack),
             };

@@ -20,14 +20,14 @@ nezha-encoder = { path = "../nezha-encoder" }
 nezha-text = { path = "../nezha-text" }
 nezha-xsynth = { path = "../nezha-xsynth" }
 nezha-media = { path = "../nezha-media" }
-image = "0.25"
-thiserror = "2"
+image = { workspace = true }
+thiserror = { workspace = true }
 pollster = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rfd = "0.17.2"
 cpal = "0.15.3"
-hound = "3.5.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+hound = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 puffin = { workspace = true, optional = true }
 puffin_http = { version = "0.17", optional = true }

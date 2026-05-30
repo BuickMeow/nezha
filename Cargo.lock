@@ -2557,6 +2557,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 2.0.18",
+ "tracing",
  "zip",
 ]
 
@@ -2574,6 +2575,7 @@ version = "0.1.0"
 dependencies = [
  "midly",
  "nezha-types",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 xsynth-core = { git = "https://github.com/BuickMeow/xsynth.git", branch = "dysonsphere" }
 xsynth-soundfonts = { git = "https://github.com/BuickMeow/xsynth.git", branch = "dysonsphere" }
-midly = "0.5.3"
-hound = "3.5.1"
-thiserror = "2"
+midly = { workspace = true }
+hound = { workspace = true }
+thiserror = { workspace = true }

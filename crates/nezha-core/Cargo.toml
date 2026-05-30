@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 nezha-types = { path = "../nezha-types" }
-midly = "0.5.3"
+midly = { workspace = true }
+thiserror = { workspace = true }

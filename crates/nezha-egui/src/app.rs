@@ -35,11 +35,11 @@ pub struct App {
     pub audio_player: AudioPlayback,
     pub audio_manager: AudioManager,
     /// 每个 Counter clip 的运行时统计状态（按 clip_id）。
-    pub counter_stats: std::collections::HashMap<usize, crate::app::preview::CounterStats>,
+    pub(crate) counter_stats: std::collections::HashMap<usize, crate::app::preview::CounterStats>,
     /// 每个视频素材的缓存 ImageLayer（按 media_idx）。
-    pub video_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
+    pub(crate) video_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
     /// 每个图片素材的缓存 ImageLayer（按 media_idx）。
-    pub image_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
+    pub(crate) image_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
 }
 
 impl App {
@@ -86,8 +86,8 @@ impl App {
             .wgpu_render_state
             .as_ref()
             .expect("wgpu backend required");
-        let default_w = nezha_renderer::constants::DEFAULT_PREVIEW_WIDTH;
-        let default_h = nezha_renderer::constants::DEFAULT_PREVIEW_HEIGHT;
+        let default_w = constants::DEFAULT_PREVIEW_WIDTH;
+        let default_h = constants::DEFAULT_PREVIEW_HEIGHT;
 
         let mut app = Self {
             render_ctx: RenderContext::new(cc, default_w, default_h),
@@ -132,7 +132,7 @@ impl App {
 
     fn add_waterfall_with_audio_prompt(&mut self) {
         let midi_idx = self.project.midi.highlighted_idx;
-        let pre_song = crate::app::project_state::MidiStore::DEFAULT_PRE_SONG_BUFFER;
+        let pre_song = crate::app::constants::DEFAULT_PRE_SONG_BUFFER;
         let (duration, song_start, song_dur) = midi_idx
             .and_then(|idx| self.project.midi.entries.get(idx))
             .map(|e| {
@@ -292,6 +292,66 @@ impl App {
             }
         }
     }
+
+    fn show_audio_dialog(&mut self, ui: &mut egui::Ui) {
+        // Audio render settings dialog
+        if self.audio_manager.render_settings_open {
+            use crate::config_panel::project::audio_render_dialog;
+            let mut open = true;
+
+            let result = audio_render_dialog(
+                ui.ctx(),
+                &self.audio_manager.cached_midi_name,
+                &self.project.soundfonts,
+                &mut self.project.render,
+                &mut open,
+            );
+
+            if !open {
+                self.audio_manager.render_settings_open = false;
+            }
+
+            if let Some(crate::config_panel::project::AudioRenderAction::Start) = result {
+                let midi_path = self.audio_manager.cached_midi_path.clone();
+                let midi_idx = self
+                    .project
+                    .midi
+                    .entries
+                    .iter()
+                    .position(|e| e.path == midi_path);
+                if let Some(idx) = midi_idx {
+                    let sf_paths: Vec<_> = self
+                        .project
+                        .soundfonts
+                        .iter()
+                        .map(|sf| sf.path.clone())
+                        .collect();
+                    let cpath = self.audio_manager.cached_midi_path.clone();
+                    self.audio_manager.start_render(
+                        idx,
+                        &cpath,
+                        self.project.render.audio_sample_rate,
+                        self.project.render.audio_channels,
+                        self.project.render.audio_use_limiter,
+                        self.project.render.audio_layers,
+                        self.project.render.audio_min_velocity,
+                        &sf_paths,
+                    );
+                }
+            }
+        }
+
+        // Audio render progress dialog
+        if self.audio_manager.render_progress_open {
+            let (progress, voice) = self.audio_manager.progress_info();
+            crate::config_panel::project::audio_progress_dialog(
+                ui.ctx(),
+                progress,
+                voice,
+                &mut self.audio_manager.render_progress_open,
+            );
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -352,85 +412,7 @@ impl eframe::App for App {
 
         self.save_config();
 
-        // Audio render settings dialog
-        if self.audio_manager.render_settings_open {
-            use crate::config_panel::project::audio_render_dialog;
-            let mut open = true;
-            let mut sample_rate = self.project.render.audio_sample_rate;
-            let mut use_stereo = matches!(
-                self.project.render.audio_channels,
-                nezha_xsynth::ChannelCount::Stereo
-            );
-            let mut use_limiter = self.project.render.audio_use_limiter;
-            let mut layers = self.project.render.audio_layers;
-            let mut min_velocity = self.project.render.audio_min_velocity;
-
-            let result = audio_render_dialog(
-                ui.ctx(),
-                &self.audio_manager.cached_midi_name,
-                &self.project.soundfonts,
-                &mut sample_rate,
-                &mut use_stereo,
-                &mut use_limiter,
-                &mut layers,
-                &mut min_velocity,
-                &mut open,
-            );
-
-            self.project.render.audio_sample_rate = sample_rate;
-            self.project.render.audio_channels = if use_stereo {
-                nezha_xsynth::ChannelCount::Stereo
-            } else {
-                nezha_xsynth::ChannelCount::Mono
-            };
-            self.project.render.audio_use_limiter = use_limiter;
-            self.project.render.audio_layers = layers;
-            self.project.render.audio_min_velocity = min_velocity;
-
-            if !open {
-                self.audio_manager.render_settings_open = false;
-            }
-
-            if let Some(crate::config_panel::project::AudioRenderAction::Start) = result {
-                let midi_path = self.audio_manager.cached_midi_path.clone();
-                let midi_idx = self
-                    .project
-                    .midi
-                    .entries
-                    .iter()
-                    .position(|e| e.path == midi_path);
-                if let Some(idx) = midi_idx {
-                    let sf_paths: Vec<_> = self
-                        .project
-                        .soundfonts
-                        .iter()
-                        .map(|sf| sf.path.clone())
-                        .collect();
-                    let cpath = self.audio_manager.cached_midi_path.clone();
-                    self.audio_manager.start_render(
-                        idx,
-                        &cpath,
-                        self.project.render.audio_sample_rate,
-                        self.project.render.audio_channels,
-                        self.project.render.audio_use_limiter,
-                        self.project.render.audio_layers,
-                        self.project.render.audio_min_velocity,
-                        &sf_paths,
-                    );
-                }
-            }
-        }
-
-        // Audio render progress dialog
-        if self.audio_manager.render_progress_open {
-            let (progress, voice) = self.audio_manager.progress_info();
-            crate::config_panel::project::audio_progress_dialog(
-                ui.ctx(),
-                progress,
-                voice,
-                &mut self.audio_manager.render_progress_open,
-            );
-        }
+        self.show_audio_dialog(ui);
 
         self.show_midi_loading(ui);
         self.show_archive_picker(ui);

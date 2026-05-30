@@ -87,13 +87,18 @@ impl Archive {
                 let mut list = Vec::new();
                 let mut zip = zip.borrow_mut();
                 for i in 0..zip.len() {
-                    if let Ok(file) = zip.by_index(i) {
-                        let name = file.name().to_string();
-                        if is_midi_file(&name) {
-                            list.push(ArchiveEntry {
-                                name,
-                                size: file.size(),
-                            });
+                    match zip.by_index(i) {
+                        Ok(file) => {
+                            let name = file.name().to_string();
+                            if is_midi_file(&name) {
+                                list.push(ArchiveEntry {
+                                    name,
+                                    size: file.size(),
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Skipping ZIP entry at index {i}: {e}");
                         }
                     }
                 }
@@ -157,6 +162,8 @@ impl Archive {
                     let mut buf = Vec::with_capacity(entry.size() as usize);
                     if src.read_to_end(&mut buf).is_ok() {
                         map.insert(entry.name.clone(), buf);
+                    } else {
+                        tracing::warn!("Skipping 7Z entry: read failed");
                     }
                 }
                 Ok(true)

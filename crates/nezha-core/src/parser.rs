@@ -443,7 +443,7 @@ mod tests {
 
     #[test]
     fn test_is_black_key() {
-        use crate::time::is_black_key;
+        use nezha_types::is_black_key;
         assert!(!is_black_key(0)); // C
         assert!(is_black_key(1)); // C#
         assert!(is_black_key(3)); // D#

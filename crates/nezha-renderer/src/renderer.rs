@@ -293,10 +293,6 @@ impl Renderer {
         self.timer.read_timings(&self.device)
     }
 
-    pub fn read_instance_overflowed(&self) -> Option<bool> {
-        Some(false)
-    }
-
     /// Total number of note instances prepared for the current frame（不含键盘琴键）。
     pub fn total_instances(&self) -> usize {
         self.current_note_count

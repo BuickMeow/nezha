@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::app::ThemeMode;
+use crate::app::constants;
 use crate::app::project_state::SoundFontEntry;
 
 /// Persisted application configuration.
@@ -31,10 +32,10 @@ impl Default for Config {
             soundfont_paths: Vec::new(),
             audio_device_name: None,
             theme_mode: "dark".to_string(),
-            render_width: 1920,
-            render_height: 1080,
-            fps: 60,
-            audio_sample_rate: 48000,
+            render_width: constants::DEFAULT_PREVIEW_WIDTH,
+            render_height: constants::DEFAULT_PREVIEW_HEIGHT,
+            fps: constants::DEFAULT_FPS,
+            audio_sample_rate: constants::DEFAULT_AUDIO_SAMPLE_RATE,
             audio_channels: "stereo".to_string(),
             audio_use_limiter: true,
             audio_layers: 32,

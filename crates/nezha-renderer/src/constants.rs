@@ -21,13 +21,8 @@ pub const SEEK_INDEX_BLOCK_SIZE: usize = 256;
 /// Minimum instance buffer capacity (in instances).
 pub const MIN_INSTANCE_BUFFER_CAPACITY: usize = 4_096;
 
-/// Default preview render dimensions.
-pub const DEFAULT_PREVIEW_WIDTH: u32 = 1920;
-pub const DEFAULT_PREVIEW_HEIGHT: u32 = 1080;
-
 /// Puffin profiling server port.
 #[cfg(feature = "profiling")]
 pub const PUFFIN_PORT: u16 = 8585;
 
-/// Glyph atlas texture size (width and height, square).
-pub const ATLAS_SIZE: u32 = 2048;
+

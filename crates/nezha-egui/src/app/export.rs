@@ -197,6 +197,10 @@ impl App {
     ///   - 当 ring 满（3 帧在飞行中）时，必须 wait_read_staging() 释放槽位
     const MAX_BATCH_DURATION_MS: u64 = 20;
     const STAT_UPDATE_INTERVAL: Duration = Duration::from_millis(500);
+    /// EMA smoothing factor for the previous value (higher = smoother).
+    const EMA_SMOOTHING_PREV: f64 = 0.6;
+    /// EMA smoothing factor for the current value.
+    const EMA_SMOOTHING_CURR: f64 = 0.4;
 
     pub(super) fn export_step(&mut self) {
         match self.export_state.take() {
@@ -273,7 +277,7 @@ impl App {
                         if smoothed_fps == 0.0 {
                             smoothed_fps = instant_fps;
                         } else {
-                            smoothed_fps = smoothed_fps * 0.6 + instant_fps * 0.4;
+                            smoothed_fps = smoothed_fps * Self::EMA_SMOOTHING_PREV + instant_fps * Self::EMA_SMOOTHING_CURR;
                         }
                         last_stat_time = now;
                         frames_since_stat = 0;
@@ -299,7 +303,7 @@ impl App {
                         if smoothed_fps == 0.0 {
                             smoothed_fps = instant_fps;
                         } else {
-                            smoothed_fps = smoothed_fps * 0.6 + instant_fps * 0.4;
+                            smoothed_fps = smoothed_fps * Self::EMA_SMOOTHING_PREV + instant_fps * Self::EMA_SMOOTHING_CURR;
                         }
                     }
                 }

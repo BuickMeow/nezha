@@ -36,7 +36,7 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
                     clip.midi_idx = Some(idx);
                     // 切换到新 MIDI 时自动更新 clip 长度和偏移
                     if let Some(entry) = midi_files.get(idx) {
-                        let pre_song = crate::app::project_state::MidiStore::DEFAULT_PRE_SONG_BUFFER;
+                        let pre_song = crate::app::constants::DEFAULT_PRE_SONG_BUFFER;
                         clip.song_start_time = clip.start + pre_song;
                         clip.song_duration = entry.file.duration as f32;
                         clip.end = clip.song_start_time + clip.song_duration;

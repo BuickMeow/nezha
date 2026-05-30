@@ -1,3 +1,6 @@
+// ── Rendering constants ───────────────────────────────────────────────────
+const BORDER_DARKEN_FACTOR: f32 = 0.4;
+
 struct Uniforms {
     time: f32,
     width: f32,
@@ -82,6 +85,17 @@ fn sd_rounded_box(p: vec2<f32>, half: vec2<f32>, r: f32) -> f32 {
     return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - r;
 }
 
+// ── Border + fill alpha compositing (shared) ─────────────────────────────
+fn composite_border_fill(fill_a: f32, border_a: f32, color: vec4<f32>) -> vec4<f32> {
+    let total_a = fill_a + border_a;
+    let border_color = color.rgb * BORDER_DARKEN_FACTOR;
+    var rgb = border_color;
+    if fill_a > 0.0 {
+        rgb = (color.rgb * fill_a + border_color * border_a) / total_a;
+    }
+    return vec4(rgb, color.a * total_a);
+}
+
 // ── Fragment ───────────────────────────────────────────────────────────────
 
 @fragment
@@ -105,13 +119,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             border_a = outer_a - inner_a;
         }
 
-        let total_a = fill_a + border_a;
-        let border_color = in.color.rgb * 0.4;
-        var rgb = border_color;
-        if fill_a > 0.0 {
-            rgb = (in.color.rgb * fill_a + border_color * border_a) / total_a;
-        }
-        return vec4(rgb, in.color.a * total_a);
+        return composite_border_fill(fill_a, border_a, in.color);
     }
 
     // ── Slow path: SDF rounded rectangle ─────────────────────────────────
@@ -131,13 +139,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         border_a = outer_a - inner_a;
     }
 
-    let total_a = fill_a + border_a;
-    let border_color = in.color.rgb * 0.4;
-
-    var rgb = border_color;
-    if fill_a > 0.0 {
-        rgb = (in.color.rgb * fill_a + border_color * border_a) / total_a;
-    }
-
-    return vec4(rgb, in.color.a * total_a);
+    return composite_border_fill(fill_a, border_a, in.color);
 }

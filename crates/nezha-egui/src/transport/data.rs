@@ -157,49 +157,27 @@ impl TimelineData {
 
     pub fn push_image_clip(&mut self, media_idx: usize, name: String, duration: f32) -> usize {
         let id = self.alloc_clip_id();
-        let mut clip = TrackClip::new_image(id, name, media_idx, duration);
-        clip.end = duration;
-
-        let target_kind = TrackKind::Video;
-        if let Some(empty_track) = self
-            .tracks
-            .iter_mut()
-            .find(|t| t.kind == target_kind && t.clips.is_empty())
-        {
-            empty_track.clips.push(clip);
-        } else {
-            let mut track = Track::new_video(&next_video_track_name(&self.tracks));
-            track.clips.push(clip);
-            self.tracks.insert(0, track);
-        }
+        let clip = TrackClip::new_image(id, name, media_idx, duration);
+        self.insert_clip_into_track(clip, TrackKind::Video);
         id
     }
 
     pub fn push_video_clip(&mut self, media_idx: usize, name: String, duration: f32) -> usize {
         let id = self.alloc_clip_id();
-        let mut clip = TrackClip::new_video(id, name, media_idx, duration);
-        clip.end = duration;
-
-        let target_kind = TrackKind::Video;
-        if let Some(empty_track) = self
-            .tracks
-            .iter_mut()
-            .find(|t| t.kind == target_kind && t.clips.is_empty())
-        {
-            empty_track.clips.push(clip);
-        } else {
-            let mut track = Track::new_video(&next_video_track_name(&self.tracks));
-            track.clips.push(clip);
-            self.tracks.insert(0, track);
-        }
+        let clip = TrackClip::new_video(id, name, media_idx, duration);
+        self.insert_clip_into_track(clip, TrackKind::Video);
         id
     }
 
     pub fn push_audio_clip(&mut self, audio_idx: usize, name: String, duration: f32) -> usize {
         let id = self.alloc_clip_id();
         let clip = TrackClip::new_audio(id, name, audio_idx, duration);
+        self.insert_clip_into_track(clip, TrackKind::Audio);
+        id
+    }
 
-        let target_kind = TrackKind::Audio;
+    /// Insert a clip into the first empty track of the given kind, or create a new track.
+    fn insert_clip_into_track(&mut self, clip: TrackClip, target_kind: TrackKind) {
         if let Some(empty_track) = self
             .tracks
             .iter_mut()
@@ -207,11 +185,19 @@ impl TimelineData {
         {
             empty_track.clips.push(clip);
         } else {
-            let mut track = Track::new_audio(&next_audio_track_name(&self.tracks));
+            let track_name = if target_kind == TrackKind::Video {
+                next_video_track_name(&self.tracks)
+            } else {
+                next_audio_track_name(&self.tracks)
+            };
+            let mut track = if target_kind == TrackKind::Video {
+                Track::new_video(&track_name)
+            } else {
+                Track::new_audio(&track_name)
+            };
             track.clips.push(clip);
             self.tracks.insert(0, track);
         }
-        id
     }
 
     pub fn remove_clip(&mut self, clip_id: usize) -> bool {

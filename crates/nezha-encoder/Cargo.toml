@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-thiserror = "2"
-hound = "3.5.1"
+thiserror = { workspace = true }
+hound = { workspace = true }
 crossbeam-channel = "0.5"
-tracing = "0.1"
+tracing = { workspace = true }

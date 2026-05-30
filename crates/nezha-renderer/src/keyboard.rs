@@ -15,6 +15,10 @@ const WHITE_KEY_CORNER_RADIUS: f32 = 2.0;
 const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;
 /// Border width for all keys.
 const KEY_BORDER_WIDTH: f32 = 0.5;
+/// Black key width as a fraction of white key width.
+const BLACK_KEY_WIDTH_RATIO: f64 = 0.65;
+/// Ratio of expanded white key width to equal-width key width (12 semitones / 7 white keys per octave).
+const WHITE_KEY_EXPANSION_RATIO: f32 = 12.0 / 7.0;
 
 /// Compute screen-space x-offset and width for each of the 128 keys.
 ///
@@ -37,7 +41,7 @@ pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f3
         let total_w = width as f64;
         let white_key_count = (0..128u8).filter(|&k| !is_black_key(k)).count() as f64;
         let white_w = total_w / white_key_count;
-        let black_w = white_w * 0.65;
+        let black_w = white_w * BLACK_KEY_WIDTH_RATIO;
 
         let mut white_count = 0usize;
         for key in 0..128u8 {
@@ -87,7 +91,7 @@ pub(crate) fn append_keyboard_instances(
     let mut white_expanded = [(0.0f32, 0.0f32); 128];
     if equal_key_width {
         let key_w = width as f32 / 128.0;
-        let white_w = key_w * (12.0 / 7.0);
+        let white_w = key_w * WHITE_KEY_EXPANSION_RATIO;
         let mut white_idx = 0usize;
         for key in 0..128u8 {
             if is_black_key(key) {

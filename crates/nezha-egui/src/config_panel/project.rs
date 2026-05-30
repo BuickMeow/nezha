@@ -3,7 +3,7 @@
 use eframe::egui;
 use std::path::PathBuf;
 
-use crate::app::project_state::SoundFontEntry;
+use crate::app::project_state::{RenderSettings, SoundFontEntry};
 
 pub fn show(
     ui: &mut egui::Ui,
@@ -85,19 +85,15 @@ pub fn show(
 }
 
 /// Audio render configuration dialog.
-#[allow(clippy::too_many_arguments)]
 pub fn audio_render_dialog(
     ctx: &egui::Context,
     midi_name: &str,
     soundfonts: &[SoundFontEntry],
-    sample_rate: &mut u32,
-    use_stereo: &mut bool,
-    use_limiter: &mut bool,
-    layers: &mut u32,
-    min_velocity: &mut u8,
+    render: &mut RenderSettings,
     open: &mut bool,
 ) -> Option<AudioRenderAction> {
     let mut action = None;
+    let mut use_stereo = matches!(render.audio_channels, nezha_xsynth::ChannelCount::Stereo);
 
     egui::Window::new("音频渲染")
         .open(open)
@@ -126,7 +122,7 @@ pub fn audio_render_dialog(
             ui.horizontal(|ui| {
                 ui.label("采样率:");
                 ui.add(
-                    egui::DragValue::new(sample_rate)
+                    egui::DragValue::new(&mut render.audio_sample_rate)
                         .speed(100.0)
                         .range(8000..=192000),
                 );
@@ -135,20 +131,20 @@ pub fn audio_render_dialog(
 
             ui.horizontal(|ui| {
                 ui.label("声道:");
-                ui.selectable_value(use_stereo, true, "立体声");
-                ui.selectable_value(use_stereo, false, "单声道");
+                ui.selectable_value(&mut use_stereo, true, "立体声");
+                ui.selectable_value(&mut use_stereo, false, "单声道");
             });
 
-            ui.checkbox(use_limiter, "启用限制器");
+            ui.checkbox(&mut render.audio_use_limiter, "启用限制器");
 
             ui.horizontal(|ui| {
                 ui.label("层数:");
-                ui.add(egui::DragValue::new(layers).speed(1.0).range(1..=256));
+                ui.add(egui::DragValue::new(&mut render.audio_layers).speed(1.0).range(1..=256));
             });
 
             ui.horizontal(|ui| {
                 ui.label("最低力度阈值:");
-                ui.add(egui::Slider::new(min_velocity, 0..=127).text(""));
+                ui.add(egui::Slider::new(&mut render.audio_min_velocity, 0..=127).text(""));
             });
             ui.label("力度 ≤ 此值的音符将被筛除（默认 1 表示只筛除力度 0~1）");
 
@@ -166,6 +162,12 @@ pub fn audio_render_dialog(
                 }
             });
         });
+
+    render.audio_channels = if use_stereo {
+        nezha_xsynth::ChannelCount::Stereo
+    } else {
+        nezha_xsynth::ChannelCount::Mono
+    };
 
     if action.is_some() {
         *open = false;

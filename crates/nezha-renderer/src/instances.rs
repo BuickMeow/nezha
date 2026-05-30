@@ -102,7 +102,79 @@ pub(crate) fn build_instances(
     note_count
 }
 
+/// Build a single `NoteInstance` from screen-space coordinates and color.
 #[allow(clippy::too_many_arguments)]
+fn build_note_instance(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+    velocity: u8,
+    style: &RenderStyle,
+) -> NoteInstance {
+    NoteInstance {
+        x,
+        y,
+        w,
+        h,
+        rgba_packed: pack_rgba(r, g, b, 1.0),
+        props_packed: pack_props(
+            style.rounding * f32::min(w, h),
+            style.border_width * w / 2.0,
+        ),
+        velocity: velocity as u32,
+        flags: 0,
+    }
+}
+
+/// Merge parallel chunk results into the shared instance buffer and active-key arrays.
+fn merge_chunk_results(
+    chunk_results: Vec<KeyChunkBuildResult>,
+    instances: &mut Vec<NoteInstance>,
+    active_keys: &mut [bool; 128],
+    active_colors: &mut [[f32; 3]; 128],
+) {
+    for chunk in chunk_results {
+        for key in 0..128usize {
+            if chunk.active_keys[key] {
+                active_keys[key] = true;
+                active_colors[key] = chunk.active_colors[key];
+            }
+        }
+        instances.extend(chunk.instances);
+    }
+}
+
+/// Run the parallel key-group orchestration, calling `per_key_fn` for each key.
+///
+/// This is the shared scaffolding used by both time-based and tick-based builders.
+fn build_instances_parallel(
+    render_keys: &[u8; 128],
+    scan_indices: &[usize; 128],
+    midi: &dyn NoteSource,
+    instances: &mut Vec<NoteInstance>,
+    active_keys: &mut [bool; 128],
+    active_colors: &mut [[f32; 3]; 128],
+    per_key_fn: impl Fn(&mut KeyChunkBuildResult, u8, usize) + Sync,
+) {
+    let key_groups = build_parallel_key_groups(render_keys, scan_indices, midi);
+    let chunk_results = key_groups
+        .into_par_iter()
+        .map(|range| {
+            let mut result = KeyChunkBuildResult::new();
+            for &key in &render_keys[range] {
+                per_key_fn(&mut result, key, scan_indices[key as usize]);
+            }
+            result
+        })
+        .collect::<Vec<_>>();
+
+    merge_chunk_results(chunk_results, instances, active_keys, active_colors);
+}
+
 fn build_instances_time(
     instances: &mut Vec<NoteInstance>,
     layouts: &[(f32, f32)],
@@ -122,42 +194,23 @@ fn build_instances_time(
     let screen_top = effective_h + time * pps;
     let time_top = time + effective_h / pps;
     let time_bottom = time;
-    let key_groups = build_parallel_key_groups(render_keys, scan_indices, midi);
-    let chunk_results = key_groups
-        .into_par_iter()
-        .map(|range| {
-            let mut result = KeyChunkBuildResult::new();
-            for &key in &render_keys[range] {
-                append_key_instances_time(
-                    &mut result,
-                    key,
-                    layouts,
-                    scan_indices[key as usize],
-                    time,
-                    time_top,
-                    time_bottom,
-                    screen_top,
-                    pps,
-                    midi,
-                    style,
-                );
-            }
-            result
-        })
-        .collect::<Vec<_>>();
 
-    for chunk in chunk_results {
-        for key in 0..128usize {
-            if chunk.active_keys[key] {
-                active_keys[key] = true;
-                active_colors[key] = chunk.active_colors[key];
-            }
-        }
-        instances.extend(chunk.instances);
-    }
+    build_instances_parallel(
+        render_keys,
+        scan_indices,
+        midi,
+        instances,
+        active_keys,
+        active_colors,
+        |result, key, scan| {
+            append_key_instances_time(
+                result, key, layouts, scan, time, time_top, time_bottom, screen_top, pps, midi,
+                style,
+            );
+        },
+    );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_instances_tick(
     instances: &mut Vec<NoteInstance>,
     layouts: &[(f32, f32)],
@@ -182,39 +235,20 @@ fn build_instances_tick(
     let tick_at_top = scroll_tick + visible_ticks;
     let screen_bottom = effective_h + scroll_tick * ppt;
 
-    let key_groups = build_parallel_key_groups(render_keys, scan_indices, midi);
-    let chunk_results = key_groups
-        .into_par_iter()
-        .map(|range| {
-            let mut result = KeyChunkBuildResult::new();
-            for &key in &render_keys[range] {
-                append_key_instances_tick(
-                    &mut result,
-                    key,
-                    layouts,
-                    scan_indices[key as usize],
-                    time,
-                    tick_at_top,
-                    scroll_tick,
-                    screen_bottom,
-                    ppt,
-                    midi,
-                    style,
-                );
-            }
-            result
-        })
-        .collect::<Vec<_>>();
-
-    for chunk in chunk_results {
-        for key in 0..128usize {
-            if chunk.active_keys[key] {
-                active_keys[key] = true;
-                active_colors[key] = chunk.active_colors[key];
-            }
-        }
-        instances.extend(chunk.instances);
-    }
+    build_instances_parallel(
+        render_keys,
+        scan_indices,
+        midi,
+        instances,
+        active_keys,
+        active_colors,
+        |result, key, scan| {
+            append_key_instances_tick(
+                result, key, layouts, scan, time, tick_at_top, scroll_tick, screen_bottom, ppt,
+                midi, style,
+            );
+        },
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -255,19 +289,9 @@ fn append_key_instances_time(
         let note_bottom = (screen_top - note.start * pps) as f32;
         let note_top = (screen_top - note.end * pps) as f32;
         let h = (note_bottom - note_top).max(1.0);
-        result.instances.push(NoteInstance {
-            x,
-            y: note_top,
-            w,
-            h,
-            rgba_packed: pack_rgba(r, g, b, 1.0),
-            props_packed: pack_props(
-                style.rounding * f32::min(w, h),
-                style.border_width * w / 2.0,
-            ),
-            velocity: note.velocity as u32,
-            flags: 0,
-        });
+        result
+            .instances
+            .push(build_note_instance(x, note_top, w, h, r, g, b, note.velocity, style));
     }
 }
 
@@ -309,19 +333,9 @@ fn append_key_instances_tick(
         let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
         let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
         let h = (note_bottom - note_top).max(1.0);
-        result.instances.push(NoteInstance {
-            x,
-            y: note_top,
-            w,
-            h,
-            rgba_packed: pack_rgba(r, g, b, 1.0),
-            props_packed: pack_props(
-                style.rounding * f32::min(w, h),
-                style.border_width * w / 2.0,
-            ),
-            velocity: note.velocity as u32,
-            flags: 0,
-        });
+        result
+            .instances
+            .push(build_note_instance(x, note_top, w, h, r, g, b, note.velocity, style));
     }
 }
 
