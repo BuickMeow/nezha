@@ -1,4 +1,5 @@
 use super::App;
+use crate::app::error::AppError;
 use eframe::egui;
 use std::sync::mpsc;
 
@@ -38,7 +39,7 @@ impl App {
                                 self.render_ctx.reset_midi_state();
                             }
                             Err(error) => {
-                                self.project.last_error = Some(format!("MIDI 加载失败: {}", error));
+                                self.project.last_error = Some(AppError::midi_load(error));
                             }
                         }
                         done = true;

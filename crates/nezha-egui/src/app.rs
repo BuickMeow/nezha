@@ -4,6 +4,7 @@ mod archive_picker;
 mod audio_manager;
 mod audio_player;
 pub(crate) mod constants;
+pub(crate) mod error;
 mod export;
 mod loading;
 mod media_ops;
@@ -264,7 +265,8 @@ impl App {
     }
 
     fn show_error_toast(&mut self, ui: &mut egui::Ui) {
-        if let Some(err) = self.project.last_error.clone() {
+        if let Some(ref err) = self.project.last_error {
+            let err_msg = err.to_string();
             let mut dismissed = false;
             let screen_rect = ui.ctx().content_rect();
             egui::Area::new("error_toast".into())
@@ -276,7 +278,7 @@ impl App {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
-                                    egui::RichText::new(&err)
+                                    egui::RichText::new(&err_msg)
                                         .color(egui::Color32::from_rgb(255, 180, 100)),
                                 );
                                 if ui.button("✕").clicked() {

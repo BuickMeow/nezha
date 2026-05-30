@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use crate::app::audio_player::AudioPlayback;
+use crate::app::error::AppError;
 use crate::app::project_state::{AudioEntry, AudioStore, ProjectState};
 use crate::transport::{TrackClip, TrackKind};
 use nezha_xsynth::ChannelCount;
@@ -329,7 +330,7 @@ impl AudioManager {
                 }
 
                 Ok(AudioRenderEvent::Error(e)) => {
-                    project.last_error = Some(format!("音频渲染失败: {}", e));
+                    project.last_error = Some(AppError::audio_render(e));
                     self.render_progress_open = false;
                     self.mixer_tx = None;
                     self.mixer_handle = None;
@@ -338,7 +339,7 @@ impl AudioManager {
 
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    project.last_error = Some("音频渲染线程意外退出".to_string());
+                    project.last_error = Some(AppError::Other("音频渲染线程意外退出".into()));
                     self.render_progress_open = false;
                     self.mixer_tx = None;
                     self.mixer_handle = None;

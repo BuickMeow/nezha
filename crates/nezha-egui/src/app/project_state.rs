@@ -4,6 +4,7 @@ mod midi_store;
 mod playback_state;
 mod render_settings;
 
+use crate::app::error::AppError;
 use crate::transport::TimelineState;
 use nezha_core::MidiFile;
 use std::path::PathBuf;
@@ -29,7 +30,7 @@ pub struct ProjectState {
     pub soundfonts: Vec<SoundFontEntry>,
     pub render: RenderSettings,
     pub timeline_state: TimelineState,
-    pub last_error: Option<String>,
+    pub last_error: Option<AppError>,
 }
 
 impl ProjectState {

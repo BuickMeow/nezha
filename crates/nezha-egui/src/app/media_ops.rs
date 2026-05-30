@@ -1,4 +1,5 @@
 use super::App;
+use crate::app::error::AppError;
 use crate::app::project_state::AudioEntry;
 use nezha_media::MediaType;
 
@@ -53,7 +54,7 @@ impl App {
                                 .add_image(info, img.rgba, img.width, img.height);
                         }
                         Err(e) => {
-                            self.project.last_error = Some(format!("图片加载失败: {}", e));
+                            self.project.last_error = Some(AppError::MediaProbe(e));
                         }
                     },
                     MediaType::Video => {
@@ -64,7 +65,7 @@ impl App {
                     }
                 },
                 Err(e) => {
-                    self.project.last_error = Some(format!("媒体探测失败: {}", e));
+                    self.project.last_error = Some(AppError::MediaProbe(e));
                 }
             }
         }
@@ -113,7 +114,7 @@ impl App {
                         info.duration_secs as f32,
                     );
                 } else {
-                    self.project.last_error = Some("音频解码失败".to_string());
+                    self.project.last_error = Some(AppError::Other("音频解码失败".into()));
                 }
             }
         }

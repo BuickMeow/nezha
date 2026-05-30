@@ -20,6 +20,8 @@ nezha-encoder = { path = "../nezha-encoder" }
 nezha-text = { path = "../nezha-text" }
 nezha-xsynth = { path = "../nezha-xsynth" }
 nezha-media = { path = "../nezha-media" }
+image = "0.25"
+thiserror = "2"
 pollster = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 rfd = "0.17.2"
