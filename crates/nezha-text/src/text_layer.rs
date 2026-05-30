@@ -58,6 +58,10 @@ pub struct TextLayer<'a> {
     // ── 斜体 ──
     italic: bool,
     italic_slant: f32,
+    // ── 字间距 ──
+    letter_spacing: f32,
+    // ── 最小字宽 ──
+    min_advance: f32,
 
     dirty: bool,
 
@@ -221,6 +225,8 @@ impl<'a> TextLayer<'a> {
             bold_offset: 1.0,
             italic: false,
             italic_slant: 0.0,
+            letter_spacing: 0.0,
+            min_advance: 0.0,
             dirty: true,
             vertex_buffer,
             vertex_capacity: 1,
@@ -293,6 +299,20 @@ impl<'a> TextLayer<'a> {
     pub fn set_italic_slant(&mut self, slant: f32) {
         if self.italic_slant != slant {
             self.italic_slant = slant;
+            self.dirty = true;
+        }
+    }
+
+    pub fn set_letter_spacing(&mut self, spacing: f32) {
+        if self.letter_spacing != spacing {
+            self.letter_spacing = spacing;
+            self.dirty = true;
+        }
+    }
+
+    pub fn set_min_advance(&mut self, min: f32) {
+        if self.min_advance != min {
+            self.min_advance = min;
             self.dirty = true;
         }
     }
@@ -389,7 +409,8 @@ impl<'a> TextLayer<'a> {
                 };
                 let info = *glyph;
                 glyphs.push((c, pen_x, info));
-                pen_x += info.advance;
+                let effective_advance = info.advance.max(self.min_advance);
+                pen_x += effective_advance + self.letter_spacing;
             }
             line_measurements.push((pen_x, glyphs));
         }

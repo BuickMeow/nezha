@@ -207,6 +207,26 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[crate::app::p
         });
     }
 
+    ui.add_space(8.0);
+
+    // ── 字间距 ──
+    ui.label("字间距");
+    ui.add(
+        egui::Slider::new(&mut clip.letter_spacing, -5.0..=20.0)
+            .step_by(0.5)
+            .text("px"),
+    );
+
+    ui.add_space(4.0);
+
+    // ── 最小字宽 ──
+    ui.label("最小字宽");
+    ui.add(
+        egui::Slider::new(&mut clip.min_advance, 0.0..=20.0)
+            .step_by(0.5)
+            .text("px"),
+    );
+
     ui.add_space(4.0);
     ui.label(
         egui::RichText::new("计数器会统计关联 MIDI 的实时数据并应用模板。\n位置与合成方式在上方「变换 / 合成」中配置。")

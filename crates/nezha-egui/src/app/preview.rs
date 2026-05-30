@@ -448,6 +448,8 @@ impl App {
             text_layer.set_bold_offset(counter.bold_offset);
             text_layer.set_italic(counter.italic);
             text_layer.set_italic_slant(counter.italic_slant);
+            text_layer.set_letter_spacing(counter.letter_spacing);
+            text_layer.set_min_advance(counter.min_advance);
 
             let rect = make_rect(&counter.common, rw, rh);
             let encoder = self.render_ctx.encoder_mut();

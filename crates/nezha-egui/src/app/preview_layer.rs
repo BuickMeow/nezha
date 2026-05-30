@@ -40,6 +40,10 @@ pub(super) struct LayerData {
     pub outline_width: f32,
     /// 描边颜色。
     pub outline_color: egui::Color32,
+    /// 字间距。
+    pub letter_spacing: f32,
+    /// 最小字符宽度。
+    pub min_advance: f32,
 }
 
 impl From<&TrackClip> for LayerData {
@@ -70,6 +74,8 @@ impl From<&TrackClip> for LayerData {
             outline_enabled: clip.outline_enabled,
             outline_width: clip.outline_width,
             outline_color: clip.outline_color,
+            letter_spacing: clip.letter_spacing,
+            min_advance: clip.min_advance,
         }
     }
 }
