@@ -3,37 +3,29 @@ use crate::transport::hit_test::clip_hit_areas;
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::timecode::font;
 use crate::transport::{
-    ClipDragMode, ClipDragState, ClipKind, ThemeColors, TimelineState, TimelineView, Track,
+    ClipDragMode, ClipDragState, ClipKind, ThemeColors, TimelineDrawContext, TimelineView, Track,
     TrackKind,
 };
 use eframe::egui;
 
-pub fn draw_tracks(
-    ui: &mut egui::Ui,
-    painter: &egui::Painter,
-    c: &ThemeColors,
-    layout: &TimelineLayout,
-    metrics: &TimelineMetrics,
-    state: &TimelineState,
-    commands: &mut Vec<TimelineCommand>,
-) -> (f32, bool) {
+pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -> (f32, bool) {
     let mut clip_clicked = false;
-    let has_video = state
+    let has_video = ctx.state
         .data
         .tracks
         .iter()
         .any(|track| track.kind == TrackKind::Video);
-    let has_audio = state
+    let has_audio = ctx.state
         .data
         .tracks
         .iter()
         .any(|track| track.kind == TrackKind::Audio);
 
-    let mut y = layout.ruler_rect.max.y - state.view.scroll_y;
-    let view = &state.view;
-    let selected_id = state.selection.selected_clip_id;
-    let tracks = &state.data.tracks;
-    let fps = state.fps;
+    let mut y = ctx.layout.ruler_rect.max.y - ctx.state.view.scroll_y;
+    let view = &ctx.state.view;
+    let selected_id = ctx.state.selection.selected_clip_id;
+    let tracks = &ctx.state.data.tracks;
+    let fps = ctx.fps;
 
     if has_video {
         for (track_index, track) in tracks
@@ -42,17 +34,17 @@ pub fn draw_tracks(
             .filter(|(_, track)| track.kind == TrackKind::Video)
         {
             let (new_y, row_clicked) = draw_track_row(
-                ui,
+                ctx.ui,
                 painter,
-                c,
-                layout,
-                metrics,
+                ctx.c,
+                ctx.layout,
+                ctx.metrics,
                 view,
                 selected_id,
                 track,
                 y,
-                &state.interaction.clip_drag,
-                commands,
+                &ctx.state.interaction.clip_drag,
+                ctx.commands,
                 track_index,
                 fps,
             );
@@ -68,17 +60,17 @@ pub fn draw_tracks(
             .filter(|(_, track)| track.kind == TrackKind::Audio)
         {
             let (new_y, row_clicked) = draw_track_row(
-                ui,
+                ctx.ui,
                 painter,
-                c,
-                layout,
-                metrics,
+                ctx.c,
+                ctx.layout,
+                ctx.metrics,
                 view,
                 selected_id,
                 track,
                 y,
-                &state.interaction.clip_drag,
-                commands,
+                &ctx.state.interaction.clip_drag,
+                ctx.commands,
                 track_index,
                 fps,
             );

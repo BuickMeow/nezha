@@ -232,26 +232,16 @@ impl ImageLayer {
 impl LayerRenderer for ImageLayer {
     fn prepare(&mut self, _width: u32, _height: u32, _time: f64) {}
 
-    fn render(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        width: u32,
-        height: u32,
-        _time: f64,
-        load_op: wgpu::LoadOp<wgpu::Color>,
-        blend_mode: BlendMode,
-        rect: (f32, f32, f32, f32),
-    ) {
-        let (sx, sy, sw, sh) = compute_scissor_rect(rect, width, height);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    fn render(&mut self, params: crate::layer::LayerRenderParams<'_>) {
+        let (sx, sy, sw, sh) = compute_scissor_rect(params.rect, params.width, params.height);
+        let mut pass = params.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("image_layer_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
+                view: params.target,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: load_op,
+                    load: params.load_op,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -262,7 +252,7 @@ impl LayerRenderer for ImageLayer {
         });
         pass.set_scissor_rect(sx, sy, sw, sh);
 
-        let pipeline = self.pipelines.get(&blend_mode).unwrap_or_else(|| {
+        let pipeline = self.pipelines.get(&params.blend_mode).unwrap_or_else(|| {
             self.pipelines
                 .get(&BlendMode::Normal)
                 .expect("Normal pipeline always exists")

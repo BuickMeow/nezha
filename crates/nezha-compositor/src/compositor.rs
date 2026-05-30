@@ -1,4 +1,4 @@
-use crate::layer::{BlendMode, Layer, LayerRenderer};
+use crate::layer::{BlendMode, Layer, LayerRenderParams, LayerRenderer};
 
 /// Orchestrates rendering of multiple layers onto a single output target.
 #[derive(Default)]
@@ -13,7 +13,6 @@ impl Compositor {
     ///
     /// This is the primary API for stage 1, where layers are rendered
     /// sequentially due to mutable-borrow constraints on shared renderers.
-    #[allow(clippy::too_many_arguments)]
     pub fn render_layer(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -27,15 +26,21 @@ impl Compositor {
         rect: (f32, f32, f32, f32),
     ) {
         renderer.prepare(width, height, time);
-        renderer.render(
-            encoder, target, width, height, time, load_op, blend_mode, rect,
-        );
+        renderer.render(LayerRenderParams {
+            encoder,
+            target,
+            width,
+            height,
+            time,
+            load_op,
+            blend_mode,
+            rect,
+        });
     }
 
     /// Render multiple layers in batch.
     ///
     /// This is the future-facing API for full layer compositing.
-    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,

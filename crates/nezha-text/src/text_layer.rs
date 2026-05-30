@@ -5,10 +5,10 @@ use nezha_compositor::{BlendMode, LayerRenderer, blend_state_for, compute_scisso
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferDescriptor, BufferUsages, ColorTargetState,
-    ColorWrites, CommandEncoder, Device, FragmentState, FrontFace, LoadOp, MultisampleState,
+    ColorWrites, Device, FragmentState, FrontFace, MultisampleState,
     PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    ShaderModuleDescriptor, ShaderSource, TextureFormat, TextureView, VertexAttribute,
+    ShaderModuleDescriptor, ShaderSource, TextureFormat, VertexAttribute,
     VertexBufferLayout, VertexFormat, VertexState, VertexStepMode,
 };
 
@@ -568,29 +568,19 @@ impl<'a> LayerRenderer for TextLayer<'a> {
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
-    fn render(
-        &mut self,
-        encoder: &mut CommandEncoder,
-        target: &TextureView,
-        width: u32,
-        height: u32,
-        _time: f64,
-        load_op: LoadOp<wgpu::Color>,
-        blend_mode: BlendMode,
-        rect: (f32, f32, f32, f32),
-    ) {
+    fn render(&mut self, params: nezha_compositor::LayerRenderParams<'_>) {
         if self.num_vertices == 0 {
             return;
         }
 
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        let mut pass = params.encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("text_pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
-                view: target,
+                view: params.target,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: load_op,
+                    load: params.load_op,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -600,12 +590,12 @@ impl<'a> LayerRenderer for TextLayer<'a> {
             timestamp_writes: None,
         });
 
-        let (sx, sy, sw, sh) = compute_scissor_rect(rect, width, height);
+        let (sx, sy, sw, sh) = compute_scissor_rect(params.rect, params.width, params.height);
         pass.set_scissor_rect(sx, sy, sw, sh);
 
         let pipeline = self
             .pipelines
-            .get(&blend_mode)
+            .get(&params.blend_mode)
             .unwrap_or_else(|| self.pipelines.get(&BlendMode::Normal).unwrap());
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);

@@ -14,6 +14,14 @@ pub struct CounterStats {
     pub last_midi_time: f64,
 }
 
+struct LayerRenderContext<'a> {
+    compositor: &'a mut Compositor,
+    preview_view: &'a wgpu::TextureView,
+    time: f32,
+    render_width: u32,
+    render_height: u32,
+}
+
 impl App {
     fn default_style(&self) -> nezha_renderer::RenderStyle {
         nezha_renderer::RenderStyle {
@@ -22,62 +30,47 @@ impl App {
         }
     }
 
-    pub(super) fn render_frame_for_export(&mut self, time: f32) {
+    fn render_frame_common(&mut self, time: f32, submit_export: bool) {
         let render_width = self.project.render.width;
         let render_height = self.project.render.height;
         self.render_ctx
             .ensure_preview_size(render_width, render_height);
+
+        if submit_export {
+            self.export_pipeline
+                .ensure_size(render_width, render_height);
+        }
+
         self.render_ctx.begin_pass();
         self.render_all_layers(time, render_width, render_height);
+
+        if submit_export {
+            let encoder = self.render_ctx.take_encoder();
+            let texture = self.render_ctx.preview_texture();
+            let queue = self.render_ctx.queue();
+            self.export_pipeline
+                .copy_and_submit(encoder, texture, queue);
+        }
+    }
+
+    pub(super) fn render_frame_for_export(&mut self, time: f32) {
+        self.render_frame_common(time, false);
         self.render_ctx.end_pass();
     }
 
     pub(super) fn render_frame_combined(&mut self, time: f32) -> Vec<u8> {
-        let render_width = self.project.render.width;
-        let render_height = self.project.render.height;
-        self.render_ctx
-            .ensure_preview_size(render_width, render_height);
-        self.export_pipeline
-            .ensure_size(render_width, render_height);
-
-        self.render_ctx.begin_pass();
-        self.render_all_layers(time, render_width, render_height);
-
-        let encoder = self.render_ctx.take_encoder();
-        let texture = self.render_ctx.preview_texture();
-        let queue = self.render_ctx.queue();
-        self.export_pipeline
-            .copy_and_submit(encoder, texture, queue);
+        self.render_frame_common(time, true);
         self.export_pipeline.wait_read()
     }
 
     pub(super) fn render_frame_pipelined(&mut self, time: f32) {
-        let render_width = self.project.render.width;
-        let render_height = self.project.render.height;
-        self.render_ctx
-            .ensure_preview_size(render_width, render_height);
-        self.export_pipeline
-            .ensure_size(render_width, render_height);
-
-        self.render_ctx.begin_pass();
-        self.render_all_layers(time, render_width, render_height);
-
-        let encoder = self.render_ctx.take_encoder();
-        let texture = self.render_ctx.preview_texture();
-        let queue = self.render_ctx.queue();
-        self.export_pipeline
-            .copy_and_submit(encoder, texture, queue);
+        self.render_frame_common(time, true);
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_solid_color_layer(
         &mut self,
-        compositor: &mut Compositor,
-        preview_view: &wgpu::TextureView,
+        ctx: &mut LayerRenderContext<'_>,
         clip: &LayerData,
-        time: f32,
-        render_width: u32,
-        render_height: u32,
         rect: (f32, f32, f32, f32),
         is_first: bool,
     ) {
@@ -105,28 +98,23 @@ impl App {
             color,
         );
         let encoder = self.render_ctx.encoder_mut();
-        compositor.render_layer(
+        ctx.compositor.render_layer(
             encoder,
             &mut solid,
-            preview_view,
-            render_width,
-            render_height,
-            time as f64,
+            ctx.preview_view,
+            ctx.render_width,
+            ctx.render_height,
+            ctx.time as f64,
             load_op,
             clip.common.blend_mode,
             rect,
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_waterfall_layer(
         &mut self,
-        compositor: &mut Compositor,
-        preview_view: &wgpu::TextureView,
+        ctx: &mut LayerRenderContext<'_>,
         clip: &LayerData,
-        time: f32,
-        render_width: u32,
-        render_height: u32,
         rect: (f32, f32, f32, f32),
         default_palette: [[f32; 3]; 128],
         is_first: bool,
@@ -138,8 +126,8 @@ impl App {
             return 0;
         };
 
-        let clip_time = (time - clip.song_start_time) as f64;
-        let keyboard_height_px = render_height as f32 * clip.keyboard_height_percent;
+        let clip_time = (ctx.time - clip.song_start_time) as f64;
+        let keyboard_height_px = ctx.render_height as f32 * clip.keyboard_height_percent;
         let opacity = clip.common.opacity as f64;
         let clip_style = nezha_renderer::RenderStyle {
             render_mode: clip.render_mode,
@@ -167,12 +155,12 @@ impl App {
             clip.clip_id,
             midi_idx,
             &entry.file,
-            render_width,
+            ctx.render_width,
             clip.equal_key_width,
         );
         renderer.prepare(
-            render_width,
-            render_height,
+            ctx.render_width,
+            ctx.render_height,
             clip_time,
             clip.speed,
             Some(&entry.file),
@@ -184,12 +172,12 @@ impl App {
         self.render_ctx
             .with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
                 let mut wrapper = WaterfallLayer { renderer };
-                compositor.render_layer(
+                ctx.compositor.render_layer(
                     encoder,
                     &mut wrapper,
-                    preview_view,
-                    render_width,
-                    render_height,
+                    ctx.preview_view,
+                    ctx.render_width,
+                    ctx.render_height,
                     clip_time,
                     load_op,
                     blend_mode,
@@ -199,15 +187,10 @@ impl App {
         note_count
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_image_layer(
         &mut self,
-        compositor: &mut Compositor,
-        preview_view: &wgpu::TextureView,
+        ctx: &mut LayerRenderContext<'_>,
         clip: &LayerData,
-        time: f32,
-        render_width: u32,
-        render_height: u32,
         rect: (f32, f32, f32, f32),
         is_first: bool,
     ) {
@@ -237,13 +220,13 @@ impl App {
                 h,
             );
             let encoder = self.render_ctx.encoder_mut();
-            compositor.render_layer(
+            ctx.compositor.render_layer(
                 encoder,
                 layer,
-                preview_view,
-                render_width,
-                render_height,
-                time as f64,
+                ctx.preview_view,
+                ctx.render_width,
+                ctx.render_height,
+                ctx.time as f64,
                 load_op,
                 clip.common.blend_mode,
                 rect,
@@ -258,13 +241,13 @@ impl App {
                 h,
             );
             let encoder = self.render_ctx.encoder_mut();
-            compositor.render_layer(
+            ctx.compositor.render_layer(
                 encoder,
                 &mut layer,
-                preview_view,
-                render_width,
-                render_height,
-                time as f64,
+                ctx.preview_view,
+                ctx.render_width,
+                ctx.render_height,
+                ctx.time as f64,
                 load_op,
                 clip.common.blend_mode,
                 rect,
@@ -273,15 +256,10 @@ impl App {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_video_layer(
         &mut self,
-        compositor: &mut Compositor,
-        preview_view: &wgpu::TextureView,
+        ctx: &mut LayerRenderContext<'_>,
         clip: &LayerData,
-        time: f32,
-        render_width: u32,
-        render_height: u32,
         rect: (f32, f32, f32, f32),
         is_first: bool,
     ) {
@@ -291,7 +269,7 @@ impl App {
         let h = entry.info.height;
         if w == 0 || h == 0 { return; }
 
-        let clip_time = (time - clip.start).max(0.0) as f64;
+        let clip_time = (ctx.time - clip.start).max(0.0) as f64;
         let frame = match self.project.media.get_video_frame(media_idx, clip_time) {
             Some(f) => f,
             None => return,
@@ -317,13 +295,13 @@ impl App {
                 frame.height,
             );
             let encoder = self.render_ctx.encoder_mut();
-            compositor.render_layer(
+            ctx.compositor.render_layer(
                 encoder,
                 layer,
-                preview_view,
-                render_width,
-                render_height,
-                time as f64,
+                ctx.preview_view,
+                ctx.render_width,
+                ctx.render_height,
+                ctx.time as f64,
                 load_op,
                 clip.common.blend_mode,
                 rect,
@@ -338,13 +316,13 @@ impl App {
                 frame.height,
             );
             let encoder = self.render_ctx.encoder_mut();
-            compositor.render_layer(
+            ctx.compositor.render_layer(
                 encoder,
                 &mut layer,
-                preview_view,
-                render_width,
-                render_height,
-                time as f64,
+                ctx.preview_view,
+                ctx.render_width,
+                ctx.render_height,
+                ctx.time as f64,
                 load_op,
                 clip.common.blend_mode,
                 rect,
@@ -410,24 +388,19 @@ impl App {
         result
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_counter_layers(
         &mut self,
-        compositor: &mut Compositor,
-        preview_view: &wgpu::TextureView,
+        ctx: &mut LayerRenderContext<'_>,
         counter_clips: &[LayerData],
-        time: f32,
-        render_width: u32,
-        render_height: u32,
         make_rect: &impl Fn(&LayerCommon, f32, f32) -> (f32, f32, f32, f32),
         total_instances: usize,
         fps: u32,
     ) {
-        let rw = render_width as f32;
-        let rh = render_height as f32;
+        let rw = ctx.render_width as f32;
+        let rh = ctx.render_height as f32;
 
         for counter in counter_clips {
-            let midi_time = (time - counter.song_start_time).max(0.0) as f64;
+            let midi_time = (ctx.time - counter.song_start_time).max(0.0) as f64;
             let stats = self.update_counter_stats(counter, midi_time);
 
             let Some(midi_idx) = counter.midi_idx else {
@@ -581,13 +554,13 @@ impl App {
 
             let rect = make_rect(&counter.common, rw, rh);
             let encoder = self.render_ctx.encoder_mut();
-            compositor.render_layer(
+            ctx.compositor.render_layer(
                 encoder,
                 &mut text_layer,
-                preview_view,
-                render_width,
-                render_height,
-                time as f64,
+                ctx.preview_view,
+                ctx.render_width,
+                ctx.render_height,
+                ctx.time as f64,
                 wgpu::LoadOp::Load,
                 counter.common.blend_mode,
                 rect,
@@ -603,6 +576,13 @@ impl App {
 
         let mut compositor = Compositor::new();
         let preview_view = self.render_ctx.preview_view().clone();
+        let mut ctx = LayerRenderContext {
+            compositor: &mut compositor,
+            preview_view: &preview_view,
+            time,
+            render_width,
+            render_height,
+        };
         let mut is_first = true;
         let mut total_instances = 0usize;
         let mut counter_clips: Vec<LayerData> = Vec::new();
@@ -628,26 +608,13 @@ impl App {
 
             match clip.kind {
                 ClipKind::SolidColor => {
-                    self.render_solid_color_layer(
-                        &mut compositor,
-                        &preview_view,
-                        clip,
-                        time,
-                        render_width,
-                        render_height,
-                        rect,
-                        is_first,
-                    );
+                    self.render_solid_color_layer(&mut ctx, clip, rect, is_first);
                     is_first = false;
                 }
                 ClipKind::Waterfall => {
                     let note_count = self.render_waterfall_layer(
-                        &mut compositor,
-                        &preview_view,
+                        &mut ctx,
                         clip,
-                        time,
-                        render_width,
-                        render_height,
                         rect,
                         default_style.palette,
                         is_first,
@@ -660,41 +627,19 @@ impl App {
                 }
                 ClipKind::Audio => {}
                 ClipKind::Image => {
-                    self.render_image_layer(
-                        &mut compositor,
-                        &preview_view,
-                        clip,
-                        time,
-                        render_width,
-                        render_height,
-                        rect,
-                        is_first,
-                    );
+                    self.render_image_layer(&mut ctx, clip, rect, is_first);
                     is_first = false;
                 }
                 ClipKind::Video => {
-                    self.render_video_layer(
-                        &mut compositor,
-                        &preview_view,
-                        clip,
-                        time,
-                        render_width,
-                        render_height,
-                        rect,
-                        is_first,
-                    );
+                    self.render_video_layer(&mut ctx, clip, rect, is_first);
                     is_first = false;
                 }
             }
         }
 
         self.render_counter_layers(
-            &mut compositor,
-            &preview_view,
+            &mut ctx,
             &counter_clips,
-            time,
-            render_width,
-            render_height,
             &make_rect,
             total_instances,
             fps,

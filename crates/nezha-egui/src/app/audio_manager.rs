@@ -38,6 +38,18 @@ struct RenderState {
 
 // ── Audio manager ──
 
+/// Parameters for [`AudioManager::start_render`].
+pub struct RenderParams<'a> {
+    pub midi_idx: usize,
+    pub midi_path: &'a str,
+    pub sample_rate: u32,
+    pub channels: ChannelCount,
+    pub use_limiter: bool,
+    pub layers: u32,
+    pub min_velocity: u8,
+    pub soundfont_paths: &'a [PathBuf],
+}
+
 pub struct AudioManager {
     render_state: Option<RenderState>,
     pub render_settings_open: bool,
@@ -78,19 +90,8 @@ impl AudioManager {
     }
 
     /// Start the xsynth render in a background thread.
-    #[allow(clippy::too_many_arguments)]
-    pub fn start_render(
-        &mut self,
-        midi_idx: usize,
-        midi_path: &str,
-        sample_rate: u32,
-        channels: ChannelCount,
-        use_limiter: bool,
-        layers: u32,
-        min_velocity: u8,
-        soundfont_paths: &[PathBuf],
-    ) {
-        let midi_data = match std::fs::read(midi_path) {
+    pub fn start_render(&mut self, p: &RenderParams<'_>) {
+        let midi_data = match std::fs::read(p.midi_path) {
             Ok(d) => d,
             Err(e) => {
                 tracing::error!("AudioManager: read MIDI failed: {}", e);
@@ -99,15 +100,15 @@ impl AudioManager {
         };
 
         let config = nezha_xsynth::RenderConfig {
-            sample_rate,
-            channels,
-            use_limiter,
-            layers: Some(layers as usize),
-            min_velocity,
+            sample_rate: p.sample_rate,
+            channels: p.channels,
+            use_limiter: p.use_limiter,
+            layers: Some(p.layers as usize),
+            min_velocity: p.min_velocity,
             ..Default::default()
         };
 
-        let sfonts = soundfont_paths.to_vec();
+        let sfonts = p.soundfont_paths.to_vec();
         let (tx, rx) = mpsc::channel();
         let tx2 = tx.clone();
 
@@ -137,7 +138,7 @@ impl AudioManager {
         });
 
         self.render_state = Some(RenderState {
-            midi_idx,
+            midi_idx: p.midi_idx,
             rx,
             accumulated_pcm: Vec::new(),
             last_progress: 0.0,

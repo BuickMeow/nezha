@@ -26,78 +26,81 @@ impl KeyChunkBuildResult {
     }
 }
 
+/// Parameters for [`build_instances`].
+pub(crate) struct BuildInstancesParams<'a> {
+    pub instances: &'a mut Vec<NoteInstance>,
+    pub layouts: &'a [(f32, f32)],
+    pub width: u32,
+    pub height: u32,
+    pub time: f64,
+    pub speed: f32,
+    pub midi: &'a dyn NoteSource,
+    pub state: &'a mut MidiRenderState,
+    pub seek_index: Option<&'a NoteSeekIndex>,
+    pub style: &'a RenderStyle,
+}
+
 /// Build note instances for the current frame.
 ///
 /// Returns the number of note instances (excluding keyboard overlay instances).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_instances(
-    instances: &mut Vec<NoteInstance>,
-    layouts: &[(f32, f32)],
-    width: u32,
-    height: u32,
-    time: f64,
-    speed: f32,
-    midi: &dyn NoteSource,
-    state: &mut MidiRenderState,
-    seek_index: Option<&NoteSeekIndex>,
-    style: &RenderStyle,
-) -> usize {
+pub(crate) fn build_instances(p: &mut BuildInstancesParams<'_>) -> usize {
     let mut active_keys = [false; 128];
     let mut active_colors = [[0.0f32; 3]; 128];
 
-    let scroll_tick = scroll_tick_for_mode(midi, time, style);
+    let scroll_tick = scroll_tick_for_mode(p.midi, p.time, p.style);
     advance_scan_indices(
-        midi,
-        state,
-        time,
+        p.midi,
+        p.state,
+        p.time,
         scroll_tick,
-        style.render_mode,
-        seek_index,
+        p.style.render_mode,
+        p.seek_index,
     );
-    let scan_indices = state.scan_indices;
-    let render_keys = build_render_key_order(style.equal_key_width);
+    let scan_indices = p.state.scan_indices;
+    let render_keys = build_render_key_order(p.style.equal_key_width);
 
-    match style.render_mode {
+    match p.style.render_mode {
         RenderMode::TimeBased => build_instances_time(
-            instances,
-            layouts,
+            p.instances,
+            p.layouts,
             &render_keys,
             &scan_indices,
             &mut active_keys,
             &mut active_colors,
-            height,
-            time,
-            speed,
-            midi,
-            style,
+            p.height,
+            p.time,
+            p.speed,
+            p.midi,
+            p.style,
         ),
         RenderMode::TickBased => build_instances_tick(
-            instances,
-            layouts,
+            p.instances,
+            p.layouts,
             &render_keys,
             &scan_indices,
             &mut active_keys,
             &mut active_colors,
-            height,
-            time,
-            speed,
-            midi,
-            style,
+            p.height,
+            p.time,
+            p.speed,
+            p.midi,
+            p.style,
         ),
     };
 
-    let note_count = instances.len();
-    if style.keyboard_height > 0.0 {
-        keyboard::append_keyboard_instances(
-            layouts,
-            width,
-            height,
-            style.keyboard_height,
-            style.equal_key_width,
-            &active_keys,
-            &active_colors,
-            instances,
-        );
+    let note_count = p.instances.len();
+    if p.style.keyboard_height > 0.0 {
+        let mut kb_params = keyboard::KeyboardRenderParams {
+            layouts: p.layouts,
+            width: p.width,
+            height: p.height,
+            keyboard_height: p.style.keyboard_height,
+            equal_key_width: p.style.equal_key_width,
+            active_keys: &active_keys,
+            active_colors: &active_colors,
+            out: p.instances,
+        };
+        keyboard::append_keyboard_instances(&mut kb_params);
     }
     note_count
 }

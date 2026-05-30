@@ -109,18 +109,21 @@ impl Renderer {
         let layouts = &self.cached_layouts;
 
         self.current_note_count = match midi {
-            Some(m) => instances::build_instances(
-                &mut instances,
-                layouts,
-                width,
-                height,
-                time,
-                speed,
-                m,
-                &mut self.state,
-                self.seek_index.as_ref(),
-                style,
-            ),
+            Some(m) => {
+                let mut params = instances::BuildInstancesParams {
+                    instances: &mut instances,
+                    layouts,
+                    width,
+                    height,
+                    time,
+                    speed,
+                    midi: m,
+                    state: &mut self.state,
+                    seek_index: self.seek_index.as_ref(),
+                    style,
+                };
+                instances::build_instances(&mut params)
+            }
             None => {
                 instances.push(NoteInstance {
                     x: 0.0,
@@ -226,52 +229,6 @@ impl Renderer {
         }
     }
 
-    /// Render one frame (legacy API).
-    ///
-    /// Prefer using [`Self::prepare`] + [`Self::draw`] for compositor integration.
-    #[allow(clippy::too_many_arguments)]
-    pub fn render(
-        &mut self,
-        encoder: &mut CommandEncoder,
-        target: &TextureView,
-        width: u32,
-        height: u32,
-        time: f64,
-        speed: f32,
-        midi: Option<&dyn NoteSource>,
-        style: &RenderStyle,
-        clear_background: bool,
-    ) {
-        profile_scope!("render");
-        self.prepare(width, height, time, speed, midi, style);
-
-        if let Some(qs) = self.timer.query_set.as_ref() {
-            encoder.write_timestamp(qs, 0);
-            encoder.write_timestamp(qs, 1);
-        }
-
-        let load_op = if clear_background {
-            LoadOp::Clear(Color {
-                r: style.background[0],
-                g: style.background[1],
-                b: style.background[2],
-                a: style.background[3],
-            })
-        } else {
-            LoadOp::Load
-        };
-
-        self.draw(
-            encoder,
-            target,
-            width,
-            height,
-            load_op,
-            (0.0, 0.0, 1.0, 1.0),
-        );
-        self.timer.resolve(encoder);
-    }
-
     pub fn upload_note_data(&mut self, source: &dyn NoteSource) {
         profile_scope!("upload_note_data");
         self.seek_index = Some(NoteSeekIndex::build(source));
@@ -320,18 +277,14 @@ pub struct WaterfallLayer<'a> {
 impl<'a> nezha_compositor::LayerRenderer for WaterfallLayer<'a> {
     fn prepare(&mut self, _width: u32, _height: u32, _time: f64) {}
 
-    fn render(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        width: u32,
-        height: u32,
-        _time: f64,
-        load_op: wgpu::LoadOp<wgpu::Color>,
-        _blend_mode: nezha_compositor::BlendMode,
-        rect: (f32, f32, f32, f32),
-    ) {
-        self.renderer
-            .draw(encoder, target, width, height, load_op, rect);
+    fn render(&mut self, params: nezha_compositor::LayerRenderParams<'_>) {
+        self.renderer.draw(
+            params.encoder,
+            params.target,
+            params.width,
+            params.height,
+            params.load_op,
+            params.rect,
+        );
     }
 }

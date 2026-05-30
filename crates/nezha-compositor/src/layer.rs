@@ -40,6 +40,18 @@ impl<'a> Layer<'a> {
     }
 }
 
+/// Parameters for rendering a single compositor layer.
+pub struct LayerRenderParams<'a> {
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    pub target: &'a wgpu::TextureView,
+    pub width: u32,
+    pub height: u32,
+    pub time: f64,
+    pub load_op: wgpu::LoadOp<wgpu::Color>,
+    pub blend_mode: BlendMode,
+    pub rect: (f32, f32, f32, f32),
+}
+
 /// Trait for renderers that can draw a single compositor layer.
 pub trait LayerRenderer {
     /// Prepare resources before rendering (CPU work, buffer uploads, etc.).
@@ -52,16 +64,5 @@ pub trait LayerRenderer {
     ///
     /// `blend_mode` and `rect` are hints the renderer may use to configure
     /// its pipeline and scissor region.
-    #[allow(clippy::too_many_arguments)]
-    fn render(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
-        width: u32,
-        height: u32,
-        time: f64,
-        load_op: wgpu::LoadOp<wgpu::Color>,
-        blend_mode: BlendMode,
-        rect: (f32, f32, f32, f32),
-    );
+    fn render(&mut self, params: LayerRenderParams<'_>);
 }

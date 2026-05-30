@@ -1,81 +1,67 @@
 use crate::transport::controller::TimelineCommand;
 use crate::transport::hit_test::{is_content_hit, playhead_hit_rect};
-use crate::transport::layout::{TimelineLayout, TimelineMetrics};
 use crate::transport::timecode::snap_to_frame;
-use crate::transport::{ThemeColors, TimelineState};
+use crate::transport::TimelineDrawContext;
 use eframe::egui;
 
-#[allow(clippy::too_many_arguments)]
-pub fn draw_playhead(
-    ui: &egui::Ui,
-    painter: &egui::Painter,
-    c: &ThemeColors,
-    layout: &TimelineLayout,
-    _metrics: &TimelineMetrics,
-    response: &egui::Response,
-    state: &TimelineState,
-    current_time: f32,
-    duration: f32,
-    fps: u32,
-    commands: &mut Vec<TimelineCommand>,
-) {
-    let timeline_rect = layout.timeline_rect;
-    let playhead_x = state.view.screen_x_for_time(&timeline_rect, current_time);
-    let hit_rect = playhead_hit_rect(layout, &state.view, current_time);
-    let hovering_playhead = response.hover_pos().is_some_and(|p| hit_rect.contains(p));
+pub fn draw_playhead(ctx: &mut TimelineDrawContext<'_>, current_time: f32) {
+    let timeline_rect = ctx.layout.timeline_rect;
+    let playhead_x = ctx.state.view.screen_x_for_time(&timeline_rect, current_time);
+    let hit_rect = playhead_hit_rect(ctx.layout, &ctx.state.view, current_time);
+    let hovering_playhead = ctx.response.hover_pos().is_some_and(|p| hit_rect.contains(p));
 
-    if response.drag_started_by(egui::PointerButton::Primary)
+    if ctx.response.drag_started_by(egui::PointerButton::Primary)
         && hovering_playhead
-        && !ui.input(|i| i.modifiers.shift)
-        && state.interaction.scrollbar_drag.is_none()
+        && !ctx.ui.input(|i| i.modifiers.shift)
+        && ctx.state.interaction.scrollbar_drag.is_none()
     {
-        commands.push(TimelineCommand::SetPlayheadDragging(true));
+        ctx.commands.push(TimelineCommand::SetPlayheadDragging(true));
     }
-    if !response.dragged_by(egui::PointerButton::Primary) {
-        commands.push(TimelineCommand::SetPlayheadDragging(false));
+    if !ctx.response.dragged_by(egui::PointerButton::Primary) {
+        ctx.commands.push(TimelineCommand::SetPlayheadDragging(false));
     }
 
-    if state.interaction.dragging_playhead
-        && let Some(mouse_pos) = response.interact_pointer_pos()
+    if ctx.state.interaction.dragging_playhead
+        && let Some(mouse_pos) = ctx.response.interact_pointer_pos()
     {
-        let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
-        commands.push(TimelineCommand::SetCurrentTime(
-            snap_to_frame(new_time, fps).clamp(0.0, duration),
+        let new_time = ctx.state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
+        ctx.commands.push(TimelineCommand::SetCurrentTime(
+            snap_to_frame(new_time, ctx.fps).clamp(0.0, ctx.duration),
         ));
     }
 
     // 空白内容区点击跳转（response.clicked_by 在 Clip 上不触发，
     // 避免干扰选择图层）
-    if response.clicked_by(egui::PointerButton::Primary)
+    if ctx.response.clicked_by(egui::PointerButton::Primary)
         && !hovering_playhead
-        && !ui.input(|i| i.modifiers.shift)
-        && !state.interaction.dragging_playhead
-        && state.interaction.scrollbar_drag.is_none()
-        && let Some(mouse_pos) = response.hover_pos()
-        && is_content_hit(layout, &state.view, mouse_pos)
+        && !ctx.ui.input(|i| i.modifiers.shift)
+        && !ctx.state.interaction.dragging_playhead
+        && ctx.state.interaction.scrollbar_drag.is_none()
+        && let Some(mouse_pos) = ctx.response.hover_pos()
+        && is_content_hit(ctx.layout, &ctx.state.view, mouse_pos)
     {
-        let new_time = state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
-        commands.push(TimelineCommand::SetCurrentTime(
-            snap_to_frame(new_time, fps).clamp(0.0, duration),
+        let new_time = ctx.state.view.time_at_screen_x(&timeline_rect, mouse_pos.x);
+        ctx.commands.push(TimelineCommand::SetCurrentTime(
+            snap_to_frame(new_time, ctx.fps).clamp(0.0, ctx.duration),
         ));
     }
 
-    if playhead_x >= timeline_rect.min.x + state.view.header_width {
-        painter.line_segment(
+    if playhead_x >= timeline_rect.min.x + ctx.state.view.header_width {
+        ctx.painter.line_segment(
             [
                 egui::pos2(playhead_x, timeline_rect.min.y),
-                egui::pos2(playhead_x, layout.controls_rect.min.y),
+                egui::pos2(playhead_x, ctx.layout.controls_rect.min.y),
             ],
-            egui::Stroke::new(2.0, c.playhead),
+            egui::Stroke::new(2.0, ctx.c.playhead),
         );
         let tri = vec![
             egui::pos2(playhead_x - 7.0, timeline_rect.min.y),
             egui::pos2(playhead_x + 7.0, timeline_rect.min.y),
             egui::pos2(playhead_x, timeline_rect.min.y + 9.0),
         ];
-        painter.add(egui::Shape::convex_polygon(
+        ctx.painter.add(egui::Shape::convex_polygon(
             tri,
-            c.playhead,
+            ctx.c.playhead,
             egui::Stroke::NONE,
         ));
     }

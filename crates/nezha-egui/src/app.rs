@@ -24,16 +24,16 @@ pub use render_context::RenderContext;
 pub use ui_state::{ThemeMode, UiState};
 
 pub struct App {
-    pub render_ctx: RenderContext,
-    pub export_pipeline: render_context::export::ExportPipeline,
+    pub(crate) render_ctx: RenderContext,
+    pub(crate) export_pipeline: render_context::export::ExportPipeline,
     pub project: ProjectState,
     pub ui: UiState,
     pub export_state: Option<export::ExportState>,
     midi_loader: Option<MidiLoader>,
     archive_picker: Option<archive_picker::ArchivePickerState>,
-    pub font_atlas: nezha_text::FontAtlas,
-    pub audio_player: AudioPlayback,
-    pub audio_manager: AudioManager,
+    pub(crate) font_atlas: nezha_text::FontAtlas,
+    pub(crate) audio_player: AudioPlayback,
+    pub(crate) audio_manager: AudioManager,
     /// 每个 Counter clip 的运行时统计状态（按 clip_id）。
     pub(crate) counter_stats: std::collections::HashMap<usize, crate::app::preview::CounterStats>,
     /// 每个视频素材的缓存 ImageLayer（按 media_idx）。
@@ -327,16 +327,16 @@ impl App {
                         .map(|sf| sf.path.clone())
                         .collect();
                     let cpath = self.audio_manager.cached_midi_path.clone();
-                    self.audio_manager.start_render(
-                        idx,
-                        &cpath,
-                        self.project.render.audio_sample_rate,
-                        self.project.render.audio_channels,
-                        self.project.render.audio_use_limiter,
-                        self.project.render.audio_layers,
-                        self.project.render.audio_min_velocity,
-                        &sf_paths,
-                    );
+                    self.audio_manager.start_render(&audio_manager::RenderParams {
+                        midi_idx: idx,
+                        midi_path: &cpath,
+                        sample_rate: self.project.render.audio_sample_rate,
+                        channels: self.project.render.audio_channels,
+                        use_limiter: self.project.render.audio_use_limiter,
+                        layers: self.project.render.audio_layers,
+                        min_velocity: self.project.render.audio_min_velocity,
+                        soundfont_paths: &sf_paths,
+                    });
                 }
             }
         }
@@ -354,19 +354,8 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        #[cfg(feature = "profiling")]
-        puffin::GlobalProfiler::lock().new_frame();
-
-        self.ui.theme_mode.apply(ui.ctx());
-        self.handle_input(ui);
-
-        // Audio: poll render thread
-        self.audio_manager
-            .poll(&mut self.project, &mut self.audio_player);
-
-        // Sync audio playback
+impl App {
+    fn sync_audio_playback(&mut self) {
         if self.project.playback.is_playing {
             let audio_clips = self.project.audio_timeline_clips();
             if !self.audio_player.is_playing() {
@@ -397,6 +386,22 @@ impl eframe::App for App {
             tracing::info!("PAUSE at ct={:.3}s", self.project.playback.current_time);
             self.audio_player.pause();
         }
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "profiling")]
+        puffin::GlobalProfiler::lock().new_frame();
+
+        self.ui.theme_mode.apply(ui.ctx());
+        self.handle_input(ui);
+
+        // Audio: poll render thread
+        self.audio_manager
+            .poll(&mut self.project, &mut self.audio_player);
+
+        self.sync_audio_playback();
 
         if self.export_state.is_some() {
             self.export_step();

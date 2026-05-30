@@ -63,34 +63,73 @@ pub(crate) fn compute_key_layouts(width: u32, equal_width: bool) -> Vec<(f32, f3
 
 /// Build vertex instances for the on-screen piano keyboard.
 ///
+/// Parameters for a single keyboard key instance.
+struct KeyInstanceParams<'a> {
+    key: u8,
+    x: f32,
+    w: f32,
+    key_top: f32,
+    height: f32,
+    default_color: (f32, f32, f32),
+    corner_radius: f32,
+    active_keys: &'a [bool; 128],
+    active_colors: &'a [[f32; 3]; 128],
+}
+
+fn build_key_instance(p: &KeyInstanceParams<'_>) -> Option<NoteInstance> {
+    if p.w <= 0.0 {
+        return None;
+    }
+    let (r, g, b) = if p.active_keys[p.key as usize] {
+        let [cr, cg, cb] = p.active_colors[p.key as usize];
+        (cr, cg, cb)
+    } else {
+        p.default_color
+    };
+    Some(NoteInstance {
+        x: p.x,
+        y: p.key_top,
+        w: p.w,
+        h: p.height,
+        rgba_packed: pack_rgba(r, g, b, 1.0),
+        props_packed: pack_props(p.corner_radius, KEY_BORDER_WIDTH),
+        velocity: 0,
+        flags: 0,
+    })
+}
+
+/// Parameters for [`append_keyboard_instances`].
+pub(crate) struct KeyboardRenderParams<'a> {
+    pub layouts: &'a [(f32, f32)],
+    pub width: u32,
+    pub height: u32,
+    pub keyboard_height: f32,
+    pub equal_key_width: bool,
+    pub active_keys: &'a [bool; 128],
+    pub active_colors: &'a [[f32; 3]; 128],
+    pub out: &'a mut Vec<NoteInstance>,
+}
+
+/// Append keyboard key instances to the output buffer.
+///
 /// `active_keys` / `active_colors` should reflect the top-most currently playing
 /// note per key, already resolved by the main waterfall scan.
 ///
 /// When `equal_key_width` is true, the white keys are expanded so that they fill
 /// the entire keyboard bottom without gaps, while black keys keep their original
 /// equal-width positions and are drawn on top.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn append_keyboard_instances(
-    layouts: &[(f32, f32)],
-    width: u32,
-    height: u32,
-    keyboard_height: f32,
-    equal_key_width: bool,
-    active_keys: &[bool; 128],
-    active_colors: &[[f32; 3]; 128],
-    out: &mut Vec<NoteInstance>,
-) {
-    let kh = keyboard_height.max(1.0);
-    let key_top = height as f32 - kh;
+pub(crate) fn append_keyboard_instances(p: &mut KeyboardRenderParams<'_>) {
+    let kh = p.keyboard_height.max(1.0);
+    let key_top = p.height as f32 - kh;
     let black_h = kh * BLACK_KEY_HEIGHT_RATIO;
-    out.reserve(128);
+    p.out.reserve(128);
 
     // In equal-width mode, white keys are drawn with a uniform width of 12/7 key
     // widths so they fully cover the keyboard bottom. Black keys keep their
     // original equal-width positions.
     let mut white_expanded = [(0.0f32, 0.0f32); 128];
-    if equal_key_width {
-        let key_w = width as f32 / 128.0;
+    if p.equal_key_width {
+        let key_w = p.width as f32 / 128.0;
         let white_w = key_w * WHITE_KEY_EXPANSION_RATIO;
         let mut white_idx = 0usize;
         for key in 0..128u8 {
@@ -103,61 +142,28 @@ pub(crate) fn append_keyboard_instances(
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn build_key_instance(
-        key: u8,
-        x: f32,
-        w: f32,
-        key_top: f32,
-        height: f32,
-        default_color: (f32, f32, f32),
-        corner_radius: f32,
-        active_keys: &[bool; 128],
-        active_colors: &[[f32; 3]; 128],
-    ) -> Option<NoteInstance> {
-        if w <= 0.0 {
-            return None;
-        }
-        let (r, g, b) = if active_keys[key as usize] {
-            let [cr, cg, cb] = active_colors[key as usize];
-            (cr, cg, cb)
-        } else {
-            default_color
-        };
-        Some(NoteInstance {
-            x,
-            y: key_top,
-            w,
-            h: height,
-            rgba_packed: pack_rgba(r, g, b, 1.0),
-            props_packed: pack_props(corner_radius, KEY_BORDER_WIDTH),
-            velocity: 0,
-            flags: 0,
-        })
-    }
-
     // White keys first
     for key in 0..128u8 {
         if is_black_key(key) {
             continue;
         }
-        let (x, w) = if equal_key_width {
+        let (x, w) = if p.equal_key_width {
             white_expanded[key as usize]
         } else {
-            layouts[key as usize]
+            p.layouts[key as usize]
         };
-        if let Some(inst) = build_key_instance(
+        if let Some(inst) = build_key_instance(&KeyInstanceParams {
             key,
             x,
             w,
             key_top,
-            kh,
-            WHITE_KEY_COLOR,
-            WHITE_KEY_CORNER_RADIUS,
-            active_keys,
-            active_colors,
-        ) {
-            out.push(inst);
+            height: kh,
+            default_color: WHITE_KEY_COLOR,
+            corner_radius: WHITE_KEY_CORNER_RADIUS,
+            active_keys: p.active_keys,
+            active_colors: p.active_colors,
+        }) {
+            p.out.push(inst);
         }
     }
 
@@ -166,19 +172,19 @@ pub(crate) fn append_keyboard_instances(
         if !is_black_key(key) {
             continue;
         }
-        let (x, w) = layouts[key as usize];
-        if let Some(inst) = build_key_instance(
+        let (x, w) = p.layouts[key as usize];
+        if let Some(inst) = build_key_instance(&KeyInstanceParams {
             key,
             x,
             w,
             key_top,
-            black_h,
-            BLACK_KEY_COLOR,
-            BLACK_KEY_CORNER_RADIUS,
-            active_keys,
-            active_colors,
-        ) {
-            out.push(inst);
+            height: black_h,
+            default_color: BLACK_KEY_COLOR,
+            corner_radius: BLACK_KEY_CORNER_RADIUS,
+            active_keys: p.active_keys,
+            active_colors: p.active_colors,
+        }) {
+            p.out.push(inst);
         }
     }
 }

@@ -1,5 +1,21 @@
 use eframe::egui;
 
+// ── Shared draw context ──
+
+/// Common parameters passed to timeline draw functions.
+pub(crate) struct TimelineDrawContext<'a> {
+    pub ui: &'a mut egui::Ui,
+    pub painter: &'a egui::Painter,
+    pub c: &'a ThemeColors,
+    pub layout: &'a TimelineLayout,
+    pub metrics: &'a TimelineMetrics,
+    pub state: &'a TimelineState,
+    pub response: &'a egui::Response,
+    pub duration: f32,
+    pub fps: u32,
+    pub commands: &'a mut Vec<TimelineCommand>,
+}
+
 // ── 子模块 ──
 
 mod controller;
@@ -75,51 +91,31 @@ pub fn show(
 
     let layout = TimelineLayout::new(timeline_rect, &state.view, &metrics);
 
-    draw_scrollbar(
-        ui,
-        &painter,
-        &c,
-        &layout,
-        &metrics,
-        &state.view,
-        &state.interaction,
-        duration,
-        &response,
-        fps,
-        &mut commands,
-    );
-
     let track_painter = ui.painter_at(egui::Rect::from_min_max(
         egui::pos2(timeline_rect.min.x, layout.ruler_rect.max.y),
         egui::pos2(timeline_rect.max.x, layout.content_bottom),
     ));
-    let (y, clip_clicked) = draw_tracks(
-        ui,
-        &track_painter,
-        &c,
-        &layout,
-        &metrics,
-        state,
-        &mut commands,
-    );
 
-    if response.clicked() && !clip_clicked {
-        commands.push(TimelineCommand::ClearSelection);
-    }
-
-    draw_ruler(
+    let mut ctx = TimelineDrawContext {
         ui,
-        &painter,
-        &c,
-        &layout,
-        &metrics,
+        painter: &painter,
+        c: &c,
+        layout: &layout,
+        metrics: &metrics,
         state,
-        &response,
-        *current_time,
+        response: &response,
         duration,
         fps,
-        &mut commands,
-    );
+        commands: &mut commands,
+    };
+
+    draw_scrollbar(&mut ctx);
+
+    let (y, clip_clicked) = draw_tracks(&mut ctx, &track_painter);
+
+    let clear_selection = response.clicked() && !clip_clicked;
+
+    draw_ruler(&mut ctx, *current_time);
 
     if y < layout.content_bottom {
         painter.rect_filled(
@@ -132,31 +128,13 @@ pub fn show(
         );
     }
 
-    draw_playhead(
-        ui,
-        &painter,
-        &c,
-        &layout,
-        &metrics,
-        &response,
-        state,
-        *current_time,
-        duration,
-        fps,
-        &mut commands,
-    );
+    draw_playhead(&mut ctx, *current_time);
 
-    draw_controls(
-        ui,
-        &painter,
-        &c,
-        &layout,
-        *is_playing,
-        *current_time,
-        duration,
-        state,
-        &mut commands,
-    );
+    draw_controls(&mut ctx, *is_playing, *current_time);
+
+    if clear_selection {
+        ctx.commands.push(TimelineCommand::ClearSelection);
+    }
 
     apply_timeline_commands(is_playing, current_time, state, commands);
 }
