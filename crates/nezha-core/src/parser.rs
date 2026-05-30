@@ -375,6 +375,10 @@ mod tests {
             duration: 10.0,
             ticks_per_beat: 480,
             tempo_segments: vec![],
+            note_count: 0,
+            tick_length: 0,
+            time_sig_numerator: 4,
+            time_sig_denominator: 2,
         };
         // 无 tempo 时默认 120 BPM：1s = 2 beats = 960 ticks
         assert!((midi.tick_at_time(1.0) - 960.0).abs() < 1e-6);
@@ -399,6 +403,10 @@ mod tests {
                     micros_per_quarter: 250_000, // 240 BPM，快一倍
                 },
             ],
+            note_count: 0,
+            tick_length: 1440,
+            time_sig_numerator: 4,
+            time_sig_denominator: 2,
         };
         // 在 120 BPM 段：0.5s = 480 ticks
         assert!((midi.tick_at_time(0.5) - 480.0).abs() < 1e-6);
@@ -424,6 +432,10 @@ mod tests {
                     micros_per_quarter: 250_000,
                 },
             ],
+            note_count: 0,
+            tick_length: 1440,
+            time_sig_numerator: 4,
+            time_sig_denominator: 2,
         };
         assert!((midi.bpm_at_time(0.0) - 120.0).abs() < 1e-3);
         assert!((midi.bpm_at_time(0.5) - 240.0).abs() < 1e-3);

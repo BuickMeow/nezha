@@ -366,3 +366,144 @@ pub fn snap_to_frame(time: f32, frame_duration: f32) -> f32 {
     }
     (time / frame_duration).round() * frame_duration
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_snap_to_frame_basic() {
+        let fd = 1.0 / 60.0;
+        let snapped = snap_to_frame(0.5, fd);
+        assert!((snapped * 60.0).round() - snapped * 60.0 < 0.01);
+    }
+
+    #[test]
+    fn test_snap_to_frame_zero() {
+        assert_eq!(snap_to_frame(0.0, 1.0 / 60.0), 0.0);
+    }
+
+    #[test]
+    fn test_snap_to_frame_negative() {
+        let fd = 1.0 / 60.0;
+        let snapped = snap_to_frame(-1.0, fd);
+        assert!(snapped <= 0.0);
+    }
+
+    #[test]
+    fn test_snap_to_frame_zero_duration() {
+        assert_eq!(snap_to_frame(5.0, 0.0), 5.0);
+    }
+
+    #[test]
+    fn test_snap_to_frame_exact() {
+        let fd = 1.0 / 30.0;
+        let snapped = snap_to_frame(1.0 / 30.0, fd);
+        assert!((snapped - fd).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_timeline_data_push_and_remove() {
+        let mut data = TimelineData::default();
+        let id1 = data.push_solid_color_clip(egui::Color32::RED, 5.0);
+        let id2 = data.push_solid_color_clip(egui::Color32::BLUE, 10.0);
+        assert!(id1 != id2);
+
+        let total: usize = data.tracks.iter().map(|t| t.clips.len()).sum();
+        assert_eq!(total, 2);
+
+        assert!(data.remove_clip(id1));
+        let total: usize = data.tracks.iter().map(|t| t.clips.len()).sum();
+        assert_eq!(total, 1);
+
+        assert!(!data.remove_clip(999));
+    }
+
+    #[test]
+    fn test_timeline_data_content_duration() {
+        let mut data = TimelineData::default();
+        data.push_solid_color_clip(egui::Color32::RED, 5.0);
+        data.push_solid_color_clip(egui::Color32::BLUE, 10.0);
+        assert!((data.content_duration() - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_timeline_data_update_duration() {
+        let mut data = TimelineData::default();
+        let id = data.alloc_clip_id();
+        let mut clip = TrackClip::new_solid_color(id, egui::Color32::RED);
+        clip.end = 0.0;
+        data.tracks[0].clips.push(clip);
+        data.update_duration(30.0);
+        let clip = data.find_clip_mut(id).unwrap();
+        assert!((clip.end - 30.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_timeline_data_move_clip_to_start() {
+        let mut data = TimelineData::default();
+        data.push_solid_color_clip(egui::Color32::RED, 10.0);
+        data.move_clip_to_start(1, 5.0, 60);
+        let clip = data.find_clip_mut(1).unwrap();
+        assert!((clip.start - 5.0).abs() < 0.02);
+        assert!((clip.end - 15.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn test_timeline_data_resize_clip_end() {
+        let mut data = TimelineData::default();
+        data.push_solid_color_clip(egui::Color32::RED, 10.0);
+        data.resize_clip_end_to(1, 20.0, 60);
+        let clip = data.find_clip_mut(1).unwrap();
+        assert!((clip.end - 20.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn test_timeline_data_resize_clip_start() {
+        let mut data = TimelineData::default();
+        data.push_solid_color_clip(egui::Color32::RED, 10.0);
+        data.resize_clip_start_to(1, 3.0, 60);
+        let clip = data.find_clip_mut(1).unwrap();
+        assert!((clip.start - 3.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn test_next_track_names() {
+        let tracks = vec![];
+        assert_eq!(next_video_track_name(&tracks), "视频 1");
+        assert_eq!(next_audio_track_name(&tracks), "音频 1");
+
+        let mut data = TimelineData::default();
+        data.push_solid_color_clip(egui::Color32::RED, 1.0);
+        assert_eq!(next_video_track_name(&data.tracks), "视频 2");
+    }
+
+    #[test]
+    fn test_alloc_clip_id_monotonic() {
+        let mut data = TimelineData::default();
+        let id1 = data.alloc_clip_id();
+        let id2 = data.alloc_clip_id();
+        let id3 = data.alloc_clip_id();
+        assert!(id1 < id2);
+        assert!(id2 < id3);
+    }
+
+    #[test]
+    fn test_push_image_video_audio_clips() {
+        let mut data = TimelineData::default();
+        let img_id = data.push_image_clip(0, "test.png".into(), 5.0);
+        let vid_id = data.push_video_clip(0, "test.mp4".into(), 10.0);
+        let aud_id = data.push_audio_clip(0, "test.mp3".into(), 3.0);
+
+        let img = data.find_clip_mut(img_id).unwrap();
+        assert_eq!(img.kind, ClipKind::Image);
+        assert_eq!(img.media_idx, Some(0));
+
+        let vid = data.find_clip_mut(vid_id).unwrap();
+        assert_eq!(vid.kind, ClipKind::Video);
+
+        let aud = data.find_clip_mut(aud_id).unwrap();
+        assert_eq!(aud.kind, ClipKind::Audio);
+        assert_eq!(aud.audio_idx, Some(0));
+    }
+}
