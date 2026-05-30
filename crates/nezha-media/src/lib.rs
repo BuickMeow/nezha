@@ -1,16 +1,14 @@
 mod audio_decoder;
 mod ffmpeg_util;
-mod frame_cache;
 mod image_loader;
 mod metadata;
 mod video_decoder;
 
 pub use audio_decoder::{AudioDecoder, DecodedAudio};
 pub use ffmpeg_util::ffmpeg_path;
-pub use frame_cache::FrameCache;
 pub use image_loader::load_image;
 pub use metadata::{MediaInfo, MediaType, probe_media};
-pub use video_decoder::{DecodedFrame, VideoDecoder};
+pub use video_decoder::{DecodedFrame, StreamingDecoder};
 
 use thiserror::Error;
 

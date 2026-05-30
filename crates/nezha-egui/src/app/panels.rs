@@ -210,7 +210,6 @@ impl App {
         if media_idx < self.project.media.len() {
             self.project.media.entries.remove(media_idx);
             self.project.media.video_decoders.remove(&media_idx);
-            self.project.media.frame_cache.remove(&media_idx);
         }
     }
 

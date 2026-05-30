@@ -228,26 +228,49 @@ impl App {
             wgpu::LoadOp::Load
         };
 
-        let mut image_layer = nezha_compositor::ImageLayer::new(
-            self.render_ctx.device(),
-            self.render_ctx.queue(),
-            self.render_ctx.target_format(),
-            rgba,
-            w,
-            h,
-        );
-        let encoder = self.render_ctx.encoder_mut();
-        compositor.render_layer(
-            encoder,
-            &mut image_layer,
-            preview_view,
-            render_width,
-            render_height,
-            time as f64,
-            load_op,
-            clip.common.blend_mode,
-            rect,
-        );
+        if let Some(layer) = self.image_layer_cache.get_mut(&media_idx) {
+            layer.update_texture(
+                self.render_ctx.device(),
+                self.render_ctx.queue(),
+                rgba,
+                w,
+                h,
+            );
+            let encoder = self.render_ctx.encoder_mut();
+            compositor.render_layer(
+                encoder,
+                layer,
+                preview_view,
+                render_width,
+                render_height,
+                time as f64,
+                load_op,
+                clip.common.blend_mode,
+                rect,
+            );
+        } else {
+            let mut layer = nezha_compositor::ImageLayer::new(
+                self.render_ctx.device(),
+                self.render_ctx.queue(),
+                self.render_ctx.target_format(),
+                rgba,
+                w,
+                h,
+            );
+            let encoder = self.render_ctx.encoder_mut();
+            compositor.render_layer(
+                encoder,
+                &mut layer,
+                preview_view,
+                render_width,
+                render_height,
+                time as f64,
+                load_op,
+                clip.common.blend_mode,
+                rect,
+            );
+            self.image_layer_cache.insert(media_idx, layer);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -269,8 +292,10 @@ impl App {
         if w == 0 || h == 0 { return; }
 
         let clip_time = (time - clip.start).max(0.0) as f64;
-        let frame = self.project.media.decode_video_frame(media_idx, clip_time);
-        let Some(frame) = frame else { return };
+        let frame = match self.project.media.get_video_frame(media_idx, clip_time) {
+            Some(f) => f,
+            None => return,
+        };
 
         let load_op = if is_first {
             wgpu::LoadOp::Clear(wgpu::Color {
@@ -283,26 +308,49 @@ impl App {
             wgpu::LoadOp::Load
         };
 
-        let mut video_layer = nezha_compositor::ImageLayer::new(
-            self.render_ctx.device(),
-            self.render_ctx.queue(),
-            self.render_ctx.target_format(),
-            &frame.rgba,
-            frame.width,
-            frame.height,
-        );
-        let encoder = self.render_ctx.encoder_mut();
-        compositor.render_layer(
-            encoder,
-            &mut video_layer,
-            preview_view,
-            render_width,
-            render_height,
-            time as f64,
-            load_op,
-            clip.common.blend_mode,
-            rect,
-        );
+        if let Some(layer) = self.video_layer_cache.get_mut(&media_idx) {
+            layer.update_texture(
+                self.render_ctx.device(),
+                self.render_ctx.queue(),
+                &frame.rgba,
+                frame.width,
+                frame.height,
+            );
+            let encoder = self.render_ctx.encoder_mut();
+            compositor.render_layer(
+                encoder,
+                layer,
+                preview_view,
+                render_width,
+                render_height,
+                time as f64,
+                load_op,
+                clip.common.blend_mode,
+                rect,
+            );
+        } else {
+            let mut layer = nezha_compositor::ImageLayer::new(
+                self.render_ctx.device(),
+                self.render_ctx.queue(),
+                self.render_ctx.target_format(),
+                &frame.rgba,
+                frame.width,
+                frame.height,
+            );
+            let encoder = self.render_ctx.encoder_mut();
+            compositor.render_layer(
+                encoder,
+                &mut layer,
+                preview_view,
+                render_width,
+                render_height,
+                time as f64,
+                load_op,
+                clip.common.blend_mode,
+                rect,
+            );
+            self.video_layer_cache.insert(media_idx, layer);
+        }
     }
 
     fn compute_midi_stats(midi: &nezha_core::MidiFile, midi_time: f64) -> (u64, u64, u64) {

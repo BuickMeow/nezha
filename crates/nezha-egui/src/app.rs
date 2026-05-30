@@ -33,6 +33,10 @@ pub struct App {
     pub audio_manager: AudioManager,
     /// 每个 Counter clip 的运行时统计状态（按 clip_id）。
     pub counter_stats: std::collections::HashMap<usize, crate::app::preview::CounterStats>,
+    /// 每个视频素材的缓存 ImageLayer（按 media_idx）。
+    pub video_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
+    /// 每个图片素材的缓存 ImageLayer（按 media_idx）。
+    pub image_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
 }
 
 impl App {
@@ -98,6 +102,8 @@ impl App {
             audio_player: AudioPlayback::new(),
             audio_manager: AudioManager::new(),
             counter_stats: std::collections::HashMap::new(),
+            video_layer_cache: std::collections::HashMap::new(),
+            image_layer_cache: std::collections::HashMap::new(),
         };
 
         let cfg = crate::config::Config::load();

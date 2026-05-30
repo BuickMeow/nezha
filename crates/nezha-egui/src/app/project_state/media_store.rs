@@ -1,6 +1,5 @@
-use nezha_media::{DecodedAudio, MediaInfo, MediaType, VideoDecoder};
+use nezha_media::{DecodedAudio, DecodedFrame, MediaInfo, MediaType, StreamingDecoder};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 pub struct MediaEntry {
     pub info: MediaInfo,
@@ -11,8 +10,7 @@ pub struct MediaEntry {
 
 pub struct MediaStore {
     pub entries: Vec<MediaEntry>,
-    pub video_decoders: HashMap<usize, Arc<Mutex<VideoDecoder>>>,
-    pub frame_cache: HashMap<usize, nezha_media::FrameCache>,
+    pub video_decoders: HashMap<usize, StreamingDecoder>,
 }
 
 impl Default for MediaStore {
@@ -20,7 +18,6 @@ impl Default for MediaStore {
         Self {
             entries: Vec::new(),
             video_decoders: HashMap::new(),
-            frame_cache: HashMap::new(),
         }
     }
 }
@@ -39,10 +36,13 @@ impl MediaStore {
 
     pub fn add_video(&mut self, info: MediaInfo) -> usize {
         let idx = self.entries.len();
-        let decoder = VideoDecoder::new(&info.path, info.width, info.height);
-        self.video_decoders
-            .insert(idx, Arc::new(Mutex::new(decoder)));
-        self.frame_cache.insert(idx, nezha_media::FrameCache::new(64));
+        let decoder = StreamingDecoder::new(
+            &info.path,
+            info.width,
+            info.height,
+            info.fps,
+        );
+        self.video_decoders.insert(idx, decoder);
         self.entries.push(MediaEntry {
             info,
             image_rgba: None,
@@ -67,27 +67,9 @@ impl MediaStore {
         self.entries.get(idx)
     }
 
-    pub fn decode_video_frame(
-        &mut self,
-        media_idx: usize,
-        time_secs: f64,
-    ) -> Option<&nezha_media::DecodedFrame> {
-        let cache = self.frame_cache.get_mut(&media_idx)?;
-        let decoder = self.video_decoders.get(&media_idx)?;
-
-        let key = (time_secs * 1000.0).round() as u64;
-
-        if cache.get(key).is_some() {
-            return cache.get(key);
-        }
-
-        let frame = {
-            let dec = decoder.lock().ok()?;
-            dec.decode_frame(time_secs).ok()?
-        };
-
-        cache.insert(key, frame);
-        cache.get(key)
+    pub fn get_video_frame(&mut self, media_idx: usize, time_secs: f64) -> Option<&DecodedFrame> {
+        let decoder = self.video_decoders.get_mut(&media_idx)?;
+        decoder.get_frame(time_secs)
     }
 
     pub fn decode_audio(

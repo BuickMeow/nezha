@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, ColorTargetState, ColorWrites, Device, Extent3d,
     FragmentState, MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor,
     PrimitiveState, PrimitiveTopology, Queue, RenderPipeline, RenderPipelineDescriptor, Sampler,
@@ -16,13 +16,13 @@ use crate::util::{blend_state_for, compute_scissor_rect};
 
 pub struct ImageLayer {
     pipelines: HashMap<BlendMode, RenderPipeline>,
+    bind_group_layout: BindGroupLayout,
     bind_group: BindGroup,
-    #[allow(dead_code)]
     texture: Texture,
-    #[allow(dead_code)]
     texture_view: TextureView,
-    #[allow(dead_code)]
     sampler: Sampler,
+    width: u32,
+    height: u32,
 }
 
 impl ImageLayer {
@@ -44,7 +44,7 @@ impl ImageLayer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8UnormSrgb,
+            format: TextureFormat::Rgba8Unorm,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -105,20 +105,7 @@ impl ImageLayer {
             ],
         });
 
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("image_layer_bind_group"),
-            layout: &bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let bind_group = Self::make_bind_group(device, &bind_group_layout, &texture_view, &sampler);
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("image_layer_pipeline_layout"),
@@ -161,11 +148,84 @@ impl ImageLayer {
 
         Self {
             pipelines,
+            bind_group_layout,
             bind_group,
             texture,
             texture_view,
             sampler,
+            width,
+            height,
         }
+    }
+
+    pub fn update_texture(&mut self, device: &Device, queue: &Queue, rgba: &[u8], width: u32, height: u32) {
+        if width != self.width || height != self.height {
+            self.texture = device.create_texture(&TextureDescriptor {
+                label: Some("image_layer_texture"),
+                size: Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8Unorm,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            self.texture_view = self.texture.create_view(&TextureViewDescriptor::default());
+            self.bind_group = Self::make_bind_group(
+                device,
+                &self.bind_group_layout,
+                &self.texture_view,
+                &self.sampler,
+            );
+            self.width = width;
+            self.height = height;
+        }
+
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            rgba,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    fn make_bind_group(
+        device: &Device,
+        layout: &BindGroupLayout,
+        texture_view: &TextureView,
+        sampler: &Sampler,
+    ) -> BindGroup {
+        device.create_bind_group(&BindGroupDescriptor {
+            label: Some("image_layer_bind_group"),
+            layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(texture_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        })
     }
 }
 
