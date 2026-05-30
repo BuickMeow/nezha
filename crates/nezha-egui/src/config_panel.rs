@@ -42,9 +42,7 @@ pub enum ConfigAction {
     MoveSoundfontUp(usize),
     MoveSoundfontDown(usize),
     RenderAudio(usize),
-    ImportMediaVideo,
-    ImportMediaAudio,
-    ImportMediaImage,
+    ImportMedia,
     AddMediaToTimeline(usize),
     RemoveMedia(usize),
 }

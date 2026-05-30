@@ -40,6 +40,8 @@ pub struct App {
     pub(crate) video_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
     /// 每个图片素材的缓存 ImageLayer（按 media_idx）。
     pub(crate) image_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
+    /// 上一帧的音频 clip 列表，用于检测静音状态变化。
+    last_audio_clips: Vec<(usize, f32, f32)>,
 }
 
 impl App {
@@ -107,6 +109,7 @@ impl App {
             counter_stats: std::collections::HashMap::new(),
             video_layer_cache: std::collections::HashMap::new(),
             image_layer_cache: std::collections::HashMap::new(),
+            last_audio_clips: Vec::new(),
         };
 
         let cfg = crate::config::Config::load();
@@ -356,6 +359,11 @@ impl App {
     fn sync_audio_playback(&mut self) {
         if self.project.playback.is_playing {
             let audio_clips = self.project.audio_timeline_clips();
+            let clips_changed = audio_clips != self.last_audio_clips;
+            if clips_changed {
+                self.last_audio_clips.clone_from(&audio_clips);
+            }
+
             if !self.audio_player.is_playing() {
                 self.audio_player
                     .set_device(self.ui.audio_device_name.clone());
@@ -379,6 +387,13 @@ impl App {
                     audio_clips.len(),
                 );
                 self.audio_player.play(start_frame);
+            } else if clips_changed {
+                self.audio_player.mix(
+                    &self.project.audio,
+                    &audio_clips,
+                    self.project.duration(),
+                    self.project.render.audio_sample_rate,
+                );
             }
         } else if self.audio_player.is_playing() {
             tracing::info!("PAUSE at ct={:.3}s", self.project.playback.current_time);

@@ -231,7 +231,8 @@ pub struct Track {
     pub kind: TrackKind,
     pub clips: Vec<TrackClip>,
     pub muted: bool,
-    pub solo: bool,
+    pub hidden: bool,
+    pub locked: bool,
 }
 
 impl Track {
@@ -241,7 +242,8 @@ impl Track {
             kind: TrackKind::Video,
             clips: Vec::new(),
             muted: false,
-            solo: false,
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -251,7 +253,8 @@ impl Track {
             kind: TrackKind::Audio,
             clips: Vec::new(),
             muted: false,
-            solo: false,
+            hidden: false,
+            locked: false,
         }
     }
 }

@@ -85,13 +85,80 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
 }
 
 fn draw_track_header_controls(
+    ui: &mut egui::Ui,
     painter: &egui::Painter,
     c: &ThemeColors,
     header_rect: egui::Rect,
     track: &Track,
+    track_index: usize,
+    commands: &mut Vec<TimelineCommand>,
 ) {
+    let btn_size = 16.0;
+
     if track.kind == TrackKind::Video {
-        let btn_size = 16.0;
+        // 👁 可见性按钮
+        let eye_rect = egui::Rect::from_center_size(
+            egui::pos2(header_rect.min.x + 16.0, header_rect.center().y),
+            egui::vec2(btn_size, btn_size),
+        );
+        let eye_color = if track.hidden {
+            c.btn_hidden_on
+        } else {
+            c.btn_hidden_off
+        };
+        painter.rect_filled(eye_rect, 2.0, eye_color);
+        painter.text(
+            eye_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "\u{1f441}",
+            font(9.0),
+            egui::Color32::WHITE,
+        );
+        let eye_resp = ui.interact(
+            eye_rect,
+            egui::Id::new(("track_eye", track_index)),
+            egui::Sense::click(),
+        );
+        if eye_resp.clicked() {
+            commands.push(TimelineCommand::ToggleTrackHidden(track_index));
+        }
+
+        // 🔒 锁按钮
+        let lock_rect = egui::Rect::from_center_size(
+            egui::pos2(header_rect.min.x + 36.0, header_rect.center().y),
+            egui::vec2(btn_size, btn_size),
+        );
+        let lock_color = if track.locked {
+            c.btn_locked_on
+        } else {
+            c.btn_locked_off
+        };
+        painter.rect_filled(lock_rect, 2.0, lock_color);
+        painter.text(
+            lock_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "\u{1f512}",
+            font(9.0),
+            egui::Color32::WHITE,
+        );
+        let lock_resp = ui.interact(
+            lock_rect,
+            egui::Id::new(("track_lock", track_index)),
+            egui::Sense::click(),
+        );
+        if lock_resp.clicked() {
+            commands.push(TimelineCommand::ToggleTrackLocked(track_index));
+        }
+
+        painter.text(
+            egui::pos2(header_rect.min.x + 52.0, header_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &track.name,
+            font(11.0),
+            if track.hidden { c.dim_text } else { c.text },
+        );
+    } else {
+        // 🔊 静音按钮
         let mute_rect = egui::Rect::from_center_size(
             egui::pos2(header_rect.min.x + 16.0, header_rect.center().y),
             egui::vec2(btn_size, btn_size),
@@ -105,39 +172,48 @@ fn draw_track_header_controls(
         painter.text(
             mute_rect.center(),
             egui::Align2::CENTER_CENTER,
-            "M",
+            "\u{1f50a}",
             font(9.0),
             egui::Color32::WHITE,
         );
+        let mute_resp = ui.interact(
+            mute_rect,
+            egui::Id::new(("track_mute", track_index)),
+            egui::Sense::click(),
+        );
+        if mute_resp.clicked() {
+            commands.push(TimelineCommand::ToggleTrackMute(track_index));
+        }
 
-        let solo_rect = egui::Rect::from_center_size(
+        // 🔒 锁按钮
+        let lock_rect = egui::Rect::from_center_size(
             egui::pos2(header_rect.min.x + 36.0, header_rect.center().y),
             egui::vec2(btn_size, btn_size),
         );
-        let solo_color = if track.solo {
-            c.btn_solo_on
+        let lock_color = if track.locked {
+            c.btn_locked_on
         } else {
-            c.btn_solo_off
+            c.btn_locked_off
         };
-        painter.rect_filled(solo_rect, 2.0, solo_color);
+        painter.rect_filled(lock_rect, 2.0, lock_color);
         painter.text(
-            solo_rect.center(),
+            lock_rect.center(),
             egui::Align2::CENTER_CENTER,
-            "S",
+            "\u{1f512}",
             font(9.0),
             egui::Color32::WHITE,
         );
+        let lock_resp = ui.interact(
+            lock_rect,
+            egui::Id::new(("track_lock", track_index)),
+            egui::Sense::click(),
+        );
+        if lock_resp.clicked() {
+            commands.push(TimelineCommand::ToggleTrackLocked(track_index));
+        }
 
         painter.text(
             egui::pos2(header_rect.min.x + 52.0, header_rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            &track.name,
-            font(11.0),
-            if track.muted { c.dim_text } else { c.text },
-        );
-    } else {
-        painter.text(
-            egui::pos2(header_rect.min.x + 8.0, header_rect.center().y),
             egui::Align2::LEFT_CENTER,
             &track.name,
             font(11.0),
@@ -571,7 +647,7 @@ fn draw_track_row(
         egui::StrokeKind::Inside,
     );
 
-    draw_track_header_controls(painter, c, header_rect, track);
+    draw_track_header_controls(ui, painter, c, header_rect, track, track_index, commands);
 
     let mut dragged_clip_id = None;
     let primary_dragging = ui.input(|i| i.pointer.primary_down());
@@ -594,39 +670,51 @@ fn draw_track_row(
         let clip_rect = hit_areas.clip_rect;
         if clip_rect.width() > 0.0 {
             let is_selected = selected_id == Some(clip_id);
-            if is_selected {
-                handle_selected_clip_interaction(
-                    ui,
-                    layout,
-                    view,
-                    track_rect,
-                    track_index,
-                    clip_id,
-                    clip_start,
-                    clip_end,
-                    &hit_areas,
-                    clip_rect,
-                    &mut active_clip_drag,
-                    commands,
-                    &mut clip_clicked,
-                    &mut dragged_clip_id,
-                );
+            if !track.locked {
+                if is_selected {
+                    handle_selected_clip_interaction(
+                        ui,
+                        layout,
+                        view,
+                        track_rect,
+                        track_index,
+                        clip_id,
+                        clip_start,
+                        clip_end,
+                        &hit_areas,
+                        clip_rect,
+                        &mut active_clip_drag,
+                        commands,
+                        &mut clip_clicked,
+                        &mut dragged_clip_id,
+                    );
+                } else {
+                    handle_unselected_clip_interaction(
+                        ui,
+                        layout,
+                        view,
+                        track_rect,
+                        track_index,
+                        clip_id,
+                        clip_start,
+                        clip_end,
+                        clip_rect,
+                        &mut active_clip_drag,
+                        commands,
+                        &mut clip_clicked,
+                        &mut dragged_clip_id,
+                    );
+                }
             } else {
-                handle_unselected_clip_interaction(
-                    ui,
-                    layout,
-                    view,
-                    track_rect,
-                    track_index,
-                    clip_id,
-                    clip_start,
-                    clip_end,
+                let clip_interact = ui.interact(
                     clip_rect,
-                    &mut active_clip_drag,
-                    commands,
-                    &mut clip_clicked,
-                    &mut dragged_clip_id,
+                    egui::Id::new(("timeline_clip", clip_id)),
+                    egui::Sense::click(),
                 );
+                if clip_interact.clicked() {
+                    commands.push(TimelineCommand::SelectClip(clip_id));
+                    clip_clicked = true;
+                }
             }
 
             // 只对 Waterfall clip 计算三段内容区域边界（像素 x 坐标）

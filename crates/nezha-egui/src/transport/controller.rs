@@ -30,6 +30,9 @@ pub enum TimelineCommand {
         clip_id: usize,
         target_track_index: usize,
     },
+    ToggleTrackMute(usize),
+    ToggleTrackHidden(usize),
+    ToggleTrackLocked(usize),
 }
 
 pub fn apply_timeline_commands(
@@ -77,6 +80,15 @@ pub fn apply_timeline_commands(
                 target_track_index,
             } => {
                 state.move_clip_to_track(clip_id, target_track_index);
+            }
+            TimelineCommand::ToggleTrackMute(track_index) => {
+                state.data.toggle_track_mute(track_index);
+            }
+            TimelineCommand::ToggleTrackHidden(track_index) => {
+                state.data.toggle_track_hidden(track_index);
+            }
+            TimelineCommand::ToggleTrackLocked(track_index) => {
+                state.data.toggle_track_locked(track_index);
             }
         }
     }

@@ -310,6 +310,13 @@ impl TimelineData {
         };
 
         if let Some(idx) = dest_index {
+            if self.tracks[idx].locked {
+                // 目标轨道被锁定，放回原轨道
+                if let Some(src_idx) = src_track_idx {
+                    self.tracks[src_idx].clips.push(clip);
+                }
+                return;
+            }
             self.tracks[idx].clips.push(clip);
         } else if src_track_idx.is_none() {
             let name = format!(
@@ -337,6 +344,24 @@ impl TimelineData {
             }
         }
         None
+    }
+
+    pub fn toggle_track_mute(&mut self, track_index: usize) {
+        if let Some(track) = self.tracks.get_mut(track_index) {
+            track.muted = !track.muted;
+        }
+    }
+
+    pub fn toggle_track_hidden(&mut self, track_index: usize) {
+        if let Some(track) = self.tracks.get_mut(track_index) {
+            track.hidden = !track.hidden;
+        }
+    }
+
+    pub fn toggle_track_locked(&mut self, track_index: usize) {
+        if let Some(track) = self.tracks.get_mut(track_index) {
+            track.locked = !track.locked;
+        }
     }
 }
 

@@ -20,8 +20,10 @@ pub struct ThemeColors {
     pub controls_bg: egui::Color32,
     pub btn_mute_off: egui::Color32,
     pub btn_mute_on: egui::Color32,
-    pub btn_solo_off: egui::Color32,
-    pub btn_solo_on: egui::Color32,
+    pub btn_hidden_off: egui::Color32,
+    pub btn_hidden_on: egui::Color32,
+    pub btn_locked_off: egui::Color32,
+    pub btn_locked_on: egui::Color32,
 }
 
 impl ThemeColors {
@@ -50,8 +52,10 @@ impl ThemeColors {
             controls_bg: egui::Color32::from_rgb(35, 35, 35),
             btn_mute_off: egui::Color32::from_rgb(100, 100, 100),
             btn_mute_on: egui::Color32::from_rgb(255, 100, 100),
-            btn_solo_off: egui::Color32::from_rgb(100, 100, 100),
-            btn_solo_on: egui::Color32::from_rgb(255, 200, 50),
+            btn_hidden_off: egui::Color32::from_rgb(100, 100, 100),
+            btn_hidden_on: egui::Color32::from_rgb(255, 100, 100),
+            btn_locked_off: egui::Color32::from_rgb(100, 100, 100),
+            btn_locked_on: egui::Color32::from_rgb(255, 200, 50),
         }
     }
 
@@ -76,8 +80,10 @@ impl ThemeColors {
             controls_bg: egui::Color32::from_rgb(235, 235, 235),
             btn_mute_off: egui::Color32::from_rgb(180, 180, 180),
             btn_mute_on: egui::Color32::from_rgb(255, 100, 100),
-            btn_solo_off: egui::Color32::from_rgb(180, 180, 180),
-            btn_solo_on: egui::Color32::from_rgb(255, 180, 40),
+            btn_hidden_off: egui::Color32::from_rgb(180, 180, 180),
+            btn_hidden_on: egui::Color32::from_rgb(255, 100, 100),
+            btn_locked_off: egui::Color32::from_rgb(180, 180, 180),
+            btn_locked_on: egui::Color32::from_rgb(255, 180, 40),
         }
     }
 }

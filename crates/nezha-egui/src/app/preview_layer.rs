@@ -76,6 +76,9 @@ pub(super) fn collect_visible_layers(
 ) -> Vec<LayerData> {
     let mut layers = Vec::new();
     for track in tracks.iter().rev() {
+        if track.hidden {
+            continue;
+        }
         for clip in &track.clips {
             if time >= clip.start && time < clip.end {
                 layers.push(LayerData::from(clip));

@@ -6,8 +6,6 @@ use crate::transport;
 use eframe::egui;
 use std::path::PathBuf;
 
-use super::media_ops::MediaTypeFilter;
-
 impl App {
     pub(super) fn handle_config_action(&mut self, action: config_panel::ConfigAction) {
         match action {
@@ -71,14 +69,8 @@ impl App {
                     self.audio_manager.prepare_render(name, entry.path.clone());
                 }
             }
-            config_panel::ConfigAction::ImportMediaVideo => {
-                self.import_media_by_type(Some(MediaTypeFilter::Video));
-            }
-            config_panel::ConfigAction::ImportMediaAudio => {
-                self.import_media_by_type(Some(MediaTypeFilter::Audio));
-            }
-            config_panel::ConfigAction::ImportMediaImage => {
-                self.import_media_by_type(Some(MediaTypeFilter::Image));
+            config_panel::ConfigAction::ImportMedia => {
+                self.import_media_by_type();
             }
             config_panel::ConfigAction::AddMediaToTimeline(media_idx) => {
                 self.add_media_to_timeline(media_idx);

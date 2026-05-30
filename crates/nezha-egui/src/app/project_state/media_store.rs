@@ -69,7 +69,7 @@ impl MediaStore {
 
     pub fn decode_audio(&self, media_idx: usize, target_sample_rate: u32) -> Option<DecodedAudio> {
         let entry = self.entries.get(media_idx)?;
-        if entry.info.media_type != MediaType::Audio {
+        if entry.info.media_type != MediaType::Audio && !entry.info.has_audio {
             return None;
         }
         nezha_media::AudioDecoder::decode_file(&entry.info.path, target_sample_rate).ok()

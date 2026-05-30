@@ -3,47 +3,17 @@ use crate::app::error::AppError;
 use crate::app::project_state::AudioEntry;
 use nezha_media::MediaType;
 
-pub(super) enum MediaTypeFilter {
-    Video,
-    Audio,
-    Image,
-}
-
 impl App {
-    pub(super) fn import_media_by_type(&mut self, filter: Option<MediaTypeFilter>) {
+    pub(super) fn import_media_by_type(&mut self) {
         let mut dialog = rfd::FileDialog::new();
-        match filter {
-            Some(MediaTypeFilter::Video) => {
-                dialog = dialog.add_filter(
-                    "视频文件",
-                    &[
-                        "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "ts", "m4v",
-                    ],
-                );
-            }
-            Some(MediaTypeFilter::Audio) => {
-                dialog = dialog.add_filter(
-                    "音频文件",
-                    &["mp3", "wav", "flac", "ogg", "aac", "m4a", "wma", "opus"],
-                );
-            }
-            Some(MediaTypeFilter::Image) => {
-                dialog = dialog.add_filter(
-                    "图片文件",
-                    &["png", "jpg", "jpeg", "bmp", "webp", "tiff", "gif"],
-                );
-            }
-            None => {
-                dialog = dialog.add_filter(
-                    "所有媒体文件",
-                    &[
-                        "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "ts", "m4v", "mp3",
-                        "wav", "flac", "ogg", "aac", "m4a", "wma", "opus", "png", "jpg", "jpeg",
-                        "bmp", "webp", "tiff", "gif",
-                    ],
-                );
-            }
-        }
+        dialog = dialog.add_filter(
+            "所有媒体文件",
+            &[
+                "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "ts", "m4v", "mp3", "wav",
+                "flac", "ogg", "aac", "m4a", "wma", "opus", "png", "jpg", "jpeg", "bmp", "webp",
+                "tiff", "gif",
+            ],
+        );
 
         if let Some(path) = dialog.pick_file() {
             let path_str = path.to_string_lossy().to_string();
@@ -96,7 +66,26 @@ impl App {
                 let duration = info.duration_secs as f32;
                 self.project
                     .timeline_state
-                    .push_video_clip(media_idx, name, duration);
+                    .push_video_clip(media_idx, name.clone(), duration);
+                if info.has_audio {
+                    let sample_rate = self.project.render.audio_sample_rate;
+                    if let Some(decoded) = self.project.media.decode_audio(media_idx, sample_rate) {
+                        let audio_entry = AudioEntry {
+                            name: name.clone(),
+                            sample_rate: decoded.sample_rate,
+                            channels: decoded.channels,
+                            duration_secs: decoded.duration_secs,
+                            samples: decoded.samples,
+                            midi_idx: 0,
+                        };
+                        let audio_idx = self.project.audio.insert(audio_entry);
+                        self.project.timeline_state.push_audio_clip(
+                            audio_idx,
+                            name,
+                            info.duration_secs as f32,
+                        );
+                    }
+                }
             }
             MediaType::Audio => {
                 let sample_rate = self.project.render.audio_sample_rate;

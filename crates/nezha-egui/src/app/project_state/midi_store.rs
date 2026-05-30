@@ -106,7 +106,7 @@ impl MidiStore {
             }
         }
 
-        // 没有未绑定的 clip → 在首个视频轨道上新建一个
+        // 没有未绑定的 clip → 在首个空视频轨道上新建一个，否则创建新轨道
         let id = timeline_state.data.alloc_clip_id();
         let mut clip = TrackClip::new_waterfall(id, Some(midi_idx));
         clip.song_start_time = pre_song;
@@ -118,14 +118,14 @@ impl MidiStore {
             .data
             .tracks
             .iter_mut()
-            .find(|t| t.kind == TrackKind::Video)
+            .find(|t| t.kind == TrackKind::Video && t.clips.is_empty())
         {
             track.clips.push(clip);
         } else {
             let name = crate::transport::next_video_track_name(&timeline_state.data.tracks);
             let mut track = Track::new_video(&name);
             track.clips.push(clip);
-            timeline_state.data.tracks.push(track);
+            timeline_state.data.tracks.insert(0, track);
         }
     }
 }

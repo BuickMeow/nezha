@@ -71,17 +71,9 @@ pub fn show(
     ui.label("导入素材");
     ui.add_space(4.0);
 
-    ui.horizontal(|ui| {
-        if ui.button("🎬 视频").on_hover_text("导入视频文件").clicked() {
-            action = Some(ConfigAction::ImportMediaVideo);
-        }
-        if ui.button("🔊 音频").on_hover_text("导入音频文件").clicked() {
-            action = Some(ConfigAction::ImportMediaAudio);
-        }
-        if ui.button("🖼 图片").on_hover_text("导入图片文件").clicked() {
-            action = Some(ConfigAction::ImportMediaImage);
-        }
-    });
+    if ui.button("📥 导入媒体").on_hover_text("导入视频/音频/图片文件").clicked() {
+        action = Some(ConfigAction::ImportMedia);
+    }
 
     action
 }

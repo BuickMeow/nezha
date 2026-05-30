@@ -90,7 +90,7 @@ impl ProjectState {
             .data
             .tracks
             .iter()
-            .filter(|t| t.kind == crate::transport::TrackKind::Audio)
+            .filter(|t| t.kind == crate::transport::TrackKind::Audio && !t.muted)
             .flat_map(|t| t.clips.iter())
             .filter_map(|clip| clip.audio_idx.map(|idx| (idx, clip.start, clip.end)))
             .collect()
