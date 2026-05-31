@@ -23,12 +23,22 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
         .iter()
         .any(|track| track.kind == TrackKind::Audio);
 
+    // 确定被拖动 Clip 的类型，用于正确计算目标轨道索引
+    let dragged_clip_kind = ctx.state.interaction.clip_drag.and_then(|drag| {
+        ctx.state.data.tracks.iter()
+            .flat_map(|t| t.clips.iter())
+            .find(|c| c.id == drag.clip_id)
+            .map(|c| c.kind)
+    });
+
     let mut y = ctx.layout.ruler_rect.max.y - ctx.state.view.scroll_y;
     let view = &ctx.state.view;
     let selected_id = ctx.state.selection.selected_clip_id;
     let tracks = &ctx.state.data.tracks;
     let fps = ctx.fps;
 
+    // 绘制视频轨道时，只计算视频轨道索引
+    let mut video_track_index = 0usize;
     if has_video {
         for (track_index, track) in tracks
             .iter()
@@ -48,13 +58,19 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
                 &ctx.state.interaction.clip_drag,
                 ctx.commands,
                 track_index,
+                video_track_index,
+                TrackKind::Video,
+                dragged_clip_kind,
                 fps,
             );
             y = new_y;
+            video_track_index += 1;
             clip_clicked = clip_clicked || row_clicked;
         }
     }
 
+    // 绘制音频轨道时，只计算音频轨道索引
+    let mut audio_track_index = 0usize;
     if has_audio {
         for (track_index, track) in tracks
             .iter()
@@ -74,9 +90,13 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
                 &ctx.state.interaction.clip_drag,
                 ctx.commands,
                 track_index,
+                audio_track_index,
+                TrackKind::Audio,
+                dragged_clip_kind,
                 fps,
             );
             y = new_y;
+            audio_track_index += 1;
             clip_clicked = clip_clicked || row_clicked;
         }
     }
@@ -357,7 +377,10 @@ fn handle_selected_clip_interaction(
     layout: &TimelineLayout,
     view: &TimelineView,
     track_rect: egui::Rect,
-    track_index: usize,
+    _track_index: usize,
+    track_kind_index: usize,
+    track_kind: TrackKind,
+    clip_kind: ClipKind,
     clip_id: usize,
     clip_start: f32,
     clip_end: f32,
@@ -502,18 +525,50 @@ fn handle_selected_clip_interaction(
             }
             commands.push(TimelineCommand::SelectClip(clip_id));
             *dragged_clip_id = Some(clip_id);
-            if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-                if ptr.y < track_rect.min.y {
-                    let target = if track_index > 0 { track_index - 1 } else { 0 };
-                    commands.push(TimelineCommand::MoveClipToTrack {
-                        clip_id,
-                        target_track_index: target,
-                    });
-                } else if ptr.y > track_rect.max.y {
-                    commands.push(TimelineCommand::MoveClipToTrack {
-                        clip_id,
-                        target_track_index: track_index + 1,
-                    });
+            // 检查 Clip 类型与目标轨道类型是否匹配
+            let clip_belongs_to_video = clip_kind.is_video_track_kind();
+            let target_is_video = track_kind == TrackKind::Video;
+            let clip_target_kind = if clip_belongs_to_video {
+                TrackKind::Video
+            } else {
+                TrackKind::Audio
+            };
+            if clip_belongs_to_video == target_is_video {
+                // 类型匹配，正常移动
+                if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
+                    if ptr.y < track_rect.min.y {
+                        let target = if track_kind_index > 0 { track_kind_index - 1 } else { 0 };
+                        commands.push(TimelineCommand::MoveClipToTrack {
+                            clip_id,
+                            target_track_index: target,
+                            target_track_kind: track_kind,
+                        });
+                    } else if ptr.y > track_rect.max.y {
+                        commands.push(TimelineCommand::MoveClipToTrack {
+                            clip_id,
+                            target_track_index: track_kind_index + 1,
+                            target_track_kind: track_kind,
+                        });
+                    }
+                }
+            } else {
+                // 类型不匹配，尝试创建新轨道
+                if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
+                    if ptr.y < track_rect.min.y && track_kind_index == 0 {
+                        // 拖到当前类型轨道组上方，创建新轨道
+                        commands.push(TimelineCommand::MoveClipToTrack {
+                            clip_id,
+                            target_track_index: 0,
+                            target_track_kind: clip_target_kind,
+                        });
+                    } else if ptr.y > track_rect.max.y {
+                        // 拖到当前类型轨道组下方，创建新轨道
+                        commands.push(TimelineCommand::MoveClipToTrack {
+                            clip_id,
+                            target_track_index: usize::MAX, // 超出范围，触发创建新轨道
+                            target_track_kind: clip_target_kind,
+                        });
+                    }
                 }
             }
         }
@@ -527,7 +582,10 @@ fn handle_unselected_clip_interaction(
     layout: &TimelineLayout,
     view: &TimelineView,
     track_rect: egui::Rect,
-    track_index: usize,
+    _track_index: usize,
+    track_kind_index: usize,
+    track_kind: TrackKind,
+    clip_kind: ClipKind,
     clip_id: usize,
     clip_start: f32,
     clip_end: f32,
@@ -583,18 +641,50 @@ fn handle_unselected_clip_interaction(
         }
         commands.push(TimelineCommand::SelectClip(clip_id));
         *dragged_clip_id = Some(clip_id);
-        if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-            if ptr.y < track_rect.min.y {
-                let target = if track_index > 0 { track_index - 1 } else { 0 };
-                commands.push(TimelineCommand::MoveClipToTrack {
-                    clip_id,
-                    target_track_index: target,
-                });
-            } else if ptr.y > track_rect.max.y {
-                commands.push(TimelineCommand::MoveClipToTrack {
-                    clip_id,
-                    target_track_index: track_index + 1,
-                });
+        // 检查 Clip 类型与目标轨道类型是否匹配
+        let clip_belongs_to_video = clip_kind.is_video_track_kind();
+        let target_is_video = track_kind == TrackKind::Video;
+        let clip_target_kind = if clip_belongs_to_video {
+            TrackKind::Video
+        } else {
+            TrackKind::Audio
+        };
+        if clip_belongs_to_video == target_is_video {
+            // 类型匹配，正常移动
+            if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
+                if ptr.y < track_rect.min.y {
+                    let target = if track_kind_index > 0 { track_kind_index - 1 } else { 0 };
+                    commands.push(TimelineCommand::MoveClipToTrack {
+                        clip_id,
+                        target_track_index: target,
+                        target_track_kind: track_kind,
+                    });
+                } else if ptr.y > track_rect.max.y {
+                    commands.push(TimelineCommand::MoveClipToTrack {
+                        clip_id,
+                        target_track_index: track_kind_index + 1,
+                        target_track_kind: track_kind,
+                    });
+                }
+            }
+        } else {
+            // 类型不匹配，尝试创建新轨道
+            if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
+                if ptr.y < track_rect.min.y && track_kind_index == 0 {
+                    // 拖到当前类型轨道组上方，创建新轨道
+                    commands.push(TimelineCommand::MoveClipToTrack {
+                        clip_id,
+                        target_track_index: 0,
+                        target_track_kind: clip_target_kind,
+                    });
+                } else if ptr.y > track_rect.max.y {
+                    // 拖到当前类型轨道组下方，创建新轨道
+                    commands.push(TimelineCommand::MoveClipToTrack {
+                        clip_id,
+                        target_track_index: usize::MAX, // 超出范围，触发创建新轨道
+                        target_track_kind: clip_target_kind,
+                    });
+                }
             }
         }
     }
@@ -614,6 +704,9 @@ fn draw_track_row(
     clip_drag: &Option<ClipDragState>,
     commands: &mut Vec<TimelineCommand>,
     track_index: usize,
+    track_kind_index: usize,
+    track_kind: TrackKind,
+    _dragged_clip_kind: Option<ClipKind>,
     fps: u32,
 ) -> (f32, bool) {
     let mut clip_clicked = false;
@@ -666,6 +759,7 @@ fn draw_track_row(
         let clip_id = track.clips[clip_idx].id;
         let clip_name = track.clips[clip_idx].name.clone();
         let clip_color = track.clips[clip_idx].color;
+        let clip_kind = track.clips[clip_idx].kind;
         let hit_areas = clip_hit_areas(layout, metrics, view, &track_rect, clip_start, clip_end);
         let clip_rect = hit_areas.clip_rect;
         if clip_rect.width() > 0.0 {
@@ -678,6 +772,9 @@ fn draw_track_row(
                         view,
                         track_rect,
                         track_index,
+                        track_kind_index,
+                        track_kind,
+                        clip_kind,
                         clip_id,
                         clip_start,
                         clip_end,
@@ -695,6 +792,9 @@ fn draw_track_row(
                         view,
                         track_rect,
                         track_index,
+                        track_kind_index,
+                        track_kind,
+                        clip_kind,
                         clip_id,
                         clip_start,
                         clip_end,

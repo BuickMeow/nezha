@@ -258,6 +258,7 @@ impl TimelineData {
         &mut self,
         clip_id: usize,
         target_track_index: usize,
+        target_track_kind: TrackKind,
         interaction: &mut TimelineInteraction,
     ) {
         let mut src_track_idx = None;
@@ -281,32 +282,72 @@ impl TimelineData {
             .map(|d| d.track_was_inserted)
             .unwrap_or(false);
 
+        // 根据目标轨道类型决定名称生成函数
+        let (name_prefix, new_track_fn): (&str, fn(&str) -> Track) = match target_track_kind {
+            TrackKind::Video => ("视频", Track::new_video),
+            TrackKind::Audio => ("音频", Track::new_audio),
+        };
+
         let dest_index = if target_track_index == 0 {
+            // 目标是同类轨道中的第一个（索引 0）
             if src_track_idx == Some(0) && !track_already_inserted {
-                let video_count = self
+                // 当前在第一个位置且还没插入过新轨道，需要创建新轨道
+                let count = self
                     .tracks
                     .iter()
-                    .filter(|t| t.kind == TrackKind::Video)
+                    .filter(|t| t.kind == target_track_kind)
                     .count();
-                let name = format!("视频 {}", video_count + 1);
-                self.tracks.insert(0, Track::new_video(&name));
+                let name = format!("{} {}", name_prefix, count + 1);
+                self.tracks.insert(0, new_track_fn(&name));
                 if let Some(ref mut drag) = interaction.clip_drag {
                     drag.track_was_inserted = true;
                 }
                 Some(0)
-            } else if self.tracks[0].kind == TrackKind::Video {
+            } else if self.tracks[0].kind == target_track_kind {
                 Some(0)
             } else {
-                self.tracks.iter().position(|t| t.kind == TrackKind::Video)
+                // 找到第一个同类轨道
+                self.tracks.iter().position(|t| t.kind == target_track_kind)
             }
         } else if target_track_index < self.tracks.len() {
-            if self.tracks[target_track_index].kind == TrackKind::Video {
-                Some(target_track_index)
-            } else {
-                self.tracks.iter().position(|t| t.kind == TrackKind::Video)
+            // 目标索引在范围内，找到同类轨道
+            let mut kind_count = 0;
+            let mut found = None;
+            for (i, track) in self.tracks.iter().enumerate() {
+                if track.kind == target_track_kind {
+                    if kind_count == target_track_index {
+                        found = Some(i);
+                        break;
+                    }
+                    kind_count += 1;
+                }
             }
+            found
         } else {
-            src_track_idx
+            // 目标索引超出同类轨道数量，尝试创建新轨道
+            if !track_already_inserted {
+                let count = self
+                    .tracks
+                    .iter()
+                    .filter(|t| t.kind == target_track_kind)
+                    .count();
+                let name = format!("{} {}", name_prefix, count + 1);
+                let new_track = new_track_fn(&name);
+                // 新轨道插入到同类轨道组的末尾
+                let insert_pos = self
+                    .tracks
+                    .iter()
+                    .position(|t| t.kind != target_track_kind)
+                    .unwrap_or(self.tracks.len());
+                self.tracks.insert(insert_pos, new_track);
+                if let Some(ref mut drag) = interaction.clip_drag {
+                    drag.track_was_inserted = true;
+                }
+                Some(insert_pos)
+            } else {
+                // 已经创建过新轨道，放回原轨道
+                src_track_idx
+            }
         };
 
         if let Some(idx) = dest_index {
@@ -318,16 +359,15 @@ impl TimelineData {
                 return;
             }
             self.tracks[idx].clips.push(clip);
-        } else if src_track_idx.is_none() {
-            let name = format!(
-                "视频 {}",
-                self.tracks
-                    .iter()
-                    .filter(|t| t.kind == TrackKind::Video)
-                    .count()
-                    + 1
-            );
-            let mut track = Track::new_video(&name);
+        } else {
+            // 找不到目标轨道，创建新的
+            let count = self
+                .tracks
+                .iter()
+                .filter(|t| t.kind == target_track_kind)
+                .count();
+            let name = format!("{} {}", name_prefix, count + 1);
+            let mut track = new_track_fn(&name);
             track.clips.push(clip);
             self.tracks.push(track);
         }

@@ -1,4 +1,4 @@
-use super::{ClipDragState, ScrollbarDrag, TimelineState};
+use super::{ClipDragState, ScrollbarDrag, TimelineState, TrackKind};
 
 pub enum TimelineCommand {
     SetPlaying(bool),
@@ -29,6 +29,7 @@ pub enum TimelineCommand {
     MoveClipToTrack {
         clip_id: usize,
         target_track_index: usize,
+        target_track_kind: TrackKind,
     },
     ToggleTrackMute(usize),
     ToggleTrackHidden(usize),
@@ -78,8 +79,9 @@ pub fn apply_timeline_commands(
             TimelineCommand::MoveClipToTrack {
                 clip_id,
                 target_track_index,
+                target_track_kind,
             } => {
-                state.move_clip_to_track(clip_id, target_track_index);
+                state.move_clip_to_track(clip_id, target_track_index, target_track_kind);
             }
             TimelineCommand::ToggleTrackMute(track_index) => {
                 state.data.toggle_track_mute(track_index);

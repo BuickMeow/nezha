@@ -82,7 +82,6 @@ pub fn show(
         .data
         .tracks
         .iter()
-        .filter(|t| t.kind == TrackKind::Video)
         .count() as f32
         * state.view.track_height;
     state

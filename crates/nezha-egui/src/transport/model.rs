@@ -3,6 +3,7 @@ use eframe::egui;
 use super::data::TimelineData;
 use super::interaction::TimelineInteraction;
 use super::selection::TimelineSelection;
+use super::types::TrackKind;
 use super::view::TimelineView;
 
 #[derive(Clone, Debug)]
@@ -88,8 +89,8 @@ impl TimelineState {
         self.data.resize_clip_end_to(clip_id, new_end, self.fps);
     }
 
-    pub fn move_clip_to_track(&mut self, clip_id: usize, target_track_index: usize) {
+    pub fn move_clip_to_track(&mut self, clip_id: usize, target_track_index: usize, target_track_kind: TrackKind) {
         self.data
-            .move_clip_to_track(clip_id, target_track_index, &mut self.interaction);
+            .move_clip_to_track(clip_id, target_track_index, target_track_kind, &mut self.interaction);
     }
 }
