@@ -347,12 +347,14 @@ impl App {
                 continue;
             }
 
-            // Binary search: first note with start > midi_time
-            let upper = key_notes.partition_point(|n| n.start > midi_time);
+            // Binary search: last note with start <= midi_time
+            // key_notes is sorted ascending by start, so partition_point with <=
+            // returns the count of notes that have started at or before midi_time.
+            let upper = key_notes.partition_point(|n| n.start <= midi_time);
             total_notes += upper as u64;
 
-            // Binary search: first note with start > window_start
-            let lower = key_notes.partition_point(|n| n.start > window_start);
+            // Binary search: last note with start <= window_start
+            let lower = key_notes.partition_point(|n| n.start <= window_start);
             nps += (upper - lower) as u64;
 
             // Polyphony: scan notes in [lower..upper] for end >= midi_time.
@@ -370,25 +372,26 @@ impl App {
 
     fn update_counter_stats(&mut self, counter: &LayerData, midi_time: f64) -> (CounterStats, u64, u64) {
         let clip_id = counter.clip_id;
-        let mut stats = self.counter_stats.remove(&clip_id).unwrap_or_default();
 
-        let Some(midi_idx) = counter.midi_idx else {
-            return (stats, 0, 0);
-        };
+        // Early return when no MIDI is available — avoids HashMap lookup.
+        if counter.midi_idx.is_none() {
+            return (CounterStats::default(), 0, 0);
+        }
+        let midi_idx = counter.midi_idx.unwrap();
         let Some(entry) = self.project.midi.entries.get(midi_idx) else {
-            return (stats, 0, 0);
+            return (CounterStats::default(), 0, 0);
         };
         let midi = &entry.file;
 
         let (total_notes, polyphony, nps) = Self::compute_midi_stats(midi, midi_time);
+
+        let stats = self.counter_stats.entry(clip_id).or_default();
         stats.total_notes = total_notes;
         stats.max_nps = stats.max_nps.max(nps);
         stats.max_polyphony = stats.max_polyphony.max(polyphony);
         stats.last_midi_time = midi_time;
 
-        let result = stats.clone();
-        self.counter_stats.insert(clip_id, stats);
-        (result, polyphony, nps)
+        (stats.clone(), polyphony, nps)
     }
 
     fn render_counter_layers(
