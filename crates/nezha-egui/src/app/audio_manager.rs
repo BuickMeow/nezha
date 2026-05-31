@@ -46,7 +46,7 @@ struct RenderState {
 /// Parameters for [`AudioManager::start_render`].
 pub struct RenderParams<'a> {
     pub midi_idx: usize,
-    pub midi_path: &'a str,
+    pub midi: &'a nezha_core::MidiFile,
     pub sample_rate: u32,
     pub channels: ChannelCount,
     pub use_limiter: bool,
@@ -96,13 +96,7 @@ impl AudioManager {
 
     /// Start the xsynth render in a background thread.
     pub fn start_render(&mut self, p: &RenderParams<'_>) {
-        let midi = match nezha_core::MidiFile::load(p.midi_path) {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::error!("AudioManager: load MIDI failed: {}", e);
-                return;
-            }
-        };
+        let midi = p.midi.clone();
 
         let config = nezha_xsynth::RenderConfig {
             sample_rate: p.sample_rate,

@@ -320,24 +320,25 @@ impl App {
                     .iter()
                     .position(|e| e.path == midi_path);
                 if let Some(idx) = midi_idx {
-                    let sf_paths: Vec<_> = self
-                        .project
-                        .soundfonts
-                        .iter()
-                        .map(|sf| sf.path.clone())
-                        .collect();
-                    let cpath = self.audio_manager.cached_midi_path.clone();
-                    self.audio_manager
-                        .start_render(&audio_manager::RenderParams {
-                            midi_idx: idx,
-                            midi_path: &cpath,
-                            sample_rate: self.project.render.audio_sample_rate,
-                            channels: self.project.render.audio_channels,
-                            use_limiter: self.project.render.audio_use_limiter,
-                            layers: self.project.render.audio_layers,
-                            min_velocity: self.project.render.audio_min_velocity,
-                            soundfont_paths: &sf_paths,
-                        });
+                    if let Some(entry) = self.project.midi.entries.get(idx) {
+                        let sf_paths: Vec<_> = self
+                            .project
+                            .soundfonts
+                            .iter()
+                            .map(|sf| sf.path.clone())
+                            .collect();
+                        self.audio_manager
+                            .start_render(&audio_manager::RenderParams {
+                                midi_idx: idx,
+                                midi: &entry.file,
+                                sample_rate: self.project.render.audio_sample_rate,
+                                channels: self.project.render.audio_channels,
+                                use_limiter: self.project.render.audio_use_limiter,
+                                layers: self.project.render.audio_layers,
+                                min_velocity: self.project.render.audio_min_velocity,
+                                soundfont_paths: &sf_paths,
+                            });
+                    }
                 }
             }
         }
