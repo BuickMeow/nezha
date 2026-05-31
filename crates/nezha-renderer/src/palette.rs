@@ -7,8 +7,8 @@ const PALETTE_SATURATION: f32 = 0.8;
 /// Value (brightness) used in the generated palette.
 const PALETTE_VALUE: f32 = 1.0;
 
-/// Generate a deterministic pseudo-random HSV palette with 128 entries.
-pub fn random_palette() -> [[f32; 3]; 128] {
+/// Generate a deterministic HSV palette with 128 entries.
+pub fn default_palette() -> [[f32; 3]; 128] {
     let mut palette = [[0.0f32; 3]; 128];
     for (i, color) in palette.iter_mut().enumerate() {
         let hue = ((i as f32 * PALETTE_HUE_MULT) % 1.0) * 360.0;

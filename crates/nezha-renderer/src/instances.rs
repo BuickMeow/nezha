@@ -106,16 +106,13 @@ pub(crate) fn build_instances(p: &mut BuildInstancesParams<'_>) -> usize {
     note_count
 }
 
-/// Build a single `NoteInstance` from screen-space coordinates and color.
-#[allow(clippy::too_many_arguments)]
-fn build_note_instance(
+/// Build a single `NoteInstance` from screen-space coordinates, color, and velocity.
+fn make_note_instance(
     x: f32,
     y: f32,
     w: f32,
     h: f32,
-    r: f32,
-    g: f32,
-    b: f32,
+    color: [f32; 3],
     velocity: u8,
     style: &RenderStyle,
 ) -> NoteInstance {
@@ -124,7 +121,7 @@ fn build_note_instance(
         y,
         w,
         h,
-        rgba_packed: pack_rgba(r, g, b, 1.0),
+        rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
         props_packed: pack_props(
             style.rounding * f32::min(w, h),
             style.border_width * w / 2.0,
@@ -178,6 +175,24 @@ fn build_instances_parallel(
     merge_chunk_results(chunk_results, instances, active_keys, active_colors);
 }
 
+/// 时间模式渲染参数。
+struct TimeParams {
+    time: f64,
+    time_top: f64,
+    time_bottom: f64,
+    screen_top: f64,
+    pps: f64,
+}
+
+/// Tick 模式渲染参数。
+struct TickParams {
+    time: f64,
+    tick_at_top: f64,
+    scroll_tick: f64,
+    screen_bottom: f64,
+    ppt: f64,
+}
+
 fn build_instances_time(
     instances: &mut Vec<NoteInstance>,
     layouts: &[(f32, f32)],
@@ -198,6 +213,8 @@ fn build_instances_time(
     let time_top = time + effective_h / pps;
     let time_bottom = time;
 
+    let tp = TimeParams { time, time_top, time_bottom, screen_top, pps };
+
     build_instances_parallel(
         render_keys,
         scan_indices,
@@ -205,19 +222,7 @@ fn build_instances_time(
         active_keys,
         active_colors,
         |result, key, scan| {
-            append_key_instances_time(
-                result,
-                key,
-                layouts,
-                scan,
-                time,
-                time_top,
-                time_bottom,
-                screen_top,
-                pps,
-                midi,
-                style,
-            );
+            append_key_instances_time(result, key, layouts, scan, &tp, midi, style);
         },
     );
 }
@@ -246,6 +251,8 @@ fn build_instances_tick(
     let tick_at_top = scroll_tick + visible_ticks;
     let screen_bottom = effective_h + scroll_tick * ppt;
 
+    let tp = TickParams { time, tick_at_top, scroll_tick, screen_bottom, ppt };
+
     build_instances_parallel(
         render_keys,
         scan_indices,
@@ -253,34 +260,17 @@ fn build_instances_tick(
         active_keys,
         active_colors,
         |result, key, scan| {
-            append_key_instances_tick(
-                result,
-                key,
-                layouts,
-                scan,
-                time,
-                tick_at_top,
-                scroll_tick,
-                screen_bottom,
-                ppt,
-                midi,
-                style,
-            );
+            append_key_instances_tick(result, key, layouts, scan, &tp, midi, style);
         },
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn append_key_instances_time(
     result: &mut KeyChunkBuildResult,
     key: u8,
     layouts: &[(f32, f32)],
     scan: usize,
-    time: f64,
-    time_top: f64,
-    time_bottom: f64,
-    screen_top: f64,
-    pps: f64,
+    tp: &TimeParams,
     midi: &dyn NoteSource,
     style: &RenderStyle,
 ) {
@@ -291,48 +281,35 @@ fn append_key_instances_time(
     let (x, w) = layouts[key as usize];
 
     for note in &notes[scan.min(notes.len())..] {
-        if note.start > time_top {
+        if note.start > tp.time_top {
             break;
         }
-        if note.end <= time_bottom {
+        if note.end <= tp.time_bottom {
             continue;
         }
 
         let trk = note.track as usize % 128;
-        let [r, g, b] = style.palette[trk];
-        if note.start <= time && time < note.end {
+        let color = style.palette[trk];
+        if note.start <= tp.time && tp.time < note.end {
             result.active_keys[key as usize] = true;
-            result.active_colors[key as usize] = [r, g, b];
+            result.active_colors[key as usize] = color;
         }
 
-        let note_bottom = (screen_top - note.start * pps) as f32;
-        let note_top = (screen_top - note.end * pps) as f32;
+        let note_bottom = (tp.screen_top - note.start * tp.pps) as f32;
+        let note_top = (tp.screen_top - note.end * tp.pps) as f32;
         let h = (note_bottom - note_top).max(1.0);
-        result.instances.push(build_note_instance(
-            x,
-            note_top,
-            w,
-            h,
-            r,
-            g,
-            b,
-            note.velocity,
-            style,
+        result.instances.push(make_note_instance(
+            x, note_top, w, h, color, note.velocity, style,
         ));
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn append_key_instances_tick(
     result: &mut KeyChunkBuildResult,
     key: u8,
     layouts: &[(f32, f32)],
     scan: usize,
-    time: f64,
-    tick_at_top: f64,
-    scroll_tick: f64,
-    screen_bottom: f64,
-    ppt: f64,
+    tp: &TickParams,
     midi: &dyn NoteSource,
     style: &RenderStyle,
 ) {
@@ -343,33 +320,25 @@ fn append_key_instances_tick(
     let (x, w) = layouts[key as usize];
 
     for note in &notes[scan.min(notes.len())..] {
-        if (note.start_tick as f64) > tick_at_top + 1.0 {
+        if (note.start_tick as f64) > tp.tick_at_top + 1.0 {
             break;
         }
-        if (note.end_tick as f64) <= scroll_tick {
+        if (note.end_tick as f64) <= tp.scroll_tick {
             continue;
         }
 
         let trk = note.track as usize % 128;
-        let [r, g, b] = style.palette[trk];
-        if note.start <= time && time < note.end {
+        let color = style.palette[trk];
+        if note.start <= tp.time && tp.time < note.end {
             result.active_keys[key as usize] = true;
-            result.active_colors[key as usize] = [r, g, b];
+            result.active_colors[key as usize] = color;
         }
 
-        let note_top = (screen_bottom - note.end_tick as f64 * ppt) as f32;
-        let note_bottom = (screen_bottom - note.start_tick as f64 * ppt) as f32;
+        let note_top = (tp.screen_bottom - note.end_tick as f64 * tp.ppt) as f32;
+        let note_bottom = (tp.screen_bottom - note.start_tick as f64 * tp.ppt) as f32;
         let h = (note_bottom - note_top).max(1.0);
-        result.instances.push(build_note_instance(
-            x,
-            note_top,
-            w,
-            h,
-            r,
-            g,
-            b,
-            note.velocity,
-            style,
+        result.instances.push(make_note_instance(
+            x, note_top, w, h, color, note.velocity, style,
         ));
     }
 }

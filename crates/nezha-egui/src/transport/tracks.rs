@@ -8,6 +8,33 @@ use crate::transport::{
 };
 use eframe::egui;
 
+/// Clip 交互的上下文信息（不含可变引用）。
+struct ClipInteractionContext<'a> {
+    layout: &'a TimelineLayout,
+    view: &'a TimelineView,
+    track_rect: egui::Rect,
+    track_kind_index: usize,
+    track_kind: TrackKind,
+    clip_kind: ClipKind,
+    clip_id: usize,
+    clip_start: f32,
+    clip_end: f32,
+}
+
+/// Track 行绘制的上下文信息（不含可变引用）。
+struct TrackRowContext<'a> {
+    layout: &'a TimelineLayout,
+    metrics: &'a TimelineMetrics,
+    view: &'a TimelineView,
+    colors: &'a ThemeColors,
+    painter: &'a egui::Painter,
+    selected_id: Option<usize>,
+    track_kind_index: usize,
+    track_kind: TrackKind,
+    _dragged_clip_kind: Option<ClipKind>,
+    fps: u32,
+}
+
 pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -> (f32, bool) {
     let mut clip_clicked = false;
     let has_video = ctx
@@ -45,23 +72,26 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
             .enumerate()
             .filter(|(_, track)| track.kind == TrackKind::Video)
         {
+            let row_ctx = TrackRowContext {
+                layout: ctx.layout,
+                metrics: ctx.metrics,
+                view,
+                colors: ctx.c,
+                painter,
+                selected_id,
+                track_kind_index: video_track_index,
+                track_kind: TrackKind::Video,
+                _dragged_clip_kind: dragged_clip_kind,
+                fps,
+            };
             let (new_y, row_clicked) = draw_track_row(
                 ctx.ui,
-                painter,
-                ctx.c,
-                ctx.layout,
-                ctx.metrics,
-                view,
-                selected_id,
+                &row_ctx,
                 track,
                 y,
                 &ctx.state.interaction.clip_drag,
                 ctx.commands,
                 track_index,
-                video_track_index,
-                TrackKind::Video,
-                dragged_clip_kind,
-                fps,
             );
             y = new_y;
             video_track_index += 1;
@@ -77,23 +107,26 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
             .enumerate()
             .filter(|(_, track)| track.kind == TrackKind::Audio)
         {
+            let row_ctx = TrackRowContext {
+                layout: ctx.layout,
+                metrics: ctx.metrics,
+                view,
+                colors: ctx.c,
+                painter,
+                selected_id,
+                track_kind_index: audio_track_index,
+                track_kind: TrackKind::Audio,
+                _dragged_clip_kind: dragged_clip_kind,
+                fps,
+            };
             let (new_y, row_clicked) = draw_track_row(
                 ctx.ui,
-                painter,
-                ctx.c,
-                ctx.layout,
-                ctx.metrics,
-                view,
-                selected_id,
+                &row_ctx,
                 track,
                 y,
                 &ctx.state.interaction.clip_drag,
                 ctx.commands,
                 track_index,
-                audio_track_index,
-                TrackKind::Audio,
-                dragged_clip_kind,
-                fps,
             );
             y = new_y;
             audio_track_index += 1;
@@ -240,9 +273,7 @@ fn darkened_color(color: egui::Color32) -> egui::Color32 {
     )
 }
 
-/// 绘制 clip 视觉，如果提供了 content_rect 则绘制三段色。
-/// content_start_x / content_end_x 是内容区域的左右 x 边界（clip_rect 坐标系内）。
-#[allow(clippy::too_many_arguments)]
+/// 绘制 clip 视觉，如果提供了 content_edges 则绘制三段色。
 fn draw_clip_visual(
     painter: &egui::Painter,
     metrics: &TimelineMetrics,
@@ -251,11 +282,10 @@ fn draw_clip_visual(
     clip_color: egui::Color32,
     clip_name: &str,
     is_selected: bool,
-    content_start_x: Option<f32>,
-    content_end_x: Option<f32>,
+    content_edges: Option<(f32, f32)>,
 ) {
     // ── 三段式绘制 ──
-    if let (Some(csx), Some(cex)) = (content_start_x, content_end_x) {
+    if let Some((csx, cex)) = content_edges {
         let csx = csx.clamp(clip_rect.min.x, clip_rect.max.x);
         let cex = cex.clamp(clip_rect.min.x, clip_rect.max.x);
 
@@ -411,19 +441,9 @@ fn handle_drag_to_track(
 }
 
 /// Handle drag interactions for a selected clip (resize left/right, move).
-#[allow(clippy::too_many_arguments)]
 fn handle_selected_clip_interaction(
     ui: &mut egui::Ui,
-    layout: &TimelineLayout,
-    view: &TimelineView,
-    track_rect: egui::Rect,
-    _track_index: usize,
-    track_kind_index: usize,
-    track_kind: TrackKind,
-    clip_kind: ClipKind,
-    clip_id: usize,
-    clip_start: f32,
-    clip_end: f32,
+    ctx: &ClipInteractionContext<'_>,
     hit_areas: &super::hit_test::ClipHitAreas,
     clip_rect: egui::Rect,
     active_clip_drag: &mut Option<ClipDragState>,
@@ -434,24 +454,24 @@ fn handle_selected_clip_interaction(
     let left_interact = ui
         .interact(
             hit_areas.left_edge,
-            egui::Id::new(("clip_left", clip_id)),
+            egui::Id::new(("clip_left", ctx.clip_id)),
             egui::Sense::drag(),
         )
         .on_hover_cursor(egui::CursorIcon::ResizeWest);
     if left_interact.drag_started() {
-        let pointer_time = view.time_at_screen_x(
-            &layout.timeline_rect,
+        let pointer_time = ctx.view.time_at_screen_x(
+            &ctx.layout.timeline_rect,
             left_interact
                 .interact_pointer_pos()
                 .map(|pos| pos.x)
                 .unwrap_or(clip_rect.min.x),
         );
         let drag_state = ClipDragState {
-            clip_id,
+            clip_id: ctx.clip_id,
             mode: ClipDragMode::ResizeStart,
             anchor_pointer_time: pointer_time,
-            anchor_start: clip_start,
-            anchor_end: clip_end,
+            anchor_start: ctx.clip_start,
+            anchor_end: ctx.clip_end,
             track_was_inserted: false,
         };
         *active_clip_drag = Some(drag_state);
@@ -461,40 +481,40 @@ fn handle_selected_clip_interaction(
         if let (Some(drag), Some(pointer_pos)) = (
             active_clip_drag.as_ref(),
             left_interact.interact_pointer_pos(),
-        ) && drag.clip_id == clip_id
+        ) && drag.clip_id == ctx.clip_id
             && drag.mode == ClipDragMode::ResizeStart
         {
-            let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+            let pointer_time = ctx.view.time_at_screen_x(&ctx.layout.timeline_rect, pointer_pos.x);
             let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
             commands.push(TimelineCommand::ResizeClipStartTo {
-                clip_id,
+                clip_id: ctx.clip_id,
                 start: new_start,
             });
         }
-        commands.push(TimelineCommand::SelectClip(clip_id));
-        *dragged_clip_id = Some(clip_id);
+        commands.push(TimelineCommand::SelectClip(ctx.clip_id));
+        *dragged_clip_id = Some(ctx.clip_id);
     }
     let right_interact = ui
         .interact(
             hit_areas.right_edge,
-            egui::Id::new(("clip_right", clip_id)),
+            egui::Id::new(("clip_right", ctx.clip_id)),
             egui::Sense::drag(),
         )
         .on_hover_cursor(egui::CursorIcon::ResizeEast);
     if right_interact.drag_started() {
-        let pointer_time = view.time_at_screen_x(
-            &layout.timeline_rect,
+        let pointer_time = ctx.view.time_at_screen_x(
+            &ctx.layout.timeline_rect,
             right_interact
                 .interact_pointer_pos()
                 .map(|pos| pos.x)
                 .unwrap_or(clip_rect.max.x),
         );
         let drag_state = ClipDragState {
-            clip_id,
+            clip_id: ctx.clip_id,
             mode: ClipDragMode::ResizeEnd,
             anchor_pointer_time: pointer_time,
-            anchor_start: clip_start,
-            anchor_end: clip_end,
+            anchor_start: ctx.clip_start,
+            anchor_end: ctx.clip_end,
             track_was_inserted: false,
         };
         *active_clip_drag = Some(drag_state);
@@ -504,46 +524,46 @@ fn handle_selected_clip_interaction(
         if let (Some(drag), Some(pointer_pos)) = (
             active_clip_drag.as_ref(),
             right_interact.interact_pointer_pos(),
-        ) && drag.clip_id == clip_id
+        ) && drag.clip_id == ctx.clip_id
             && drag.mode == ClipDragMode::ResizeEnd
         {
-            let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+            let pointer_time = ctx.view.time_at_screen_x(&ctx.layout.timeline_rect, pointer_pos.x);
             let new_end = drag.anchor_end + (pointer_time - drag.anchor_pointer_time);
             commands.push(TimelineCommand::ResizeClipEndTo {
-                clip_id,
+                clip_id: ctx.clip_id,
                 end: new_end,
             });
         }
-        commands.push(TimelineCommand::SelectClip(clip_id));
-        *dragged_clip_id = Some(clip_id);
+        commands.push(TimelineCommand::SelectClip(ctx.clip_id));
+        *dragged_clip_id = Some(ctx.clip_id);
     }
     // Only create move interact if there's space between resize edges.
     if hit_areas.middle_rect.width() > 0.0 {
         let mid_interact = ui
             .interact(
                 hit_areas.middle_rect,
-                egui::Id::new(("clip_mid", clip_id)),
+                egui::Id::new(("clip_mid", ctx.clip_id)),
                 egui::Sense::drag(),
             )
             .on_hover_cursor(egui::CursorIcon::Grab);
         if mid_interact.clicked() {
-            commands.push(TimelineCommand::SelectClip(clip_id));
+            commands.push(TimelineCommand::SelectClip(ctx.clip_id));
             *clip_clicked = true;
         }
         if mid_interact.drag_started() {
-            let pointer_time = view.time_at_screen_x(
-                &layout.timeline_rect,
+            let pointer_time = ctx.view.time_at_screen_x(
+                &ctx.layout.timeline_rect,
                 mid_interact
                     .interact_pointer_pos()
                     .map(|pos| pos.x)
                     .unwrap_or(clip_rect.center().x),
             );
             let drag_state = ClipDragState {
-                clip_id,
+                clip_id: ctx.clip_id,
                 mode: ClipDragMode::Move,
                 anchor_pointer_time: pointer_time,
-                anchor_start: clip_start,
-                anchor_end: clip_end,
+                anchor_start: ctx.clip_start,
+                anchor_end: ctx.clip_end,
                 track_was_inserted: false,
             };
             *active_clip_drag = Some(drag_state);
@@ -553,25 +573,25 @@ fn handle_selected_clip_interaction(
             if let (Some(drag), Some(pointer_pos)) = (
                 active_clip_drag.as_ref(),
                 mid_interact.interact_pointer_pos(),
-            ) && drag.clip_id == clip_id
+            ) && drag.clip_id == ctx.clip_id
                 && drag.mode == ClipDragMode::Move
             {
-                let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+                let pointer_time = ctx.view.time_at_screen_x(&ctx.layout.timeline_rect, pointer_pos.x);
                 let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
                 commands.push(TimelineCommand::MoveClipToStart {
-                    clip_id,
+                    clip_id: ctx.clip_id,
                     start: new_start,
                 });
             }
-            commands.push(TimelineCommand::SelectClip(clip_id));
-            *dragged_clip_id = Some(clip_id);
+            commands.push(TimelineCommand::SelectClip(ctx.clip_id));
+            *dragged_clip_id = Some(ctx.clip_id);
             handle_drag_to_track(
                 ui,
-                track_rect,
-                track_kind_index,
-                track_kind,
-                clip_kind,
-                clip_id,
+                ctx.track_rect,
+                ctx.track_kind_index,
+                ctx.track_kind,
+                ctx.clip_kind,
+                ctx.clip_id,
                 commands,
             );
         }
@@ -579,19 +599,9 @@ fn handle_selected_clip_interaction(
 }
 
 /// Handle drag interactions for an unselected clip (move only).
-#[allow(clippy::too_many_arguments)]
 fn handle_unselected_clip_interaction(
     ui: &mut egui::Ui,
-    layout: &TimelineLayout,
-    view: &TimelineView,
-    track_rect: egui::Rect,
-    _track_index: usize,
-    track_kind_index: usize,
-    track_kind: TrackKind,
-    clip_kind: ClipKind,
-    clip_id: usize,
-    clip_start: f32,
-    clip_end: f32,
+    ctx: &ClipInteractionContext<'_>,
     clip_rect: egui::Rect,
     active_clip_drag: &mut Option<ClipDragState>,
     commands: &mut Vec<TimelineCommand>,
@@ -601,28 +611,28 @@ fn handle_unselected_clip_interaction(
     let clip_interact = ui
         .interact(
             clip_rect,
-            egui::Id::new(("timeline_clip", clip_id)),
+            egui::Id::new(("timeline_clip", ctx.clip_id)),
             egui::Sense::drag(),
         )
         .on_hover_cursor(egui::CursorIcon::Grab);
     if clip_interact.clicked() {
-        commands.push(TimelineCommand::SelectClip(clip_id));
+        commands.push(TimelineCommand::SelectClip(ctx.clip_id));
         *clip_clicked = true;
     }
     if clip_interact.drag_started() {
-        let pointer_time = view.time_at_screen_x(
-            &layout.timeline_rect,
+        let pointer_time = ctx.view.time_at_screen_x(
+            &ctx.layout.timeline_rect,
             clip_interact
                 .interact_pointer_pos()
                 .map(|pos| pos.x)
                 .unwrap_or(clip_rect.center().x),
         );
         let drag_state = ClipDragState {
-            clip_id,
+            clip_id: ctx.clip_id,
             mode: ClipDragMode::Move,
             anchor_pointer_time: pointer_time,
-            anchor_start: clip_start,
-            anchor_end: clip_end,
+            anchor_start: ctx.clip_start,
+            anchor_end: ctx.clip_end,
             track_was_inserted: false,
         };
         *active_clip_drag = Some(drag_state);
@@ -632,81 +642,71 @@ fn handle_unselected_clip_interaction(
         if let (Some(drag), Some(pointer_pos)) = (
             active_clip_drag.as_ref(),
             clip_interact.interact_pointer_pos(),
-        ) && drag.clip_id == clip_id
+        ) && drag.clip_id == ctx.clip_id
             && drag.mode == ClipDragMode::Move
         {
-            let pointer_time = view.time_at_screen_x(&layout.timeline_rect, pointer_pos.x);
+            let pointer_time = ctx.view.time_at_screen_x(&ctx.layout.timeline_rect, pointer_pos.x);
             let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
             commands.push(TimelineCommand::MoveClipToStart {
-                clip_id,
+                clip_id: ctx.clip_id,
                 start: new_start,
             });
         }
-        commands.push(TimelineCommand::SelectClip(clip_id));
-        *dragged_clip_id = Some(clip_id);
+        commands.push(TimelineCommand::SelectClip(ctx.clip_id));
+        *dragged_clip_id = Some(ctx.clip_id);
         handle_drag_to_track(
             ui,
-            track_rect,
-            track_kind_index,
-            track_kind,
-            clip_kind,
-            clip_id,
+            ctx.track_rect,
+            ctx.track_kind_index,
+            ctx.track_kind,
+            ctx.clip_kind,
+            ctx.clip_id,
             commands,
         );
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_track_row(
     ui: &mut egui::Ui,
-    painter: &egui::Painter,
-    c: &ThemeColors,
-    layout: &TimelineLayout,
-    metrics: &TimelineMetrics,
-    view: &TimelineView,
-    selected_id: Option<usize>,
+    ctx: &TrackRowContext<'_>,
     track: &Track,
     y: f32,
     clip_drag: &Option<ClipDragState>,
     commands: &mut Vec<TimelineCommand>,
     track_index: usize,
-    track_kind_index: usize,
-    track_kind: TrackKind,
-    _dragged_clip_kind: Option<ClipKind>,
-    fps: u32,
 ) -> (f32, bool) {
     let mut clip_clicked = false;
-    let visible_start = layout.visible_start;
-    let visible_end = layout.visible_end;
+    let visible_start = ctx.layout.visible_start;
+    let visible_end = ctx.layout.visible_end;
     let track_bg = match track.kind {
-        TrackKind::Video => c.video_track_bg,
-        TrackKind::Audio => c.audio_track_bg,
+        TrackKind::Video => ctx.colors.video_track_bg,
+        TrackKind::Audio => ctx.colors.audio_track_bg,
     };
 
-    let track_rect = layout.track_rect(y, view.track_height);
-    painter.rect_filled(track_rect, 0.0, track_bg);
-    painter.rect_stroke(
+    let track_rect = ctx.layout.track_rect(y, ctx.view.track_height);
+    ctx.painter.rect_filled(track_rect, 0.0, track_bg);
+    ctx.painter.rect_stroke(
         track_rect,
         0.0,
-        egui::Stroke::new(1.0, c.border),
+        egui::Stroke::new(1.0, ctx.colors.border),
         egui::StrokeKind::Inside,
     );
 
-    let header_rect = layout.header_rect(&track_rect, view.header_width);
+    let header_rect = ctx.layout.header_rect(&track_rect, ctx.view.header_width);
     let header_color = if track.muted {
-        c.header_bg_muted
+        ctx.colors.header_bg_muted
     } else {
-        c.header_bg
+        ctx.colors.header_bg
     };
-    painter.rect_filled(header_rect, 0.0, header_color);
-    painter.rect_stroke(
+    ctx.painter.rect_filled(header_rect, 0.0, header_color);
+    ctx.painter.rect_stroke(
         header_rect,
         0.0,
-        egui::Stroke::new(1.0, c.border),
+        egui::Stroke::new(1.0, ctx.colors.border),
         egui::StrokeKind::Inside,
     );
 
-    draw_track_header_controls(ui, painter, c, header_rect, track, track_index, commands);
+    draw_track_header_controls(ui, ctx.painter, ctx.colors, header_rect, track, track_index, commands);
 
     let mut dragged_clip_id = None;
     let primary_dragging = ui.input(|i| i.pointer.primary_down());
@@ -726,24 +726,26 @@ fn draw_track_row(
         let clip_name = &track.clips[clip_idx].name;
         let clip_color = track.clips[clip_idx].color;
         let clip_kind = track.clips[clip_idx].kind;
-        let hit_areas = clip_hit_areas(layout, metrics, view, &track_rect, clip_start, clip_end);
+        let hit_areas = clip_hit_areas(ctx.layout, ctx.metrics, ctx.view, &track_rect, clip_start, clip_end);
         let clip_rect = hit_areas.clip_rect;
         if clip_rect.width() > 0.0 {
-            let is_selected = selected_id == Some(clip_id);
+            let is_selected = ctx.selected_id == Some(clip_id);
             if !track.locked {
+                let clip_ctx = ClipInteractionContext {
+                    layout: ctx.layout,
+                    view: ctx.view,
+                    track_rect,
+                    track_kind_index: ctx.track_kind_index,
+                    track_kind: ctx.track_kind,
+                    clip_kind,
+                    clip_id,
+                    clip_start,
+                    clip_end,
+                };
                 if is_selected {
                     handle_selected_clip_interaction(
                         ui,
-                        layout,
-                        view,
-                        track_rect,
-                        track_index,
-                        track_kind_index,
-                        track_kind,
-                        clip_kind,
-                        clip_id,
-                        clip_start,
-                        clip_end,
+                        &clip_ctx,
                         &hit_areas,
                         clip_rect,
                         &mut active_clip_drag,
@@ -754,16 +756,7 @@ fn draw_track_row(
                 } else {
                     handle_unselected_clip_interaction(
                         ui,
-                        layout,
-                        view,
-                        track_rect,
-                        track_index,
-                        track_kind_index,
-                        track_kind,
-                        clip_kind,
-                        clip_id,
-                        clip_start,
-                        clip_end,
+                        &clip_ctx,
                         clip_rect,
                         &mut active_clip_drag,
                         commands,
@@ -784,32 +777,31 @@ fn draw_track_row(
             }
 
             // 只对 Waterfall clip 计算三段内容区域边界（像素 x 坐标）
-            let (content_start_x, content_end_x) =
+            let content_edges =
                 if track.clips[clip_idx].kind == ClipKind::Waterfall {
                     let clip = &track.clips[clip_idx];
                     if clip.content_start_offset > 0 || clip.content_end_offset > 0 {
-                        let cs_time = clip.content_start_time(fps);
-                        let ce_time = clip.content_end_time(fps);
-                        let csx = view.screen_x_for_time(&layout.timeline_rect, cs_time);
-                        let cex = view.screen_x_for_time(&layout.timeline_rect, ce_time);
-                        (Some(csx), Some(cex))
+                        let cs_time = clip.content_start_time(ctx.fps);
+                        let ce_time = clip.content_end_time(ctx.fps);
+                        let csx = ctx.view.screen_x_for_time(&ctx.layout.timeline_rect, cs_time);
+                        let cex = ctx.view.screen_x_for_time(&ctx.layout.timeline_rect, ce_time);
+                        Some((csx, cex))
                     } else {
-                        (None, None)
+                        None
                     }
                 } else {
-                    (None, None)
+                    None
                 };
 
             draw_clip_visual(
-                painter,
-                metrics,
+                ctx.painter,
+                ctx.metrics,
                 clip_rect,
                 &hit_areas,
                 clip_color,
                 &clip_name,
                 is_selected,
-                content_start_x,
-                content_end_x,
+                content_edges,
             );
         }
     }
@@ -844,5 +836,5 @@ fn draw_track_row(
         }
     }
 
-    (y + view.track_height, clip_clicked)
+    (y + ctx.view.track_height, clip_clicked)
 }

@@ -1,8 +1,8 @@
-use super::preview_layer::{self, LayerData};
-use super::project_state::ProjectState;
+use super::preview_layer;
+use super::project_state::{MediaStore, MidiStore, ProjectState};
 use super::render_context::export::ExportPipeline;
 use super::render_context::RenderContext;
-use crate::transport::{ClipKind, LayerCommon};
+use crate::transport::{ClipKind, LayerCommon, TrackClip};
 use nezha_compositor::BlendMode;
 use nezha_renderer::WaterfallLayer;
 use nezha_text::prepare_text;
@@ -117,7 +117,7 @@ impl PreviewRenderer {
 
     fn default_style() -> nezha_renderer::RenderStyle {
         nezha_renderer::RenderStyle {
-            palette: nezha_renderer::random_palette(),
+            palette: nezha_renderer::default_palette(),
             ..Default::default()
         }
     }
@@ -125,7 +125,7 @@ impl PreviewRenderer {
     fn render_solid_color_layer(
         render_ctx: &mut RenderContext,
         ctx: &mut LayerRenderContext<'_>,
-        clip: &LayerData,
+        clip: &TrackClip,
         rect: (f32, f32, f32, f32),
         is_first: bool,
     ) {
@@ -168,9 +168,9 @@ impl PreviewRenderer {
 
     fn render_waterfall_layer(
         render_ctx: &mut RenderContext,
-        project: &mut ProjectState,
+        midi_store: &MidiStore,
         ctx: &mut LayerRenderContext<'_>,
-        clip: &LayerData,
+        clip: &TrackClip,
         rect: (f32, f32, f32, f32),
         default_palette: [[f32; 3]; 128],
         is_first: bool,
@@ -178,7 +178,7 @@ impl PreviewRenderer {
         let Some(midi_idx) = clip.midi_idx else {
             return 0;
         };
-        let Some(entry) = project.midi.entries.get(midi_idx) else {
+        let Some(entry) = midi_store.entries.get(midi_idx) else {
             return 0;
         };
 
@@ -208,7 +208,7 @@ impl PreviewRenderer {
         };
 
         let renderer = render_ctx.get_or_create_renderer(
-            clip.clip_id,
+            clip.id,
             midi_idx,
             &entry.file,
             ctx.render_width,
@@ -225,7 +225,7 @@ impl PreviewRenderer {
         let note_count = renderer.total_instances();
 
         let blend_mode = clip.common.blend_mode;
-        render_ctx.with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
+        render_ctx.with_waterfall_renderer(clip.id, |renderer, encoder| {
             let mut wrapper = WaterfallLayer { renderer };
             nezha_compositor::render_layer(
                 encoder,
@@ -296,9 +296,9 @@ impl PreviewRenderer {
     fn render_media_clip(
         render_ctx: &mut RenderContext,
         cache: &mut std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
-        project: &mut ProjectState,
+        media: &mut MediaStore,
         ctx: &mut LayerRenderContext<'_>,
-        clip: &LayerData,
+        clip: &TrackClip,
         rect: (f32, f32, f32, f32),
         is_first: bool,
     ) {
@@ -307,7 +307,7 @@ impl PreviewRenderer {
         };
 
         // Static image: has pre-decoded RGBA
-        if let Some(entry) = project.media.get(media_idx)
+        if let Some(entry) = media.get(media_idx)
             && let Some(ref rgba) = entry.image_rgba
         {
             Self::render_media_layer(
@@ -327,7 +327,7 @@ impl PreviewRenderer {
 
         // Video: decode frame at current time (get_video_frame needs &mut)
         let clip_time = (ctx.time - clip.start).max(0.0) as f64;
-        if let Some(frame) = project.media.get_video_frame(media_idx, clip_time) {
+        if let Some(frame) = media.get_video_frame(media_idx, clip_time) {
             Self::render_media_layer(
                 render_ctx,
                 cache,
@@ -374,17 +374,17 @@ impl PreviewRenderer {
 
     fn update_counter_stats(
         counter_stats: &mut std::collections::HashMap<usize, CounterStats>,
-        project: &mut ProjectState,
-        counter: &LayerData,
+        midi_store: &MidiStore,
+        counter: &TrackClip,
         midi_time: f64,
     ) -> (CounterStats, u64, u64) {
-        let clip_id = counter.clip_id;
+        let clip_id = counter.id;
 
         if counter.midi_idx.is_none() {
             return (CounterStats::default(), 0, 0);
         }
         let midi_idx = counter.midi_idx.unwrap();
-        let Some(entry) = project.midi.entries.get(midi_idx) else {
+        let Some(entry) = midi_store.entries.get(midi_idx) else {
             return (CounterStats::default(), 0, 0);
         };
         let midi = &entry.file;
@@ -403,11 +403,11 @@ impl PreviewRenderer {
     fn render_counter_layers(
         &mut self,
         ctx: &mut LayerRenderContext<'_>,
-        counter_clips: &[LayerData],
+        counter_clips: &[&TrackClip],
         make_rect: &impl Fn(&LayerCommon, f32, f32) -> (f32, f32, f32, f32),
         total_instances: usize,
         fps: u32,
-        project: &mut ProjectState,
+        midi_store: &MidiStore,
     ) {
         let rw = ctx.render_width as f32;
         let rh = ctx.render_height as f32;
@@ -415,12 +415,12 @@ impl PreviewRenderer {
         for counter in counter_clips {
             let midi_time = (ctx.time - counter.song_start_time).max(0.0) as f64;
             let (stats, current_polyphony, current_nps) =
-                Self::update_counter_stats(&mut self.counter_stats, project, counter, midi_time);
+                Self::update_counter_stats(&mut self.counter_stats, midi_store, counter, midi_time);
 
             let Some(midi_idx) = counter.midi_idx else {
                 continue;
             };
-            let Some(entry) = project.midi.entries.get(midi_idx) else {
+            let Some(entry) = midi_store.entries.get(midi_idx) else {
                 continue;
             };
             let midi = &entry.file;
@@ -481,29 +481,17 @@ impl PreviewRenderer {
                 max_polyphony: stats.max_polyphony,
                 total_instances: total_instances as u64,
                 curr_sec: midi_time,
-                curr_time: nezha_text::format_time_mmss(midi_time),
-                cmil_time: nezha_text::format_time_mmss_millis(midi_time),
-                cfr_time: nezha_text::format_time_mmss_frame(
-                    midi_time,
-                    curr_frames % fps as u64,
-                    fps,
-                ),
+                curr_time: None,
+                cmil_time: None,
+                cfr_time: None,
                 total_sec,
-                total_time: nezha_text::format_time_mmss(total_sec),
-                tmil_time: nezha_text::format_time_mmss_millis(total_sec),
-                tfr_time: nezha_text::format_time_mmss_frame(
-                    total_sec,
-                    total_frames % fps as u64,
-                    fps,
-                ),
+                total_time: None,
+                tmil_time: None,
+                tfr_time: None,
                 rem_sec,
-                rem_time: nezha_text::format_time_mmss(rem_sec),
-                rmil_time: nezha_text::format_time_mmss_millis(rem_sec),
-                rfr_time: nezha_text::format_time_mmss_frame(
-                    rem_sec,
-                    (total_frames - curr_frames + fps as u64) % fps as u64,
-                    fps,
-                ),
+                rem_time: None,
+                rmil_time: None,
+                rfr_time: None,
                 curr_ticks,
                 total_ticks: midi.tick_length,
                 rem_ticks,
@@ -520,6 +508,7 @@ impl PreviewRenderer {
                 note_percent,
                 tick_percent,
                 time_percent,
+                fps,
             };
 
             let cfg = nezha_text::FormatConfig {
@@ -543,16 +532,16 @@ impl PreviewRenderer {
                 opacity,
             ];
 
-            if !self.text_layer_cache.contains_key(&counter.clip_id) {
+            if !self.text_layer_cache.contains_key(&counter.id) {
                 let layer = nezha_text::TextLayer::new(
                     &self.font_atlas,
                     self.render_ctx.device(),
                     self.render_ctx.queue(),
                     self.render_ctx.target_format(),
                 );
-                self.text_layer_cache.insert(counter.clip_id, layer);
+                self.text_layer_cache.insert(counter.id, layer);
             }
-            let text_layer = self.text_layer_cache.get_mut(&counter.clip_id).unwrap();
+            let text_layer = self.text_layer_cache.get_mut(&counter.id).unwrap();
             text_layer.set_text(text);
             text_layer.set_position([counter.common.position_x, counter.common.position_y]);
             text_layer.set_font_size(counter.font_size);
@@ -594,10 +583,14 @@ impl PreviewRenderer {
         render_height: u32,
         project: &mut ProjectState,
     ) {
+        let fps = project.timeline_state.fps;
+        let default_style = Self::default_style();
+
+        // Split borrows: immutable ref into tracks, mutable ref into midi/media
         let layers =
             preview_layer::collect_visible_layers(&project.timeline_state.data.tracks, time);
-        let default_style = Self::default_style();
-        let fps = project.timeline_state.fps;
+        let midi_store = &project.midi;
+        let media = &mut project.media;
 
         let preview_view = self.render_ctx.preview_view().clone();
         let mut ctx = LayerRenderContext {
@@ -608,7 +601,7 @@ impl PreviewRenderer {
         };
         let mut is_first = true;
         let mut total_instances = 0usize;
-        let mut counter_clips: Vec<LayerData> = Vec::new();
+        let mut counter_clips: Vec<&TrackClip> = Vec::new();
 
         let make_rect = |c: &LayerCommon, w: f32, h: f32| -> (f32, f32, f32, f32) {
             (
@@ -623,7 +616,7 @@ impl PreviewRenderer {
 
         for clip in &layers {
             if clip.kind == ClipKind::Counter {
-                counter_clips.push(clip.clone());
+                counter_clips.push(clip);
                 continue;
             }
 
@@ -643,7 +636,7 @@ impl PreviewRenderer {
                 ClipKind::Waterfall => {
                     let note_count = Self::render_waterfall_layer(
                         &mut self.render_ctx,
-                        project,
+                        midi_store,
                         &mut ctx,
                         clip,
                         rect,
@@ -666,7 +659,7 @@ impl PreviewRenderer {
                     Self::render_media_clip(
                         &mut self.render_ctx,
                         cache,
-                        project,
+                        media,
                         &mut ctx,
                         clip,
                         rect,
@@ -698,6 +691,9 @@ impl PreviewRenderer {
             });
         }
 
-        self.render_counter_layers(&mut ctx, &counter_clips, &make_rect, total_instances, fps, project);
+        // counter_clips borrows from layers (&TrackClip → project.timeline_state)
+        // midi_store borrows project.midi — disjoint from timeline_state, so we can't
+        // pass &project here. Instead, render_counter_layers already has midi_store.
+        self.render_counter_layers(&mut ctx, &counter_clips, &make_rect, total_instances, fps, midi_store);
     }
 }

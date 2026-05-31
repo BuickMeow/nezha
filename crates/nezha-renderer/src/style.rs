@@ -1,4 +1,4 @@
-use crate::palette::random_palette;
+use crate::palette::default_palette;
 
 /// How the renderer maps time to vertical position.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -29,7 +29,7 @@ impl Default for RenderStyle {
             border_width: 0.1,
             rounding: 0.0,
             track_index: 0,
-            palette: random_palette(),
+            palette: default_palette(),
             background: [0.0, 0.0, 0.0, 1.0],
             equal_key_width: false,
             keyboard_height: 0.0,
