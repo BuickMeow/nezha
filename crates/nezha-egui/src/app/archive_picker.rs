@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use super::loading::{MidiLoadEvent, MidiLoader};
 
-pub(super) struct ArchivePicker {
+pub(crate) struct ArchivePicker {
     pub(super) path: String,
     pub(super) archive: nezha_archive::Archive,
     pub(super) entries: Vec<nezha_archive::ArchiveEntry>,
@@ -26,7 +26,7 @@ impl ArchivePicker {
     }
 }
 
-pub(super) enum ArchivePickerState {
+pub(crate) enum ArchivePickerState {
     Opening {
         path: String,
         rx: mpsc::Receiver<
@@ -42,7 +42,7 @@ pub(super) enum ArchivePickerState {
 impl App {
     pub(super) fn show_archive_picker(&mut self, ui: &mut egui::Ui) {
         // 1) 处理 Opening 状态：检查后台线程是否完成
-        if let Some(ArchivePickerState::Opening { path, rx }) = &self.archive_picker
+        if let Some(ArchivePickerState::Opening { path, rx }) = &self.files.archive_picker
             && let Ok(result) = rx.try_recv()
         {
             match result {
@@ -50,7 +50,7 @@ impl App {
                     if entries.is_empty() {
                         self.project.last_error =
                             Some(AppError::Other("压缩包内没有找到 MIDI 文件".into()));
-                        self.archive_picker = None;
+                        self.files.archive_picker = None;
                         return;
                     }
                     // 只有一个 MIDI 文件时直接加载，跳过选择对话框
@@ -70,7 +70,7 @@ impl App {
                                         );
                                     let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
                                 });
-                                self.midi_loader = Some(MidiLoader {
+                                self.files.midi_loader = Some(MidiLoader {
                                     path: display_path,
                                     rx,
                                     current_progress: None,
@@ -81,7 +81,7 @@ impl App {
                                 self.project.last_error = Some(AppError::archive_read(e));
                             }
                         }
-                        self.archive_picker = None;
+                        self.files.archive_picker = None;
                         return;
                     }
                     let mut picker = ArchivePicker {
@@ -93,18 +93,18 @@ impl App {
                         filtered: Vec::new(),
                     };
                     picker.recompute_filter();
-                    self.archive_picker = Some(ArchivePickerState::Opened(picker));
+                    self.files.archive_picker = Some(ArchivePickerState::Opened(picker));
                 }
                 Err(e) => {
                     self.project.last_error = Some(AppError::archive_open(e));
-                    self.archive_picker = None;
+                    self.files.archive_picker = None;
                     return;
                 }
             }
         }
 
         // 2) 如果没有 picker 了，直接返回
-        let Some(state) = &mut self.archive_picker else {
+        let Some(state) = &mut self.files.archive_picker else {
             return;
         };
 
@@ -340,12 +340,12 @@ impl App {
             });
 
         if cancelled {
-            self.archive_picker = None;
+            self.files.archive_picker = None;
             return;
         }
 
         if confirmed
-            && let Some(ArchivePickerState::Opened(picker)) = self.archive_picker.take()
+            && let Some(ArchivePickerState::Opened(picker)) = self.files.archive_picker.take()
             && let Some(idx) = picker.selected_idx
         {
             let entry = &picker.entries[idx];
@@ -364,7 +364,7 @@ impl App {
                         let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
                     });
 
-                    self.midi_loader = Some(MidiLoader {
+                    self.files.midi_loader = Some(MidiLoader {
                         path: display_path,
                         rx,
                         current_progress: None,

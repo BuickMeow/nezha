@@ -9,7 +9,7 @@ use std::path::PathBuf;
 impl App {
     pub(super) fn handle_config_action(&mut self, action: config_panel::ConfigAction) {
         match action {
-            config_panel::ConfigAction::SelectMidi => self.pick_midi_file(),
+            config_panel::ConfigAction::SelectMidi => self.files.pick_midi_file(),
             config_panel::ConfigAction::AddWaterfall => {
                 self.add_waterfall_with_audio_prompt();
             }
@@ -29,7 +29,7 @@ impl App {
             }
             config_panel::ConfigAction::RemoveMidi(idx) => {
                 self.project.remove_midi(idx);
-                self.render_ctx.reset_midi_state();
+                self.renderer.render_ctx.reset_midi_state();
             }
             config_panel::ConfigAction::StartExport => {
                 self.start_export();
@@ -66,7 +66,7 @@ impl App {
                         .and_then(|n| n.to_str())
                         .unwrap_or("MIDI")
                         .to_string();
-                    self.audio_manager.prepare_render(name, entry.path.clone());
+                    self.audio.manager.prepare_render(name, entry.path.clone());
                 }
             }
             config_panel::ConfigAction::ImportMedia => {

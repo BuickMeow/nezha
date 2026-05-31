@@ -38,7 +38,7 @@ impl App {
                 self.project.playback.current_time =
                     (self.project.playback.current_time - frame_duration).max(0.0);
                 self.project.playback.start = None;
-                self.audio_player
+                self.audio.player
                     .seek_to(self.project.playback.current_time);
             }
 
@@ -47,7 +47,7 @@ impl App {
                     + frame_duration)
                     .min(self.project.duration());
                 self.project.playback.start = None;
-                self.audio_player
+                self.audio.player
                     .seek_to(self.project.playback.current_time);
             }
         }

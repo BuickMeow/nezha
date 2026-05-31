@@ -1,6 +1,7 @@
 use std::io::{BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::config::{EncoderBackend, ExportConfig, QualityPreset, VideoCodec};
@@ -11,6 +12,8 @@ pub enum EncoderError {
     Io(#[from] std::io::Error),
     #[error("ffmpeg exited with code {0:?}")]
     FfmpegFailed(Option<i32>),
+    #[error("ffmpeg write error: {0}")]
+    FfmpegWriteFailed(String),
     #[error("ffmpeg not found")]
     FfmpegNotFound,
     #[error("WAV error: {0}")]
@@ -29,6 +32,10 @@ pub struct FfmpegEncoder {
     /// Frame dimensions for BGRA→YUV420p conversion.
     width: u32,
     height: u32,
+    /// Captured ffmpeg stderr lines for error reporting.
+    stderr_buf: Arc<Mutex<Vec<String>>>,
+    /// IO error from the writer thread (if any).
+    writer_error: Arc<Mutex<Option<String>>>,
 }
 
 impl FfmpegEncoder {
@@ -56,8 +63,13 @@ impl FfmpegEncoder {
             .stderr(Stdio::piped())
             .spawn()?;
 
+        // Shared buffers for error reporting
+        let stderr_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let writer_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
         // ── stderr logger thread: read ffmpeg stderr in real-time ──
         let stderr = process.stderr.take().expect("ffmpeg stderr piped");
+        let stderr_buf_clone = stderr_buf.clone();
         thread::spawn(move || {
             let mut reader = std::io::BufReader::new(stderr);
             let mut line = String::new();
@@ -66,9 +78,12 @@ impl FfmpegEncoder {
                 match reader.read_line(&mut line) {
                     Ok(0) => break,
                     Ok(_) => {
-                        let trimmed = line.trim_end();
+                        let trimmed = line.trim_end().to_string();
                         if !trimmed.is_empty() {
                             tracing::warn!("[ffmpeg] {}", trimmed);
+                            if let Ok(mut buf) = stderr_buf_clone.lock() {
+                                buf.push(trimmed);
+                            }
                         }
                     }
                     Err(e) => {
@@ -86,13 +101,24 @@ impl FfmpegEncoder {
         // 小容量背压：8 帧缓冲 ≈ 64MB @ 1920x1080x4，避免编码速度慢时内存暴涨
         let (tx, rx) = crossbeam_channel::bounded::<Vec<u8>>(8);
 
+        let writer_error_clone = writer_error.clone();
         let join_handle = std::thread::spawn(move || {
             for frame_data in rx {
-                stdin.write_all(&frame_data)?;
+                if let Err(e) = stdin.write_all(&frame_data) {
+                    let msg = format!("write_all failed: {e}");
+                    if let Ok(mut err) = writer_error_clone.lock() {
+                        *err = Some(msg);
+                    }
+                    return Err(EncoderError::Io(e));
+                }
             }
-            // Flush remaining data so ffmpeg sees everything
-            stdin.flush()?;
-            // Drop stdin to signal EOF to ffmpeg
+            if let Err(e) = stdin.flush() {
+                let msg = format!("flush failed: {e}");
+                if let Ok(mut err) = writer_error_clone.lock() {
+                    *err = Some(msg);
+                }
+                return Err(EncoderError::Io(e));
+            }
             drop(stdin);
             Ok(())
         });
@@ -104,6 +130,8 @@ impl FfmpegEncoder {
             temp_wav,
             width: config.width,
             height: config.height,
+            stderr_buf,
+            writer_error,
         })
     }
 
@@ -121,9 +149,9 @@ impl FfmpegEncoder {
         }
 
         if let Some(sender) = &self.sender {
-            sender
-                .send(frame_data)
-                .map_err(|_| EncoderError::FfmpegFailed(None))?;
+            sender.send(frame_data).map_err(|_| {
+                self.build_write_error("channel disconnected (ffmpeg likely crashed or pipe broke)")
+            })?;
         }
         Ok(())
     }
@@ -134,16 +162,40 @@ impl FfmpegEncoder {
 
         // Wait for background thread (which flushes & drops stdin)
         if let Some(handle) = self.join_handle.take() {
-            handle
-                .join()
-                .map_err(|_| EncoderError::FfmpegFailed(None))??;
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    // Writer thread returned an IO error — enrich with stderr
+                    let stderr_lines = self.stderr_content();
+                    if stderr_lines.is_empty() {
+                        return Err(e);
+                    }
+                    return Err(EncoderError::FfmpegWriteFailed(format!(
+                        "{e}\nffmpeg stderr:\n{stderr_lines}"
+                    )));
+                }
+                Err(_) => {
+                    return Err(self.build_write_error("writer thread panicked"));
+                }
+            }
         }
 
         // Wait for ffmpeg process
         let status = self.process.wait()?;
         if !status.success() {
-            tracing::error!(code = status.code(), "ffmpeg exited with non-zero status");
-            return Err(EncoderError::FfmpegFailed(status.code()));
+            let stderr_lines = self.stderr_content();
+            tracing::error!(
+                code = status.code(),
+                stderr = %stderr_lines,
+                "ffmpeg exited with non-zero status"
+            );
+            let msg = match status.code() {
+                Some(code) => format!("ffmpeg exited with code {code}"),
+                None => "ffmpeg exited with unknown error".to_string(),
+            };
+            return Err(EncoderError::FfmpegWriteFailed(format!(
+                "{msg}\nffmpeg stderr:\n{stderr_lines}"
+            )));
         }
 
         tracing::info!("ffmpeg encoding completed successfully");
@@ -154,6 +206,29 @@ impl FfmpegEncoder {
         }
 
         Ok(())
+    }
+
+    /// Collect captured stderr lines into a single string.
+    fn stderr_content(&self) -> String {
+        self.stderr_buf
+            .lock()
+            .map(|buf| buf.join("\n"))
+            .unwrap_or_default()
+    }
+
+    /// Build a `FfmpegWriteFailed` error with writer error context and stderr.
+    fn build_write_error(&self, context: &str) -> EncoderError {
+        let mut parts = vec![context.to_string()];
+        if let Ok(writer_err) = self.writer_error.lock() {
+            if let Some(ref e) = *writer_err {
+                parts.push(format!("writer error: {e}"));
+            }
+        }
+        let stderr = self.stderr_content();
+        if !stderr.is_empty() {
+            parts.push(format!("ffmpeg stderr:\n{stderr}"));
+        }
+        EncoderError::FfmpegWriteFailed(parts.join("\n"))
     }
 }
 
