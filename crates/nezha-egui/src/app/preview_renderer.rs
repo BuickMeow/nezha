@@ -107,6 +107,14 @@ impl PreviewRenderer {
 
     // ── Layer rendering ──
 
+    fn clear_or_load(is_first: bool) -> wgpu::LoadOp<wgpu::Color> {
+        if is_first {
+            wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 })
+        } else {
+            wgpu::LoadOp::Load
+        }
+    }
+
     fn default_style() -> nezha_renderer::RenderStyle {
         nezha_renderer::RenderStyle {
             palette: nezha_renderer::random_palette(),
@@ -285,9 +293,9 @@ impl PreviewRenderer {
         }
     }
 
-    fn render_image_layer(
+    fn render_media_clip(
         render_ctx: &mut RenderContext,
-        image_cache: &mut std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
+        cache: &mut std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
         project: &mut ProjectState,
         ctx: &mut LayerRenderContext<'_>,
         clip: &LayerData,
@@ -297,86 +305,42 @@ impl PreviewRenderer {
         let Some(media_idx) = clip.media_idx else {
             return;
         };
-        let Some(entry) = project.media.get(media_idx) else {
-            return;
-        };
-        let (Some(rgba), w, h) = (&entry.image_rgba, entry.image_width, entry.image_height) else {
-            return;
-        };
 
-        let load_op = if is_first {
-            wgpu::LoadOp::Clear(wgpu::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            })
-        } else {
-            wgpu::LoadOp::Load
-        };
-        Self::render_media_layer(
-            render_ctx,
-            image_cache,
-            media_idx,
-            rgba,
-            w,
-            h,
-            ctx,
-            clip.common.blend_mode,
-            rect,
-            load_op,
-        );
-    }
-
-    fn render_video_layer(
-        render_ctx: &mut RenderContext,
-        video_cache: &mut std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
-        project: &mut ProjectState,
-        ctx: &mut LayerRenderContext<'_>,
-        clip: &LayerData,
-        rect: (f32, f32, f32, f32),
-        is_first: bool,
-    ) {
-        let Some(media_idx) = clip.media_idx else {
-            return;
-        };
-        let Some(entry) = project.media.get(media_idx) else {
-            return;
-        };
-        let w = entry.info.width;
-        let h = entry.info.height;
-        if w == 0 || h == 0 {
+        // Static image: has pre-decoded RGBA
+        if let Some(entry) = project.media.get(media_idx)
+            && let Some(ref rgba) = entry.image_rgba
+        {
+            Self::render_media_layer(
+                render_ctx,
+                cache,
+                media_idx,
+                rgba,
+                entry.image_width,
+                entry.image_height,
+                ctx,
+                clip.common.blend_mode,
+                rect,
+                Self::clear_or_load(is_first),
+            );
             return;
         }
 
+        // Video: decode frame at current time (get_video_frame needs &mut)
         let clip_time = (ctx.time - clip.start).max(0.0) as f64;
-        let frame = match project.media.get_video_frame(media_idx, clip_time) {
-            Some(f) => f,
-            None => return,
-        };
-
-        let load_op = if is_first {
-            wgpu::LoadOp::Clear(wgpu::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            })
-        } else {
-            wgpu::LoadOp::Load
-        };
-        Self::render_media_layer(
-            render_ctx,
-            video_cache,
-            media_idx,
-            &frame.rgba,
-            frame.width,
-            frame.height,
-            ctx,
-            clip.common.blend_mode,
-            rect,
-            load_op,
-        );
+        if let Some(frame) = project.media.get_video_frame(media_idx, clip_time) {
+            Self::render_media_layer(
+                render_ctx,
+                cache,
+                media_idx,
+                &frame.rgba,
+                frame.width,
+                frame.height,
+                ctx,
+                clip.common.blend_mode,
+                rect,
+                Self::clear_or_load(is_first),
+            );
+        }
     }
 
     // ── Counter stats ──
@@ -693,22 +657,15 @@ impl PreviewRenderer {
                     unreachable!();
                 }
                 ClipKind::Audio => {}
-                ClipKind::Image => {
-                    Self::render_image_layer(
+                ClipKind::Image | ClipKind::Video => {
+                    let cache = if clip.kind == ClipKind::Image {
+                        &mut self.image_layer_cache
+                    } else {
+                        &mut self.video_layer_cache
+                    };
+                    Self::render_media_clip(
                         &mut self.render_ctx,
-                        &mut self.image_layer_cache,
-                        project,
-                        &mut ctx,
-                        clip,
-                        rect,
-                        is_first,
-                    );
-                    is_first = false;
-                }
-                ClipKind::Video => {
-                    Self::render_video_layer(
-                        &mut self.render_ctx,
-                        &mut self.video_layer_cache,
+                        cache,
                         project,
                         &mut ctx,
                         clip,
