@@ -237,7 +237,7 @@ impl AudioManager {
             } else {
                 let name =
                     crate::transport::next_audio_track_name(&project.timeline_state.data.tracks);
-                let mut track = crate::transport::Track::new_audio(&name);
+                let mut track = crate::transport::Track::new(&name, crate::transport::TrackKind::Audio);
                 track.clips.push(clip);
                 project.timeline_state.data.tracks.push(track);
             }

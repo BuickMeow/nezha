@@ -236,21 +236,10 @@ pub struct Track {
 }
 
 impl Track {
-    pub fn new_video(name: &str) -> Self {
+    pub fn new(name: &str, kind: TrackKind) -> Self {
         Self {
             name: name.to_string(),
-            kind: TrackKind::Video,
-            clips: Vec::new(),
-            muted: false,
-            hidden: false,
-            locked: false,
-        }
-    }
-
-    pub fn new_audio(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            kind: TrackKind::Audio,
+            kind,
             clips: Vec::new(),
             muted: false,
             hidden: false,

@@ -4,7 +4,7 @@ pub mod layer;
 pub mod solid_color;
 pub mod util;
 
-pub use compositor::Compositor;
+pub use compositor::render_layer;
 pub use image_layer::ImageLayer;
 pub use layer::{BlendMode, Layer, LayerRenderParams, LayerRenderer};
 pub use solid_color::SolidColorLayer;

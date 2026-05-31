@@ -1,10 +1,12 @@
 use super::App;
+use super::RenderContext;
 use super::preview_layer::{self, LayerData};
 use crate::piano_view;
 use crate::transport::{ClipKind, LayerCommon};
 use eframe::egui;
-use nezha_compositor::{BlendMode, Compositor};
+use nezha_compositor::BlendMode;
 use nezha_renderer::WaterfallLayer;
+use nezha_text::prepare_text;
 
 #[derive(Clone, Debug, Default)]
 pub struct CounterStats {
@@ -15,7 +17,6 @@ pub struct CounterStats {
 }
 
 struct LayerRenderContext<'a> {
-    compositor: &'a mut Compositor,
     preview_view: &'a wgpu::TextureView,
     time: f32,
     render_width: u32,
@@ -98,7 +99,7 @@ impl App {
         let time = ctx.time;
         self.render_ctx
             .with_solid_color_layer(color, |solid, encoder| {
-                ctx.compositor.render_layer(
+                nezha_compositor::render_layer(
                     encoder,
                     solid,
                     preview_view,
@@ -173,7 +174,7 @@ impl App {
         self.render_ctx
             .with_waterfall_renderer(clip.clip_id, |renderer, encoder| {
                 let mut wrapper = WaterfallLayer { renderer };
-                ctx.compositor.render_layer(
+                nezha_compositor::render_layer(
                     encoder,
                     &mut wrapper,
                     ctx.preview_view,
@@ -186,6 +187,58 @@ impl App {
                 );
             });
         note_count
+    }
+
+    /// Shared logic for rendering a media layer (image or video) with caching.
+    fn render_media_layer(
+        render_ctx: &mut RenderContext,
+        cache: &mut std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
+        media_idx: usize,
+        rgba: &[u8],
+        w: u32,
+        h: u32,
+        ctx: &mut LayerRenderContext<'_>,
+        blend_mode: BlendMode,
+        rect: (f32, f32, f32, f32),
+        load_op: wgpu::LoadOp<wgpu::Color>,
+    ) {
+        if let Some(layer) = cache.get_mut(&media_idx) {
+            layer.update_texture(render_ctx.device(), render_ctx.queue(), rgba, w, h);
+            let encoder = render_ctx.encoder_mut();
+            nezha_compositor::render_layer(
+                encoder,
+                layer,
+                ctx.preview_view,
+                ctx.render_width,
+                ctx.render_height,
+                ctx.time as f64,
+                load_op,
+                blend_mode,
+                rect,
+            );
+        } else {
+            let mut layer = nezha_compositor::ImageLayer::new(
+                render_ctx.device(),
+                render_ctx.queue(),
+                render_ctx.target_format(),
+                rgba,
+                w,
+                h,
+            );
+            let encoder = render_ctx.encoder_mut();
+            nezha_compositor::render_layer(
+                encoder,
+                &mut layer,
+                ctx.preview_view,
+                ctx.render_width,
+                ctx.render_height,
+                ctx.time as f64,
+                load_op,
+                blend_mode,
+                rect,
+            );
+            cache.insert(media_idx, layer);
+        }
     }
 
     fn render_image_layer(
@@ -215,50 +268,18 @@ impl App {
         } else {
             wgpu::LoadOp::Load
         };
-
-        if let Some(layer) = self.image_layer_cache.get_mut(&media_idx) {
-            layer.update_texture(
-                self.render_ctx.device(),
-                self.render_ctx.queue(),
-                rgba,
-                w,
-                h,
-            );
-            let encoder = self.render_ctx.encoder_mut();
-            ctx.compositor.render_layer(
-                encoder,
-                layer,
-                ctx.preview_view,
-                ctx.render_width,
-                ctx.render_height,
-                ctx.time as f64,
-                load_op,
-                clip.common.blend_mode,
-                rect,
-            );
-        } else {
-            let mut layer = nezha_compositor::ImageLayer::new(
-                self.render_ctx.device(),
-                self.render_ctx.queue(),
-                self.render_ctx.target_format(),
-                rgba,
-                w,
-                h,
-            );
-            let encoder = self.render_ctx.encoder_mut();
-            ctx.compositor.render_layer(
-                encoder,
-                &mut layer,
-                ctx.preview_view,
-                ctx.render_width,
-                ctx.render_height,
-                ctx.time as f64,
-                load_op,
-                clip.common.blend_mode,
-                rect,
-            );
-            self.image_layer_cache.insert(media_idx, layer);
-        }
+        Self::render_media_layer(
+            &mut self.render_ctx,
+            &mut self.image_layer_cache,
+            media_idx,
+            rgba,
+            w,
+            h,
+            ctx,
+            clip.common.blend_mode,
+            rect,
+            load_op,
+        );
     }
 
     fn render_video_layer(
@@ -296,50 +317,18 @@ impl App {
         } else {
             wgpu::LoadOp::Load
         };
-
-        if let Some(layer) = self.video_layer_cache.get_mut(&media_idx) {
-            layer.update_texture(
-                self.render_ctx.device(),
-                self.render_ctx.queue(),
-                &frame.rgba,
-                frame.width,
-                frame.height,
-            );
-            let encoder = self.render_ctx.encoder_mut();
-            ctx.compositor.render_layer(
-                encoder,
-                layer,
-                ctx.preview_view,
-                ctx.render_width,
-                ctx.render_height,
-                ctx.time as f64,
-                load_op,
-                clip.common.blend_mode,
-                rect,
-            );
-        } else {
-            let mut layer = nezha_compositor::ImageLayer::new(
-                self.render_ctx.device(),
-                self.render_ctx.queue(),
-                self.render_ctx.target_format(),
-                &frame.rgba,
-                frame.width,
-                frame.height,
-            );
-            let encoder = self.render_ctx.encoder_mut();
-            ctx.compositor.render_layer(
-                encoder,
-                &mut layer,
-                ctx.preview_view,
-                ctx.render_width,
-                ctx.render_height,
-                ctx.time as f64,
-                load_op,
-                clip.common.blend_mode,
-                rect,
-            );
-            self.video_layer_cache.insert(media_idx, layer);
-        }
+        Self::render_media_layer(
+            &mut self.render_ctx,
+            &mut self.video_layer_cache,
+            media_idx,
+            &frame.rgba,
+            frame.width,
+            frame.height,
+            ctx,
+            clip.common.blend_mode,
+            rect,
+            load_op,
+        );
     }
 
     /// Compute MIDI statistics using binary search per key.
@@ -379,15 +368,15 @@ impl App {
         (total_notes, polyphony, nps)
     }
 
-    fn update_counter_stats(&mut self, counter: &LayerData, midi_time: f64) -> CounterStats {
+    fn update_counter_stats(&mut self, counter: &LayerData, midi_time: f64) -> (CounterStats, u64, u64) {
         let clip_id = counter.clip_id;
         let mut stats = self.counter_stats.remove(&clip_id).unwrap_or_default();
 
         let Some(midi_idx) = counter.midi_idx else {
-            return stats;
+            return (stats, 0, 0);
         };
         let Some(entry) = self.project.midi.entries.get(midi_idx) else {
-            return stats;
+            return (stats, 0, 0);
         };
         let midi = &entry.file;
 
@@ -399,7 +388,7 @@ impl App {
 
         let result = stats.clone();
         self.counter_stats.insert(clip_id, stats);
-        result
+        (result, polyphony, nps)
     }
 
     fn render_counter_layers(
@@ -415,7 +404,7 @@ impl App {
 
         for counter in counter_clips {
             let midi_time = (ctx.time - counter.song_start_time).max(0.0) as f64;
-            let stats = self.update_counter_stats(counter, midi_time);
+            let (stats, current_polyphony, current_nps) = self.update_counter_stats(counter, midi_time);
 
             let Some(midi_idx) = counter.midi_idx else {
                 continue;
@@ -453,8 +442,6 @@ impl App {
             } else {
                 0.0
             };
-
-            let (_, current_polyphony, current_nps) = Self::compute_midi_stats(midi, midi_time);
 
             let note_percent = if midi.note_count > 0 {
                 stats.total_notes as f64 / midi.note_count as f64 * 100.0
@@ -545,12 +532,16 @@ impl App {
                 opacity,
             ];
 
-            let mut text_layer = nezha_text::TextLayer::new(
-                &mut self.font_atlas,
-                self.render_ctx.device(),
-                self.render_ctx.queue(),
-                self.render_ctx.target_format(),
-            );
+            if !self.text_layer_cache.contains_key(&counter.clip_id) {
+                let layer = nezha_text::TextLayer::new(
+                    &self.font_atlas,
+                    self.render_ctx.device(),
+                    self.render_ctx.queue(),
+                    self.render_ctx.target_format(),
+                );
+                self.text_layer_cache.insert(counter.clip_id, layer);
+            }
+            let text_layer = self.text_layer_cache.get_mut(&counter.clip_id).unwrap();
             text_layer.set_text(text);
             text_layer.set_position([counter.common.position_x, counter.common.position_y]);
             text_layer.set_font_size(counter.font_size);
@@ -566,11 +557,14 @@ impl App {
             text_layer.set_letter_spacing(counter.letter_spacing);
             text_layer.set_min_advance(counter.min_advance);
 
+            let atlas = &mut self.font_atlas;
+            prepare_text(text_layer, atlas);
+
             let rect = make_rect(&counter.common, rw, rh);
             let encoder = self.render_ctx.encoder_mut();
-            ctx.compositor.render_layer(
+            nezha_compositor::render_layer(
                 encoder,
-                &mut text_layer,
+                text_layer,
                 ctx.preview_view,
                 ctx.render_width,
                 ctx.render_height,
@@ -588,10 +582,8 @@ impl App {
         let default_style = self.default_style();
         let fps = self.project.timeline_state.fps;
 
-        let mut compositor = Compositor::new();
         let preview_view = self.render_ctx.preview_view().clone();
         let mut ctx = LayerRenderContext {
-            compositor: &mut compositor,
             preview_view: &preview_view,
             time,
             render_width,
@@ -654,7 +646,7 @@ impl App {
         // 如果没有任何图层被渲染，清除为黑色
         if is_first {
             self.render_ctx.with_solid_color_layer([0.0, 0.0, 0.0, 1.0], |solid, encoder| {
-                ctx.compositor.render_layer(
+                nezha_compositor::render_layer(
                     encoder,
                     solid,
                     ctx.preview_view,

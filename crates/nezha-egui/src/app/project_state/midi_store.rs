@@ -123,7 +123,7 @@ impl MidiStore {
             track.clips.push(clip);
         } else {
             let name = crate::transport::next_video_track_name(&timeline_state.data.tracks);
-            let mut track = Track::new_video(&name);
+            let mut track = Track::new(&name, TrackKind::Video);
             track.clips.push(clip);
             timeline_state.data.tracks.insert(0, track);
         }

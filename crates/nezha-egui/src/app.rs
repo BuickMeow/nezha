@@ -42,6 +42,10 @@ pub struct App {
     pub(crate) image_layer_cache: std::collections::HashMap<usize, nezha_compositor::ImageLayer>,
     /// 上一帧的音频 clip 列表，用于检测静音状态变化。
     last_audio_clips: Vec<(usize, f32, f32)>,
+    /// 上次保存的配置 JSON，用于避免每帧重复写磁盘。
+    last_saved_config: String,
+    /// 每个 Counter clip 的 TextLayer 缓存（按 clip_id），避免每帧重建 GPU pipeline。
+    pub(crate) text_layer_cache: std::collections::HashMap<usize, nezha_text::TextLayer>,
 }
 
 impl App {
@@ -110,9 +114,12 @@ impl App {
             video_layer_cache: std::collections::HashMap::new(),
             image_layer_cache: std::collections::HashMap::new(),
             last_audio_clips: Vec::new(),
+            last_saved_config: String::new(),
+            text_layer_cache: std::collections::HashMap::new(),
         };
 
         let cfg = crate::config::Config::load();
+        app.last_saved_config = serde_json::to_string(&cfg).unwrap_or_default();
         cfg.apply(&mut app.ui, &mut app.project);
         app.ui.refresh_audio_devices();
         app
@@ -128,9 +135,13 @@ impl App {
         self.audio_manager.prepare_render(file_name, path);
     }
 
-    fn save_config(&self) {
+    fn save_config(&mut self) {
         let cfg = crate::config::Config::from_ui(&self.ui, &self.project);
-        cfg.save();
+        let json = serde_json::to_string(&cfg).unwrap_or_default();
+        if json != self.last_saved_config {
+            self.last_saved_config = json;
+            cfg.save();
+        }
     }
 
     fn add_waterfall_with_audio_prompt(&mut self) {

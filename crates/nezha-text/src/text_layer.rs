@@ -40,8 +40,11 @@ struct TextUniforms {
 }
 
 /// A compositor layer that renders a string of text using a GPU glyph atlas.
-pub struct TextLayer<'a> {
-    atlas: &'a mut FontAtlas,
+#[allow(dead_code)] // atlas_texture_view, atlas_sampler, format: stored to keep GPU resources alive
+pub struct TextLayer {
+    atlas_texture_view: wgpu::TextureView,
+    atlas_sampler: wgpu::Sampler,
+    format: TextureFormat,
     device: Device,
     queue: Queue,
     text: String,
@@ -73,9 +76,9 @@ pub struct TextLayer<'a> {
     pipelines: HashMap<BlendMode, RenderPipeline>,
 }
 
-impl<'a> TextLayer<'a> {
+impl TextLayer {
     pub fn new(
-        atlas: &'a mut FontAtlas,
+        atlas: &FontAtlas,
         device: &Device,
         queue: &Queue,
         format: TextureFormat,
@@ -211,7 +214,9 @@ impl<'a> TextLayer<'a> {
         }
 
         Self {
-            atlas,
+            atlas_texture_view: atlas.texture_view().clone(),
+            atlas_sampler: atlas.sampler().clone(),
+            format,
             device: device.clone(),
             queue: queue.clone(),
             text: String::new(),
@@ -379,12 +384,11 @@ impl<'a> TextLayer<'a> {
         });
     }
 
-    fn rebuild_vertices(&mut self) {
+    fn rebuild_vertices(&mut self, atlas: &mut FontAtlas) {
         let mut vertices = Vec::with_capacity(self.text.len() * 6 * 10);
 
         // 获取字体真实 metrics，用 ascent 作为 baseline 到顶部的距离。
-        let ascent = self
-            .atlas
+        let ascent = atlas
             .line_metrics(self.font_size)
             .map(|m| m.ascent)
             .unwrap_or(self.font_size as f32);
@@ -398,8 +402,7 @@ impl<'a> TextLayer<'a> {
             let mut pen_x = 0.0f32;
             let mut glyphs: Vec<(char, f32, crate::atlas::GlyphInfo)> = Vec::new();
             for c in line.chars() {
-                let Some(glyph) = self
-                    .atlas
+                let Some(glyph) = atlas
                     .glyph(c, self.font_size, &self.device, &self.queue)
                 else {
                     continue;
@@ -536,13 +539,20 @@ impl<'a> TextLayer<'a> {
     }
 }
 
-impl<'a> LayerRenderer for TextLayer<'a> {
-    fn prepare(&mut self, width: u32, height: u32, _time: f64) {
-        if self.dirty {
-            self.rebuild_vertices();
-            self.dirty = false;
-        }
+/// Rebuild vertices if the text layer is dirty (text, font size, position, etc. changed).
+///
+/// This is a standalone function because `rebuild_vertices` needs `&mut FontAtlas`
+/// (for lazy glyph rasterization), while `LayerRenderer::prepare` only has `&mut self`.
+/// Call this before `render_layer` to ensure vertices are up-to-date.
+pub fn prepare_text(layer: &mut TextLayer, atlas: &mut FontAtlas) {
+    if layer.dirty {
+        layer.rebuild_vertices(atlas);
+        layer.dirty = false;
+    }
+}
 
+impl LayerRenderer for TextLayer {
+    fn prepare(&mut self, width: u32, height: u32, _time: f64) {
         let uniforms = TextUniforms {
             screen_size: [width as f32, height as f32],
             _pad: [0.0; 2],

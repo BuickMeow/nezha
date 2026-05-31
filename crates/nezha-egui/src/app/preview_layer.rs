@@ -91,7 +91,7 @@ pub(super) fn collect_visible_layers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::{ClipKind, Track, TrackClip};
+    use crate::transport::{ClipKind, Track, TrackClip, TrackKind};
 
     fn make_waterfall_clip(id: usize, start: f32, end: f32) -> TrackClip {
         let mut clip = TrackClip::new_waterfall(id, None);
@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn test_collect_visible_layers_single() {
-        let mut track = Track::new_video("test");
+        let mut track = Track::new("test", TrackKind::Video);
         track.clips.push(make_waterfall_clip(1, 0.0, 10.0));
         let layers = collect_visible_layers(&[track], 5.0);
         assert_eq!(layers.len(), 1);
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_collect_visible_layers_outside_range() {
-        let mut track = Track::new_video("test");
+        let mut track = Track::new("test", TrackKind::Video);
         track.clips.push(make_waterfall_clip(1, 0.0, 10.0));
         let layers = collect_visible_layers(&[track], 15.0);
         assert!(layers.is_empty(), "clip should not be visible at time 15");
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_collect_visible_layers_reverse_order() {
-        let mut track = Track::new_video("test");
+        let mut track = Track::new("test", TrackKind::Video);
         track.clips.push(make_waterfall_clip(1, 0.0, 10.0));
         track.clips.push(make_waterfall_clip(2, 0.0, 10.0));
         let layers = collect_visible_layers(&[track], 5.0);

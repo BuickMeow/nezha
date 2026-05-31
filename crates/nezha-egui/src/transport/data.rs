@@ -22,7 +22,7 @@ pub struct TimelineData {
 impl Default for TimelineData {
     fn default() -> Self {
         Self {
-            tracks: vec![Track::new_video(&next_video_track_name(&[]))],
+            tracks: vec![Track::new(&next_video_track_name(&[]), TrackKind::Video)],
             next_clip_id: 1,
         }
     }
@@ -104,8 +104,7 @@ impl TimelineData {
         {
             empty_track.clips.push(clip);
         } else {
-            let mut track = Track::new_video(&name_fn(&self.tracks));
-            track.kind = target_kind;
+            let mut track = Track::new(&name_fn(&self.tracks), target_kind);
             track.clips.push(clip);
             self.tracks.insert(0, track);
         }
@@ -184,11 +183,7 @@ impl TimelineData {
             } else {
                 next_audio_track_name(&self.tracks)
             };
-            let mut track = if target_kind == TrackKind::Video {
-                Track::new_video(&track_name)
-            } else {
-                Track::new_audio(&track_name)
-            };
+            let mut track = Track::new(&track_name, target_kind);
             track.clips.push(clip);
             self.tracks.insert(0, track);
         }
@@ -284,10 +279,10 @@ impl TimelineData {
             .map(|d| d.track_was_inserted)
             .unwrap_or(false);
 
-        // 3. 根据目标轨道类型决定名称生成函数
-        let (name_prefix, new_track_fn): (&str, fn(&str) -> Track) = match target_track_kind {
-            TrackKind::Video => ("视频", Track::new_video),
-            TrackKind::Audio => ("音频", Track::new_audio),
+        // 3. 根据目标轨道类型决定名称前缀
+        let name_prefix = match target_track_kind {
+            TrackKind::Video => "视频",
+            TrackKind::Audio => "音频",
         };
 
         // 4. 计算目标位置
@@ -307,7 +302,7 @@ impl TimelineData {
             // 目标超出范围，创建新轨道（如果还没创建过）
             let count = same_kind_indices.len();
             let name = format!("{} {}", name_prefix, count + 1);
-            let new_track = new_track_fn(&name);
+            let new_track = Track::new(&name, target_track_kind);
             // 新轨道插入到同类轨道组的末尾
             let insert_pos = same_kind_indices.last().map(|&i| i + 1).unwrap_or(0);
             self.tracks.insert(insert_pos, new_track);
@@ -334,7 +329,7 @@ impl TimelineData {
             // 找不到目标轨道，创建新的
             let count = same_kind_indices.len();
             let name = format!("{} {}", name_prefix, count + 1);
-            let mut track = new_track_fn(&name);
+            let mut track = Track::new(&name, target_track_kind);
             track.clips.push(clip);
             self.tracks.push(track);
         }

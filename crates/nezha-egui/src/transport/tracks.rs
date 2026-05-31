@@ -104,6 +104,43 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
     (y, clip_clicked)
 }
 
+fn draw_lock_button(
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    c: &ThemeColors,
+    header_rect: egui::Rect,
+    track: &Track,
+    track_index: usize,
+    btn_size: f32,
+    commands: &mut Vec<TimelineCommand>,
+) {
+    let lock_rect = egui::Rect::from_center_size(
+        egui::pos2(header_rect.min.x + 36.0, header_rect.center().y),
+        egui::vec2(btn_size, btn_size),
+    );
+    let lock_color = if track.locked {
+        c.btn_locked_on
+    } else {
+        c.btn_locked_off
+    };
+    painter.rect_filled(lock_rect, 2.0, lock_color);
+    painter.text(
+        lock_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "\u{1f512}",
+        font(9.0),
+        egui::Color32::WHITE,
+    );
+    let lock_resp = ui.interact(
+        lock_rect,
+        egui::Id::new(("track_lock", track_index)),
+        egui::Sense::click(),
+    );
+    if lock_resp.clicked() {
+        commands.push(TimelineCommand::ToggleTrackLocked(track_index));
+    }
+}
+
 fn draw_track_header_controls(
     ui: &mut egui::Ui,
     painter: &egui::Painter,
@@ -143,32 +180,7 @@ fn draw_track_header_controls(
             commands.push(TimelineCommand::ToggleTrackHidden(track_index));
         }
 
-        // 🔒 锁按钮
-        let lock_rect = egui::Rect::from_center_size(
-            egui::pos2(header_rect.min.x + 36.0, header_rect.center().y),
-            egui::vec2(btn_size, btn_size),
-        );
-        let lock_color = if track.locked {
-            c.btn_locked_on
-        } else {
-            c.btn_locked_off
-        };
-        painter.rect_filled(lock_rect, 2.0, lock_color);
-        painter.text(
-            lock_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "\u{1f512}",
-            font(9.0),
-            egui::Color32::WHITE,
-        );
-        let lock_resp = ui.interact(
-            lock_rect,
-            egui::Id::new(("track_lock", track_index)),
-            egui::Sense::click(),
-        );
-        if lock_resp.clicked() {
-            commands.push(TimelineCommand::ToggleTrackLocked(track_index));
-        }
+        draw_lock_button(ui, painter, c, header_rect, track, track_index, btn_size, commands);
 
         painter.text(
             egui::pos2(header_rect.min.x + 52.0, header_rect.center().y),
@@ -205,32 +217,7 @@ fn draw_track_header_controls(
             commands.push(TimelineCommand::ToggleTrackMute(track_index));
         }
 
-        // 🔒 锁按钮
-        let lock_rect = egui::Rect::from_center_size(
-            egui::pos2(header_rect.min.x + 36.0, header_rect.center().y),
-            egui::vec2(btn_size, btn_size),
-        );
-        let lock_color = if track.locked {
-            c.btn_locked_on
-        } else {
-            c.btn_locked_off
-        };
-        painter.rect_filled(lock_rect, 2.0, lock_color);
-        painter.text(
-            lock_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "\u{1f512}",
-            font(9.0),
-            egui::Color32::WHITE,
-        );
-        let lock_resp = ui.interact(
-            lock_rect,
-            egui::Id::new(("track_lock", track_index)),
-            egui::Sense::click(),
-        );
-        if lock_resp.clicked() {
-            commands.push(TimelineCommand::ToggleTrackLocked(track_index));
-        }
+        draw_lock_button(ui, painter, c, header_rect, track, track_index, btn_size, commands);
 
         painter.text(
             egui::pos2(header_rect.min.x + 52.0, header_rect.center().y),
@@ -367,6 +354,59 @@ fn draw_clip_visual(
             font(10.0),
             egui::Color32::WHITE,
         );
+    }
+}
+
+/// Check clip type vs target track type and issue MoveClipToTrack commands when dragging.
+fn handle_drag_to_track(
+    ui: &egui::Ui,
+    track_rect: egui::Rect,
+    track_kind_index: usize,
+    track_kind: TrackKind,
+    clip_kind: ClipKind,
+    clip_id: usize,
+    commands: &mut Vec<TimelineCommand>,
+) {
+    let clip_belongs_to_video = clip_kind.is_video_track_kind();
+    let target_is_video = track_kind == TrackKind::Video;
+    let clip_target_kind = if clip_belongs_to_video {
+        TrackKind::Video
+    } else {
+        TrackKind::Audio
+    };
+    if clip_belongs_to_video == target_is_video {
+        if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
+            if ptr.y < track_rect.min.y {
+                let target = if track_kind_index > 0 { track_kind_index - 1 } else { 0 };
+                commands.push(TimelineCommand::MoveClipToTrack {
+                    clip_id,
+                    target_track_index: target,
+                    target_track_kind: track_kind,
+                });
+            } else if ptr.y > track_rect.max.y {
+                commands.push(TimelineCommand::MoveClipToTrack {
+                    clip_id,
+                    target_track_index: track_kind_index + 1,
+                    target_track_kind: track_kind,
+                });
+            }
+        }
+    } else {
+        if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
+            if ptr.y < track_rect.min.y && track_kind_index == 0 {
+                commands.push(TimelineCommand::MoveClipToTrack {
+                    clip_id,
+                    target_track_index: 0,
+                    target_track_kind: clip_target_kind,
+                });
+            } else if ptr.y > track_rect.max.y {
+                commands.push(TimelineCommand::MoveClipToTrack {
+                    clip_id,
+                    target_track_index: usize::MAX,
+                    target_track_kind: clip_target_kind,
+                });
+            }
+        }
     }
 }
 
@@ -525,52 +565,15 @@ fn handle_selected_clip_interaction(
             }
             commands.push(TimelineCommand::SelectClip(clip_id));
             *dragged_clip_id = Some(clip_id);
-            // 检查 Clip 类型与目标轨道类型是否匹配
-            let clip_belongs_to_video = clip_kind.is_video_track_kind();
-            let target_is_video = track_kind == TrackKind::Video;
-            let clip_target_kind = if clip_belongs_to_video {
-                TrackKind::Video
-            } else {
-                TrackKind::Audio
-            };
-            if clip_belongs_to_video == target_is_video {
-                // 类型匹配，正常移动
-                if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-                    if ptr.y < track_rect.min.y {
-                        let target = if track_kind_index > 0 { track_kind_index - 1 } else { 0 };
-                        commands.push(TimelineCommand::MoveClipToTrack {
-                            clip_id,
-                            target_track_index: target,
-                            target_track_kind: track_kind,
-                        });
-                    } else if ptr.y > track_rect.max.y {
-                        commands.push(TimelineCommand::MoveClipToTrack {
-                            clip_id,
-                            target_track_index: track_kind_index + 1,
-                            target_track_kind: track_kind,
-                        });
-                    }
-                }
-            } else {
-                // 类型不匹配，尝试创建新轨道
-                if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-                    if ptr.y < track_rect.min.y && track_kind_index == 0 {
-                        // 拖到当前类型轨道组上方，创建新轨道
-                        commands.push(TimelineCommand::MoveClipToTrack {
-                            clip_id,
-                            target_track_index: 0,
-                            target_track_kind: clip_target_kind,
-                        });
-                    } else if ptr.y > track_rect.max.y {
-                        // 拖到当前类型轨道组下方，创建新轨道
-                        commands.push(TimelineCommand::MoveClipToTrack {
-                            clip_id,
-                            target_track_index: usize::MAX, // 超出范围，触发创建新轨道
-                            target_track_kind: clip_target_kind,
-                        });
-                    }
-                }
-            }
+            handle_drag_to_track(
+                ui,
+                track_rect,
+                track_kind_index,
+                track_kind,
+                clip_kind,
+                clip_id,
+                commands,
+            );
         }
     }
 }
@@ -641,52 +644,15 @@ fn handle_unselected_clip_interaction(
         }
         commands.push(TimelineCommand::SelectClip(clip_id));
         *dragged_clip_id = Some(clip_id);
-        // 检查 Clip 类型与目标轨道类型是否匹配
-        let clip_belongs_to_video = clip_kind.is_video_track_kind();
-        let target_is_video = track_kind == TrackKind::Video;
-        let clip_target_kind = if clip_belongs_to_video {
-            TrackKind::Video
-        } else {
-            TrackKind::Audio
-        };
-        if clip_belongs_to_video == target_is_video {
-            // 类型匹配，正常移动
-            if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-                if ptr.y < track_rect.min.y {
-                    let target = if track_kind_index > 0 { track_kind_index - 1 } else { 0 };
-                    commands.push(TimelineCommand::MoveClipToTrack {
-                        clip_id,
-                        target_track_index: target,
-                        target_track_kind: track_kind,
-                    });
-                } else if ptr.y > track_rect.max.y {
-                    commands.push(TimelineCommand::MoveClipToTrack {
-                        clip_id,
-                        target_track_index: track_kind_index + 1,
-                        target_track_kind: track_kind,
-                    });
-                }
-            }
-        } else {
-            // 类型不匹配，尝试创建新轨道
-            if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
-                if ptr.y < track_rect.min.y && track_kind_index == 0 {
-                    // 拖到当前类型轨道组上方，创建新轨道
-                    commands.push(TimelineCommand::MoveClipToTrack {
-                        clip_id,
-                        target_track_index: 0,
-                        target_track_kind: clip_target_kind,
-                    });
-                } else if ptr.y > track_rect.max.y {
-                    // 拖到当前类型轨道组下方，创建新轨道
-                    commands.push(TimelineCommand::MoveClipToTrack {
-                        clip_id,
-                        target_track_index: usize::MAX, // 超出范围，触发创建新轨道
-                        target_track_kind: clip_target_kind,
-                    });
-                }
-            }
-        }
+        handle_drag_to_track(
+            ui,
+            track_rect,
+            track_kind_index,
+            track_kind,
+            clip_kind,
+            clip_id,
+            commands,
+        );
     }
 }
 
@@ -757,7 +723,7 @@ fn draw_track_row(
             continue;
         }
         let clip_id = track.clips[clip_idx].id;
-        let clip_name = track.clips[clip_idx].name.clone();
+        let clip_name = &track.clips[clip_idx].name;
         let clip_color = track.clips[clip_idx].color;
         let clip_kind = track.clips[clip_idx].kind;
         let hit_areas = clip_hit_areas(layout, metrics, view, &track_rect, clip_start, clip_end);
