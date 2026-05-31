@@ -261,6 +261,7 @@ impl TimelineData {
         target_track_kind: TrackKind,
         interaction: &mut TimelineInteraction,
     ) {
+        // 1. 找到并移除 Clip
         let mut src_track_idx = None;
         let mut clip_to_move = None;
         'outer: for (i, track) in self.tracks.iter_mut().enumerate() {
@@ -277,79 +278,49 @@ impl TimelineData {
             return;
         };
 
+        // 2. 检查是否已经创建过新轨道
         let track_already_inserted = interaction
             .clip_drag
             .map(|d| d.track_was_inserted)
             .unwrap_or(false);
 
-        // 根据目标轨道类型决定名称生成函数
+        // 3. 根据目标轨道类型决定名称生成函数
         let (name_prefix, new_track_fn): (&str, fn(&str) -> Track) = match target_track_kind {
             TrackKind::Video => ("视频", Track::new_video),
             TrackKind::Audio => ("音频", Track::new_audio),
         };
 
-        let dest_index = if target_track_index == 0 {
-            // 目标是同类轨道中的第一个（索引 0）
-            if src_track_idx == Some(0) && !track_already_inserted {
-                // 当前在第一个位置且还没插入过新轨道，需要创建新轨道
-                let count = self
-                    .tracks
-                    .iter()
-                    .filter(|t| t.kind == target_track_kind)
-                    .count();
-                let name = format!("{} {}", name_prefix, count + 1);
-                self.tracks.insert(0, new_track_fn(&name));
-                if let Some(ref mut drag) = interaction.clip_drag {
-                    drag.track_was_inserted = true;
-                }
-                Some(0)
-            } else if self.tracks[0].kind == target_track_kind {
-                Some(0)
-            } else {
-                // 找到第一个同类轨道
-                self.tracks.iter().position(|t| t.kind == target_track_kind)
+        // 4. 计算目标位置
+        // 先找到同类轨道的全局索引列表
+        let same_kind_indices: Vec<usize> = self
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.kind == target_track_kind)
+            .map(|(i, _)| i)
+            .collect();
+
+        let dest_index = if target_track_index < same_kind_indices.len() {
+            // 目标在同类轨道范围内
+            Some(same_kind_indices[target_track_index])
+        } else if !track_already_inserted {
+            // 目标超出范围，创建新轨道（如果还没创建过）
+            let count = same_kind_indices.len();
+            let name = format!("{} {}", name_prefix, count + 1);
+            let new_track = new_track_fn(&name);
+            // 新轨道插入到同类轨道组的末尾
+            let insert_pos = same_kind_indices.last().map(|&i| i + 1).unwrap_or(0);
+            self.tracks.insert(insert_pos, new_track);
+            if let Some(ref mut drag) = interaction.clip_drag {
+                drag.track_was_inserted = true;
             }
-        } else if target_track_index < self.tracks.len() {
-            // 目标索引在范围内，找到同类轨道
-            let mut kind_count = 0;
-            let mut found = None;
-            for (i, track) in self.tracks.iter().enumerate() {
-                if track.kind == target_track_kind {
-                    if kind_count == target_track_index {
-                        found = Some(i);
-                        break;
-                    }
-                    kind_count += 1;
-                }
-            }
-            found
+            Some(insert_pos)
         } else {
-            // 目标索引超出同类轨道数量，尝试创建新轨道
-            if !track_already_inserted {
-                let count = self
-                    .tracks
-                    .iter()
-                    .filter(|t| t.kind == target_track_kind)
-                    .count();
-                let name = format!("{} {}", name_prefix, count + 1);
-                let new_track = new_track_fn(&name);
-                // 新轨道插入到同类轨道组的末尾
-                let insert_pos = self
-                    .tracks
-                    .iter()
-                    .position(|t| t.kind != target_track_kind)
-                    .unwrap_or(self.tracks.len());
-                self.tracks.insert(insert_pos, new_track);
-                if let Some(ref mut drag) = interaction.clip_drag {
-                    drag.track_was_inserted = true;
-                }
-                Some(insert_pos)
-            } else {
-                // 已经创建过新轨道，放回原轨道
-                src_track_idx
-            }
+            // 已经创建过新轨道，放回原轨道
+            src_track_idx
         };
 
+        // 5. 放置 Clip 到目标轨道
         if let Some(idx) = dest_index {
             if self.tracks[idx].locked {
                 // 目标轨道被锁定，放回原轨道
@@ -361,11 +332,7 @@ impl TimelineData {
             self.tracks[idx].clips.push(clip);
         } else {
             // 找不到目标轨道，创建新的
-            let count = self
-                .tracks
-                .iter()
-                .filter(|t| t.kind == target_track_kind)
-                .count();
+            let count = same_kind_indices.len();
             let name = format!("{} {}", name_prefix, count + 1);
             let mut track = new_track_fn(&name);
             track.clips.push(clip);
