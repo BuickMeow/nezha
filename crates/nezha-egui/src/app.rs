@@ -364,15 +364,19 @@ impl App {
                 self.last_audio_clips.clone_from(&audio_clips);
             }
 
+            let mixer_active = self.audio_manager.is_mixer_active();
+
             if !self.audio_player.is_playing() {
                 self.audio_player
                     .set_device(self.ui.audio_device_name.clone());
-                self.audio_player.mix(
-                    &self.project.audio,
-                    &audio_clips,
-                    self.project.duration(),
-                    self.project.render.audio_sample_rate,
-                );
+                if !mixer_active {
+                    self.audio_player.mix(
+                        &self.project.audio,
+                        &audio_clips,
+                        self.project.duration(),
+                        self.project.render.audio_sample_rate,
+                    );
+                }
                 let ct = self
                     .project
                     .playback
@@ -380,14 +384,15 @@ impl App {
                     .clamp(0.0, self.project.duration());
                 let start_frame = (ct * self.project.render.audio_sample_rate as f64) as u64;
                 tracing::info!(
-                    "PLAY: ct={:.3}s fr={} buf={} clips={}",
+                    "PLAY: ct={:.3}s fr={} buf={} clips={} mixer={}",
                     ct,
                     start_frame,
                     self.audio_player.buffer_len(),
                     audio_clips.len(),
+                    mixer_active,
                 );
                 self.audio_player.play(start_frame);
-            } else if clips_changed {
+            } else if clips_changed && !mixer_active {
                 self.audio_player.mix(
                     &self.project.audio,
                     &audio_clips,
