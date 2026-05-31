@@ -3,7 +3,7 @@ use super::preview_layer::{self, LayerData};
 use crate::piano_view;
 use crate::transport::{ClipKind, LayerCommon};
 use eframe::egui;
-use nezha_compositor::Compositor;
+use nezha_compositor::{BlendMode, Compositor};
 use nezha_renderer::WaterfallLayer;
 
 #[derive(Clone, Debug, Default)]
@@ -649,6 +649,28 @@ impl App {
                     is_first = false;
                 }
             }
+        }
+
+        // 如果没有任何图层被渲染，清除为黑色
+        if is_first {
+            self.render_ctx.with_solid_color_layer([0.0, 0.0, 0.0, 1.0], |solid, encoder| {
+                ctx.compositor.render_layer(
+                    encoder,
+                    solid,
+                    ctx.preview_view,
+                    ctx.render_width,
+                    ctx.render_height,
+                    ctx.time as f64,
+                    wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 1.0,
+                    }),
+                    BlendMode::Normal,
+                    (0.0, 0.0, 1.0, 1.0),
+                );
+            });
         }
 
         self.render_counter_layers(&mut ctx, &counter_clips, &make_rect, total_instances, fps);
