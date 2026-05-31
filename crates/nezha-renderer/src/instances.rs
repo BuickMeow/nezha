@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 
 use crate::constants::{MIN_SPEED, PIXELS_PER_SEC_BASE};
-use crate::key_order::build_parallel_key_groups;
+use crate::key_order::build_simple_key_chunks;
 use crate::keyboard;
 use crate::scan::{NoteSeekIndex, advance_scan_indices, scroll_tick_for_mode};
 use crate::source::NoteSource;
@@ -17,9 +17,9 @@ pub(crate) struct KeyChunkBuildResult {
 }
 
 impl KeyChunkBuildResult {
-    pub(crate) fn with_capacity(estimated: usize) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            instances: Vec::with_capacity(estimated),
+            instances: Vec::new(),
             active_keys: [false; 128],
             active_colors: [[0.0; 3]; 128],
         }
@@ -158,18 +158,16 @@ fn merge_chunk_results(
 fn build_instances_parallel(
     render_keys: &[u8; 128],
     scan_indices: &[usize; 128],
-    midi: &dyn NoteSource,
     instances: &mut Vec<NoteInstance>,
     active_keys: &mut [bool; 128],
     active_colors: &mut [[f32; 3]; 128],
     per_key_fn: impl Fn(&mut KeyChunkBuildResult, u8, usize) + Sync,
 ) {
-    let (key_groups, weights) = build_parallel_key_groups(render_keys, scan_indices, midi);
-    let chunk_results = key_groups
+    let key_chunks = build_simple_key_chunks(render_keys);
+    let chunk_results = key_chunks
         .into_par_iter()
-        .zip(weights)
-        .map(|(range, weight)| {
-            let mut result = KeyChunkBuildResult::with_capacity(weight);
+        .map(|range| {
+            let mut result = KeyChunkBuildResult::new();
             for &key in &render_keys[range] {
                 per_key_fn(&mut result, key, scan_indices[key as usize]);
             }
@@ -203,7 +201,6 @@ fn build_instances_time(
     build_instances_parallel(
         render_keys,
         scan_indices,
-        midi,
         instances,
         active_keys,
         active_colors,
@@ -252,7 +249,6 @@ fn build_instances_tick(
     build_instances_parallel(
         render_keys,
         scan_indices,
-        midi,
         instances,
         active_keys,
         active_colors,
@@ -384,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_key_chunk_build_result_new() {
-        let result = KeyChunkBuildResult::with_capacity(0);
+        let result = KeyChunkBuildResult::new();
         assert!(result.instances.is_empty());
         assert_eq!(result.active_keys, [false; 128]);
         for c in &result.active_colors {
@@ -394,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_key_chunk_build_result_accumulate() {
-        let mut result = KeyChunkBuildResult::with_capacity(16);
+        let mut result = KeyChunkBuildResult::new();
 
         result.active_keys[60] = true;
         result.active_colors[60] = [1.0, 0.0, 0.0];
