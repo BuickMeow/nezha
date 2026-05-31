@@ -148,41 +148,22 @@ fn parse_video_stream(stderr: &str) -> (u32, u32, f64, bool) {
 }
 
 fn parse_resolution(line: &str) -> Option<(u32, u32)> {
-    let bytes = line.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-    while i < len {
-        if bytes[i].is_ascii_digit() {
-            let start = i;
-            while i < len && bytes[i].is_ascii_digit() {
-                i += 1;
+    // Find pattern like "1920x1080" by searching for 'x' surrounded by digits
+    let mut search_start = 0;
+    while let Some(x_pos) = line[search_start..].find('x') {
+        let x_pos = search_start + x_pos;
+        // Walk left to find start of width number
+        let w_end = x_pos;
+        let w_start = line[..w_end].rfind(|c: char| !c.is_ascii_digit()).map_or(0, |i| i + 1);
+        // Walk right to find end of height number
+        let h_start = x_pos + 1;
+        let h_end = line[h_start..].find(|c: char| !c.is_ascii_digit()).map_or(line.len(), |i| h_start + i);
+        if let (Ok(w), Ok(h)) = (line[w_start..w_end].parse::<u32>(), line[h_start..h_end].parse::<u32>()) {
+            if w > 0 && h > 0 {
+                return Some((w, h));
             }
-            if i < len && bytes[i] == b'x' {
-                i += 1;
-                let w_start = start;
-                let w_end = i - 1;
-                let h_start = i;
-                while i < len && bytes[i].is_ascii_digit() {
-                    i += 1;
-                }
-                let h_end = i;
-                if w_end > w_start && h_end > h_start {
-                    let w = std::str::from_utf8(&bytes[w_start..w_end])
-                        .ok()
-                        .and_then(|s| s.parse::<u32>().ok());
-                    let h = std::str::from_utf8(&bytes[h_start..h_end])
-                        .ok()
-                        .and_then(|s| s.parse::<u32>().ok());
-                    if let (Some(w), Some(h)) = (w, h) {
-                        if w > 0 && h > 0 {
-                            return Some((w, h));
-                        }
-                    }
-                }
-            }
-        } else {
-            i += 1;
         }
+        search_start = x_pos + 1;
     }
     None
 }

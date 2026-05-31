@@ -96,10 +96,10 @@ impl AudioManager {
 
     /// Start the xsynth render in a background thread.
     pub fn start_render(&mut self, p: &RenderParams<'_>) {
-        let midi_data = match std::fs::read(p.midi_path) {
-            Ok(d) => d,
+        let midi = match nezha_core::MidiFile::load(p.midi_path) {
+            Ok(m) => m,
             Err(e) => {
-                tracing::error!("AudioManager: read MIDI failed: {}", e);
+                tracing::error!("AudioManager: load MIDI failed: {}", e);
                 return;
             }
         };
@@ -119,7 +119,7 @@ impl AudioManager {
 
         std::thread::spawn(move || {
             let result = nezha_xsynth::render_midi_to_pcm_chunked(
-                &midi_data,
+                &midi,
                 &sfonts,
                 &config,
                 |chunk, progress| {

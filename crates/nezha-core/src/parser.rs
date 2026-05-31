@@ -1,5 +1,5 @@
 use crate::MidiError;
-use crate::midi::{LoadProgress, MidiFile, Note};
+use crate::midi::{LoadProgress, MidiControlEvent, MidiFile, Note};
 use crate::time::{DEFAULT_MPQ, TIMECODE_FALLBACK_TPB, ticks_to_seconds};
 use std::path::Path;
 
@@ -56,6 +56,8 @@ impl MidiParser {
 
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
         let mut global_duration = 0.0f64;
+        let mut track_ports: Vec<u8> = Vec::with_capacity(smf.tracks.len());
+        let mut control_events: Vec<MidiControlEvent> = Vec::new();
         let total_tracks = smf.tracks.len();
 
         for (track_idx, track) in smf.tracks.iter().enumerate() {
@@ -63,14 +65,16 @@ impl MidiParser {
                 current_track: track_idx + 1,
                 total_tracks,
             });
-            Self::parse_track(
+            let port = Self::parse_track(
                 track,
                 &tempo_segments,
                 ticks_per_beat,
                 track_idx as u16,
                 &mut key_notes,
                 &mut global_duration,
+                &mut control_events,
             );
+            track_ports.push(port);
         }
 
         // 每个 key 内按 start 排序
@@ -98,6 +102,8 @@ impl MidiParser {
             tick_length,
             time_sig_numerator,
             time_sig_denominator,
+            track_ports,
+            control_events,
         })
     }
 
@@ -177,11 +183,13 @@ impl MidiParser {
         track_idx: u16,
         key_notes: &mut [Vec<Note>; 128],
         global_duration: &mut f64,
-    ) {
+        control_events: &mut Vec<MidiControlEvent>,
+    ) -> u8 {
         let mut active_notes: Vec<ActiveNote> = Vec::new();
         let mut current_tick: u32 = 0;
         let mut current_seconds: f64 = 0.0;
         let mut seg_idx: usize = 0;
+        let mut current_port: u8 = 0;
 
         for event in track {
             let new_tick = current_tick + event.delta.as_int();
@@ -203,24 +211,42 @@ impl MidiParser {
                 current_tick = new_tick;
             }
 
-            if let midly::TrackEventKind::Midi { channel, message } = event.kind {
-                match message {
-                    midly::MidiMessage::NoteOn { key, vel } => {
-                        let k = key.as_int();
-                        let ch = channel.as_int();
-                        if vel.as_int() > 0 {
-                            active_notes.push(ActiveNote {
-                                key: k,
-                                start_time: current_seconds,
-                                velocity: vel.as_int(),
-                                channel: ch,
-                                start_tick: current_tick,
-                                track: track_idx,
-                            });
-                        } else {
+            match event.kind {
+                midly::TrackEventKind::Meta(midly::MetaMessage::MidiPort(port)) => {
+                    current_port = port.as_int();
+                }
+                midly::TrackEventKind::Midi { channel, message } => {
+                    let ch = channel.as_int();
+                    let global_ch = current_port * 16 + ch;
+                    match message {
+                        midly::MidiMessage::NoteOn { key, vel } => {
+                            let k = key.as_int();
+                            if vel.as_int() > 0 {
+                                active_notes.push(ActiveNote {
+                                    key: k,
+                                    start_time: current_seconds,
+                                    velocity: vel.as_int(),
+                                    channel: global_ch,
+                                    start_tick: current_tick,
+                                    track: track_idx,
+                                });
+                            } else {
+                                Self::resolve_note_off(
+                                    k,
+                                    global_ch,
+                                    current_seconds,
+                                    current_tick,
+                                    &mut active_notes,
+                                    key_notes,
+                                    global_duration,
+                                );
+                            }
+                        }
+                        midly::MidiMessage::NoteOff { key, .. } => {
+                            let k = key.as_int();
                             Self::resolve_note_off(
                                 k,
-                                ch,
+                                global_ch,
                                 current_seconds,
                                 current_tick,
                                 &mut active_notes,
@@ -228,24 +254,35 @@ impl MidiParser {
                                 global_duration,
                             );
                         }
+                        midly::MidiMessage::Controller { controller, value } => {
+                            control_events.push(MidiControlEvent::ControlChange {
+                                tick: current_tick,
+                                channel: global_ch,
+                                controller: controller.as_int(),
+                                value: value.as_int(),
+                            });
+                        }
+                        midly::MidiMessage::ProgramChange { program } => {
+                            control_events.push(MidiControlEvent::ProgramChange {
+                                tick: current_tick,
+                                channel: global_ch,
+                                program: program.as_int(),
+                            });
+                        }
+                        midly::MidiMessage::PitchBend { bend } => {
+                            control_events.push(MidiControlEvent::PitchBend {
+                                tick: current_tick,
+                                channel: global_ch,
+                                value: bend.as_int(),
+                            });
+                        }
+                        _ => {}
                     }
-                    midly::MidiMessage::NoteOff { key, .. } => {
-                        let k = key.as_int();
-                        let ch = channel.as_int();
-                        Self::resolve_note_off(
-                            k,
-                            ch,
-                            current_seconds,
-                            current_tick,
-                            &mut active_notes,
-                            key_notes,
-                            global_duration,
-                        );
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
+        current_port
     }
 
     /// 从当前时间推进到目标 tick，跨 segment 时自动处理 tempo 变化。
@@ -379,6 +416,8 @@ mod tests {
             tick_length: 0,
             time_sig_numerator: 4,
             time_sig_denominator: 2,
+            track_ports: Vec::new(),
+            control_events: Vec::new(),
         };
         // 无 tempo 时默认 120 BPM：1s = 2 beats = 960 ticks
         assert!((midi.tick_at_time(1.0) - 960.0).abs() < 1e-6);
@@ -407,6 +446,8 @@ mod tests {
             tick_length: 1440,
             time_sig_numerator: 4,
             time_sig_denominator: 2,
+            track_ports: Vec::new(),
+            control_events: Vec::new(),
         };
         // 在 120 BPM 段：0.5s = 480 ticks
         assert!((midi.tick_at_time(0.5) - 480.0).abs() < 1e-6);
@@ -436,6 +477,8 @@ mod tests {
             tick_length: 1440,
             time_sig_numerator: 4,
             time_sig_denominator: 2,
+            track_ports: Vec::new(),
+            control_events: Vec::new(),
         };
         assert!((midi.bpm_at_time(0.0) - 120.0).abs() < 1e-3);
         assert!((midi.bpm_at_time(0.5) - 240.0).abs() < 1e-3);

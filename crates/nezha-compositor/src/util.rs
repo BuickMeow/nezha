@@ -1,6 +1,37 @@
 use crate::layer::BlendMode;
 use wgpu::{BlendComponent, BlendFactor, BlendOperation, BlendState};
 
+/// Create a render pass with scissor rect for layer rendering.
+pub fn begin_layer_pass<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    target: &'a wgpu::TextureView,
+    load_op: wgpu::LoadOp<wgpu::Color>,
+    label: &str,
+    rect: (f32, f32, f32, f32),
+    width: u32,
+    height: u32,
+) -> wgpu::RenderPass<'a> {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: load_op,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+        timestamp_writes: None,
+    });
+    let (sx, sy, sw, sh) = compute_scissor_rect(rect, width, height);
+    pass.set_scissor_rect(sx, sy, sw, sh);
+    pass
+}
+
 /// Compute a clamped scissor rectangle from a normalized rect (0..1) and pixel dimensions.
 pub fn compute_scissor_rect(
     rect: (f32, f32, f32, f32),

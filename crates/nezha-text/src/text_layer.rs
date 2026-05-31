@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
-use nezha_compositor::{BlendMode, LayerRenderer, blend_state_for, compute_scissor_rect};
+use nezha_compositor::{BlendMode, LayerRenderer, begin_layer_pass, blend_state_for};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferDescriptor, BufferUsages, ColorTargetState,
     ColorWrites, Device, FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor,
+    PipelineLayoutDescriptor, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor,
     ShaderSource, TextureFormat, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
     VertexStepMode,
 };
@@ -415,19 +415,8 @@ impl<'a> TextLayer<'a> {
         let line_height = self.font_size as f32 * 1.2;
         let total_height = lines.len() as f32 * line_height;
 
-        // 描边偏移方向（8 方向）
-        let outline_dirs: &[(f32, f32)] = &[
-            (-1.0, 0.0),
-            (1.0, 0.0),
-            (0.0, -1.0),
-            (0.0, 1.0),
-            (-1.0, -1.0),
-            (1.0, -1.0),
-            (-1.0, 1.0),
-            (1.0, 1.0),
-        ];
-        // 粗体偏移方向（4 方向，对角线也加上更饱满）
-        let bold_dirs: &[(f32, f32)] = &[
+        // 描边/粗体偏移方向（8 方向）
+        let offset_dirs: &[(f32, f32)] = &[
             (-1.0, 0.0),
             (1.0, 0.0),
             (0.0, -1.0),
@@ -467,7 +456,7 @@ impl<'a> TextLayer<'a> {
 
                     // ── 描边（最底层，8 方向偏移）──
                     if self.outline_width > 0.0 {
-                        for (dx, dy) in outline_dirs {
+                        for (dx, dy) in offset_dirs {
                             let ox = dx * self.outline_width;
                             let oy = dy * self.outline_width;
                             self.push_glyph(
@@ -488,7 +477,7 @@ impl<'a> TextLayer<'a> {
 
                     // ── 粗体（叠加偏移，用正文颜色）──
                     if self.bold && self.bold_offset > 0.0 {
-                        for (dx, dy) in bold_dirs {
+                        for (dx, dy) in offset_dirs {
                             let ox = dx * self.bold_offset;
                             let oy = dy * self.bold_offset;
                             self.push_glyph(
@@ -567,25 +556,15 @@ impl<'a> LayerRenderer for TextLayer<'a> {
             return;
         }
 
-        let mut pass = params.encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("text_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: params.target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: params.load_op,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-            timestamp_writes: None,
-        });
-
-        let (sx, sy, sw, sh) = compute_scissor_rect(params.rect, params.width, params.height);
-        pass.set_scissor_rect(sx, sy, sw, sh);
+        let mut pass = begin_layer_pass(
+            params.encoder,
+            params.target,
+            params.load_op,
+            "text_pass",
+            params.rect,
+            params.width,
+            params.height,
+        );
 
         let pipeline = self
             .pipelines

@@ -12,7 +12,7 @@ use wgpu::{
 };
 
 use crate::layer::{BlendMode, LayerRenderer};
-use crate::util::{blend_state_for, compute_scissor_rect};
+use crate::util::blend_state_for;
 
 pub struct ImageLayer {
     pipelines: HashMap<BlendMode, RenderPipeline>,
@@ -240,26 +240,15 @@ impl LayerRenderer for ImageLayer {
     fn prepare(&mut self, _width: u32, _height: u32, _time: f64) {}
 
     fn render(&mut self, params: crate::layer::LayerRenderParams<'_>) {
-        let (sx, sy, sw, sh) = compute_scissor_rect(params.rect, params.width, params.height);
-        let mut pass = params
-            .encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("image_layer_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: params.target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: params.load_op,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-                timestamp_writes: None,
-            });
-        pass.set_scissor_rect(sx, sy, sw, sh);
+        let mut pass = crate::util::begin_layer_pass(
+            params.encoder,
+            params.target,
+            params.load_op,
+            "image_layer_pass",
+            params.rect,
+            params.width,
+            params.height,
+        );
 
         let pipeline = self.pipelines.get(&params.blend_mode).unwrap_or_else(|| {
             self.pipelines

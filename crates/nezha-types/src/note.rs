@@ -9,3 +9,24 @@ pub struct Note {
     pub channel: u8,
     pub track: u16,
 }
+
+/// Non-note MIDI events (CC, Program Change, Pitch Bend) stored for audio synthesis.
+#[derive(Clone, Debug)]
+pub enum MidiControlEvent {
+    ControlChange {
+        tick: u32,
+        channel: u8,
+        controller: u8,
+        value: u8,
+    },
+    ProgramChange {
+        tick: u32,
+        channel: u8,
+        program: u8,
+    },
+    PitchBend {
+        tick: u32,
+        channel: u8,
+        value: i16,
+    },
+}

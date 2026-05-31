@@ -2673,7 +2673,7 @@ name = "nezha-xsynth"
 version = "0.1.0"
 dependencies = [
  "hound",
- "midly",
+ "nezha-core",
  "thiserror 2.0.18",
  "xsynth-core",
  "xsynth-soundfonts",

@@ -4,7 +4,7 @@ use crate::parser::MidiParser;
 use crate::time::{DEFAULT_BPM, DEFAULT_MPQ, bpm_from_mpq, seconds_to_ticks};
 use std::path::Path;
 
-pub use nezha_types::Note;
+pub use nezha_types::{MidiControlEvent, Note};
 
 #[derive(Clone, Debug)]
 pub struct MidiFile {
@@ -22,6 +22,10 @@ pub struct MidiFile {
     pub time_sig_numerator: u8,
     /// 拍号分母（如 4/4 中的 4，实际值为 2^4 = 16）。
     pub time_sig_denominator: u8,
+    /// 每个 track 的 MIDI 端口号，用于 channel 映射 (port * 16 + channel)。
+    pub track_ports: Vec<u8>,
+    /// 非音符 MIDI 事件（CC、Program Change、Pitch Bend），供音频合成使用。
+    pub control_events: Vec<MidiControlEvent>,
 }
 
 impl nezha_types::NoteSource for MidiFile {
@@ -111,5 +115,25 @@ impl MidiFile {
     /// 计算总小节数。
     pub fn total_bars(&self) -> u64 {
         crate::time::total_bars(self.tick_length, self.bar_divide())
+    }
+
+    /// 将绝对 tick 值转换为秒数（考虑 tempo 变化）。
+    pub fn tick_to_seconds(&self, tick: u32) -> f64 {
+        let seg_idx = self
+            .tempo_segments
+            .iter()
+            .rposition(|s| s.start_tick <= tick);
+        let Some(seg_idx) = seg_idx else {
+            return crate::time::ticks_to_seconds(tick, self.ticks_per_beat, DEFAULT_MPQ);
+        };
+        let seg = &self.tempo_segments[seg_idx];
+        let dtick = tick - seg.start_tick;
+        seg.start_time
+            + crate::time::ticks_to_seconds(dtick, self.ticks_per_beat, seg.micros_per_quarter)
+    }
+
+    /// 获取指定 track 的端口号。
+    pub fn track_port(&self, track_idx: usize) -> u8 {
+        self.track_ports.get(track_idx).copied().unwrap_or(0)
     }
 }

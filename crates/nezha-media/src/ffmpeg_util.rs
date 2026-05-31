@@ -4,7 +4,11 @@ use std::process::{Command, Stdio};
 use crate::MediaError;
 
 pub fn ffmpeg_path() -> Result<PathBuf, MediaError> {
-    let exe_name = "ffmpeg";
+    let exe_name = if cfg!(target_os = "windows") {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
 
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()

@@ -1,7 +1,7 @@
 pub mod constants;
 
 mod buffer;
-mod gpu_timer;
+
 mod instances;
 mod key_order;
 mod keyboard;

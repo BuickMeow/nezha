@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use midly::{MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
+use nezha_core::{MidiControlEvent, MidiFile};
 use xsynth_core::{
     AudioPipe, AudioStreamParams, ChannelCount,
     channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, ControlEvent},
@@ -54,8 +54,8 @@ pub struct RenderProgress {
 /// Errors that can occur during rendering.
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
-    #[error("MIDI parse error: {0}")]
-    MidiParse(#[from] midly::Error),
+    #[error("MIDI load error: {0}")]
+    MidiLoad(#[from] nezha_core::MidiError),
 
     #[error("SoundFont load error: {0}")]
     SoundfontLoad(String),
@@ -181,154 +181,102 @@ fn render_samples(
     output.extend_from_slice(buf);
 }
 
-// ── MIDI parsing ──
+// ── MIDI event extraction from MidiFile ──
 
-/// Parse a MIDI file and extract timed events with port-aware channel mapping.
+/// Extract timed events from a parsed [`MidiFile`] with port-aware channel mapping.
 ///
-/// Returns `(events, total_seconds, ticks_per_beat, max_channel)` where `max_channel`
-/// is the highest channel number used in the MIDI file (0-based, port-aware).
-fn parse_midi_events(
-    data: &[u8],
-    min_velocity: u8,
-) -> Result<(Vec<TimedEvent>, f64, u32, u32), RenderError> {
-    let smf = Smf::parse(data)?;
-
-    let ticks_per_beat = match smf.header.timing {
-        Timing::Metrical(t) => t.as_int() as u32,
-        _ => 480,
-    };
-
-    // Collect tempo events and find max tick across all tracks
-    let mut max_tick = 0u32;
-    let mut tempo_events: Vec<(u32, f64)> = Vec::new();
-    for track in &smf.tracks {
-        let mut tick: u32 = 0;
-        for event in track {
-            tick += event.delta.as_int();
-            if tick > max_tick {
-                max_tick = tick;
-            }
-            if let TrackEventKind::Meta(MetaMessage::Tempo(us)) = event.kind {
-                tempo_events.push((tick, us.as_int() as f64));
-            }
-        }
-    }
-    tempo_events.sort_by_key(|e| e.0);
-    tempo_events.dedup_by_key(|e| e.0);
-
-    const DEFAULT_MPQ: f64 = 500_000.0;
-    if tempo_events.is_empty() || tempo_events[0].0 > 0 {
-        tempo_events.insert(0, (0, DEFAULT_MPQ));
-    }
-
-    // Pre-compute tick→sec lookup table for O(1) conversion
-    // (was O(n) linear scan per lookup)
-    let mut tick_to_sec_table = Vec::with_capacity(max_tick as usize + 1);
-    {
-        let mut sec = 0.0f64;
-        let mut prev_tempo_tick = 0u32;
-        let mut prev_mpq = DEFAULT_MPQ;
-        let mut tempo_idx = 0;
-
-        for tick in 0..=max_tick {
-            while tempo_idx < tempo_events.len() && tempo_events[tempo_idx].0 <= tick {
-                let (tt, mpq) = tempo_events[tempo_idx];
-                if tt > prev_tempo_tick {
-                    let dt = (tt - prev_tempo_tick) as f64;
-                    sec += dt * prev_mpq / (ticks_per_beat as f64 * 1_000_000.0);
-                }
-                prev_tempo_tick = tt;
-                prev_mpq = mpq;
-                tempo_idx += 1;
-            }
-            let time_at_tick = sec
-                + (tick - prev_tempo_tick) as f64 * prev_mpq
-                    / (ticks_per_beat as f64 * 1_000_000.0);
-            tick_to_sec_table.push(time_at_tick);
-        }
-    }
-
-    let tick_to_sec = |tick: u32| -> f64 { tick_to_sec_table[tick as usize] };
-
-    // Parse events per track with port tracking
+/// Returns `(events, total_seconds, max_channel)` where `max_channel`
+/// is the highest channel number used (port-aware).
+fn extract_timed_events(midi: &MidiFile, min_velocity: u8) -> (Vec<TimedEvent>, f64, u32) {
     let mut all_events: Vec<TimedEvent> = Vec::new();
-    let mut global_end_time = 0.0_f64;
     let mut max_channel: u32 = 0;
 
-    for track in &smf.tracks {
-        let mut current_tick: u32 = 0;
-        let mut current_port: u8 = 0;
-
-        for event in track {
-            current_tick += event.delta.as_int();
-
-            match event.kind {
-                TrackEventKind::Meta(MetaMessage::MidiPort(port)) => {
-                    current_port = port.as_int();
-                }
-                TrackEventKind::Meta(MetaMessage::EndOfTrack) => {
-                    let t = tick_to_sec(current_tick);
-                    if t > global_end_time {
-                        global_end_time = t;
-                    }
-                }
-                TrackEventKind::Midi { channel, message } => {
-                    let time_sec = tick_to_sec(current_tick);
-                    let ch = current_port as u32 * 16 + channel.as_int() as u32;
-                    if ch > max_channel {
-                        max_channel = ch;
-                    }
-
-                    let command = match message {
-                        MidiMessage::NoteOn { key, vel } if vel.as_int() > 0 => {
-                            if vel.as_int() <= min_velocity {
-                                None
-                            } else {
-                                Some(SynthCommand::NoteOn {
-                                    key: key.as_int(),
-                                    vel: vel.as_int(),
-                                    channel: ch,
-                                })
-                            }
-                        }
-                        MidiMessage::NoteOn { key, .. } => Some(SynthCommand::NoteOff {
-                            key: key.as_int(),
-                            channel: ch,
-                        }),
-                        MidiMessage::NoteOff { key, .. } => Some(SynthCommand::NoteOff {
-                            key: key.as_int(),
-                            channel: ch,
-                        }),
-                        MidiMessage::Controller { controller, value } => {
-                            Some(SynthCommand::ControlChange {
-                                controller: controller.as_int(),
-                                value: value.as_int(),
-                                channel: ch,
-                            })
-                        }
-                        MidiMessage::ProgramChange { program } => {
-                            Some(SynthCommand::ProgramChange {
-                                program: program.as_int(),
-                                channel: ch,
-                            })
-                        }
-                        MidiMessage::PitchBend { bend } => Some(SynthCommand::PitchBend {
-                            value: bend.as_int(),
-                            channel: ch,
-                        }),
-                        _ => None,
-                    };
-
-                    if let Some(cmd) = command {
-                        all_events.push(TimedEvent {
-                            time_sec,
-                            command: cmd,
-                        });
-                    }
-                }
-                _ => {}
+    // Note events from key_notes (already converted to seconds by nezha-core)
+    for notes in &midi.key_notes {
+        for note in notes {
+            if note.velocity <= min_velocity {
+                continue;
             }
+            let ch = note.channel as u32;
+            if ch > max_channel {
+                max_channel = ch;
+            }
+            all_events.push(TimedEvent {
+                time_sec: note.start,
+                command: SynthCommand::NoteOn {
+                    key: note.key,
+                    vel: note.velocity,
+                    channel: ch,
+                },
+            });
+            all_events.push(TimedEvent {
+                time_sec: note.end,
+                command: SynthCommand::NoteOff {
+                    key: note.key,
+                    channel: ch,
+                },
+            });
         }
+    }
+
+    // Control events (CC, Program Change, Pitch Bend) — convert tick to seconds
+    for evt in &midi.control_events {
+        let (tick, ch, cmd) = match *evt {
+            MidiControlEvent::ControlChange {
+                tick,
+                channel,
+                controller,
+                value,
+            } => {
+                let ch = channel as u32;
+                (
+                    tick,
+                    ch,
+                    SynthCommand::ControlChange {
+                        controller,
+                        value,
+                        channel: ch,
+                    },
+                )
+            }
+            MidiControlEvent::ProgramChange {
+                tick,
+                channel,
+                program,
+            } => {
+                let ch = channel as u32;
+                (
+                    tick,
+                    ch,
+                    SynthCommand::ProgramChange {
+                        program,
+                        channel: ch,
+                    },
+                )
+            }
+            MidiControlEvent::PitchBend {
+                tick,
+                channel,
+                value,
+            } => {
+                let ch = channel as u32;
+                (
+                    tick,
+                    ch,
+                    SynthCommand::PitchBend {
+                        value,
+                        channel: ch,
+                    },
+                )
+            }
+        };
+        if ch > max_channel {
+            max_channel = ch;
+        }
+        all_events.push(TimedEvent {
+            time_sec: midi.tick_to_seconds(tick),
+            command: cmd,
+        });
     }
 
     all_events.sort_by(|a, b| {
@@ -337,7 +285,7 @@ fn parse_midi_events(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    Ok((all_events, global_end_time, ticks_per_beat, max_channel))
+    (all_events, midi.duration, max_channel)
 }
 
 // ── Public API ──
@@ -348,14 +296,13 @@ fn parse_midi_events(
 /// pcm_chunk contains the interleaved f32 samples rendered since the last call.
 /// The caller should forward these to the main thread for playback.
 pub fn render_midi_to_pcm_chunked(
-    midi_data: &[u8],
+    midi: &MidiFile,
     soundfont_paths: &[impl AsRef<Path>],
     config: &RenderConfig,
     mut on_chunk: impl FnMut(Vec<f32>, RenderProgress),
 ) -> Result<(), RenderError> {
-    // 1. Parse MIDI
-    let (events, total_seconds, _ticks_per_beat, max_channel) =
-        parse_midi_events(midi_data, config.min_velocity)?;
+    // 1. Extract events from parsed MidiFile
+    let (events, total_seconds, max_channel) = extract_timed_events(midi, config.min_velocity);
 
     // 2. Load soundfonts
     let audio_params = AudioStreamParams::new(config.sample_rate, config.channels);
@@ -408,17 +355,11 @@ pub fn render_midi_to_pcm_chunked(
     }
 
     // 5. Render in fixed-size time blocks (windowed event batching)
-    //
-    // Instead of calling render_samples for every unique event timestamp
-    // (which can be tens/hundreds of thousands of calls for dense MIDI),
-    // we process in configurable-size blocks, accumulating all events
-    // within each block.  This drastically reduces the number of xsynth
-    // read_samples() calls.
     let mut pcm_buffer: Vec<f32> = Vec::new();
     let mut scratch: Vec<f32> = Vec::new();
     let mut missed_samples: f64 = 0.0;
 
-    const CHUNK_INTERVAL_SECS: f64 = 0.5; // flush PCM chunk every 0.5 seconds
+    const CHUNK_INTERVAL_SECS: f64 = 0.5;
     let mut next_chunk_at: f64 = CHUNK_INTERVAL_SECS;
 
     let block_sec = config.render_block_samples as f64 / config.sample_rate as f64;
@@ -436,15 +377,11 @@ pub fn render_midi_to_pcm_chunked(
         let block_end = (block_start + block_sec).min(events_end_time);
         let delta = block_end - block_start;
 
-        // Dispatch all events falling within this block FIRST so that
-        // xsynth sees them before we call read_samples().  This avoids
-        // delaying every event by one full block.
         while event_idx < events.len() && events[event_idx].time_sec < block_end {
             send_command(&mut channel_group, &events[event_idx].command);
             event_idx += 1;
         }
 
-        // Render audio for this block (events are now cached inside xsynth)
         render_samples(
             &mut channel_group,
             delta,
@@ -454,7 +391,6 @@ pub fn render_midi_to_pcm_chunked(
             &mut pcm_buffer,
         );
 
-        // Emit chunk if we've accumulated enough audio
         if block_end >= next_chunk_at {
             let chunk = std::mem::take(&mut pcm_buffer);
             let progress = RenderProgress {
@@ -514,7 +450,6 @@ pub fn render_midi_to_pcm_chunked(
         );
         tail_remaining -= delta;
 
-        // Check newly rendered samples for silence
         let new_samples = &pcm_buffer[prev_output_len..];
         if new_samples.iter().all(|s| s.abs() <= 0.0001) {
             break;
@@ -537,14 +472,14 @@ pub fn render_midi_to_pcm_chunked(
 
 /// Render MIDI to a complete PCM buffer (blocks until done).
 pub fn render_midi_to_pcm(
-    midi_data: &[u8],
+    midi: &MidiFile,
     soundfont_paths: &[impl AsRef<Path>],
     config: &RenderConfig,
     mut progress: impl FnMut(RenderProgress),
 ) -> Result<Vec<f32>, RenderError> {
     let mut all_pcm: Vec<f32> = Vec::new();
 
-    render_midi_to_pcm_chunked(midi_data, soundfont_paths, config, |chunk, p| {
+    render_midi_to_pcm_chunked(midi, soundfont_paths, config, |chunk, p| {
         all_pcm.extend(chunk);
         progress(p);
     })?;
@@ -569,13 +504,13 @@ pub fn render_midi_to_pcm(
 
 /// Convenience: render MIDI to WAV file on disk.
 pub fn render_midi_to_wav(
-    midi_data: &[u8],
+    midi: &MidiFile,
     soundfont_paths: &[impl AsRef<Path>],
     output_wav_path: impl AsRef<Path>,
     config: &RenderConfig,
     progress: impl FnMut(RenderProgress),
 ) -> Result<(), RenderError> {
-    let pcm = render_midi_to_pcm(midi_data, soundfont_paths, config, progress)?;
+    let pcm = render_midi_to_pcm(midi, soundfont_paths, config, progress)?;
 
     let spec = hound::WavSpec {
         channels: config.channels.count(),

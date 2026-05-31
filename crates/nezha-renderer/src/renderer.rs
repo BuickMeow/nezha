@@ -1,11 +1,10 @@
-use nezha_compositor::compute_scissor_rect;
+use nezha_compositor::begin_layer_pass;
 use std::sync::Arc;
 use wgpu::*;
 
 use crate::buffer::{self, InstanceBufferSlot};
 use crate::constants::MAX_INSTANCE_COUNT;
 use crate::constants::MIN_INSTANCE_BUFFER_CAPACITY;
-use crate::gpu_timer::GpuTimer;
 use crate::instances;
 use crate::key_order;
 use crate::keyboard;
@@ -31,7 +30,6 @@ pub struct Renderer {
     device: Device,
     queue: Queue,
     render: RenderPipelineState,
-    timer: GpuTimer,
     instance_buffers: Vec<InstanceBufferSlot>,
     instance_scratch: Vec<NoteInstance>,
     cached_layouts: Vec<(f32, f32)>,
@@ -55,13 +53,10 @@ impl Renderer {
 
         let render = RenderPipelineState::new(&device, format, &render_shader);
 
-        let timer = GpuTimer::new(&device, &queue);
-
         Self {
             device,
             queue,
             render,
-            timer,
             instance_buffers: Vec::new(),
             instance_scratch: Vec::new(),
             cached_layouts: Vec::new(),
@@ -207,25 +202,7 @@ impl Renderer {
         load_op: wgpu::LoadOp<wgpu::Color>,
         rect: (f32, f32, f32, f32),
     ) {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("waterfall_pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: load_op,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-            timestamp_writes: None,
-        });
-
-        let (sx, sy, sw, sh) = compute_scissor_rect(rect, width, height);
-        pass.set_scissor_rect(sx, sy, sw, sh);
+        let mut pass = begin_layer_pass(encoder, target, load_op, "waterfall_pass", rect, width, height);
 
         if !self.instance_buffers.is_empty() && !self.current_batch_counts.is_empty() {
             pass.set_pipeline(&self.render.pipeline);
@@ -245,17 +222,6 @@ impl Renderer {
     pub fn clear_note_data(&mut self) {
         self.seek_index = None;
         self.state.reset();
-    }
-
-    /// Whether GPU timestamp queries are supported on this device.
-    pub fn gpu_timing_available(&self) -> bool {
-        self.timer.supported
-    }
-
-    /// Read back GPU timestamps from the previous frame.
-    /// Returns `(compute_ms, render_ms)` or `None` if unsupported or timed out.
-    pub fn read_gpu_timings(&self) -> Option<(f64, f64)> {
-        self.timer.read_timings(&self.device)
     }
 
     /// Total number of note instances prepared for the current frame（不含键盘琴键）。
