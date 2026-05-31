@@ -359,6 +359,13 @@ impl App {
     fn sync_audio_playback(&mut self) {
         if self.project.playback.is_playing {
             let audio_clips = self.project.audio_timeline_clips();
+            // 所有音频轨道被静音时，直接暂停播放器，避免 mix() 空 clips 导致卡顿
+            if audio_clips.is_empty() {
+                if self.audio_player.is_playing() {
+                    self.audio_player.pause();
+                }
+                return;
+            }
             let clips_changed = audio_clips != self.last_audio_clips;
             if clips_changed {
                 self.last_audio_clips.clone_from(&audio_clips);
