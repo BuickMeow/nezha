@@ -367,6 +367,12 @@ fn build_ffmpeg_args(config: &ExportConfig, audio_wav: Option<&Path>) -> Vec<Str
     args.push("-c:v".to_string());
     args.push(config.ffmpeg_encoder_name());
 
+    // ── Color: force full range (PC) to prevent darkening ──
+    //   ffmpeg defaults to limited range (16-235) for YUV output,
+    //   which compresses brightness and causes color shift.
+    args.push("-color_range".to_string());
+    args.push("pc".to_string());
+
     // ── Quality / codec-specific settings ──
     match &config.backend {
         EncoderBackend::Software => build_software_args(&mut args, &config.codec, &config.quality),

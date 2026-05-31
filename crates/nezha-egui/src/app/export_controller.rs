@@ -281,10 +281,14 @@ impl ExportController {
                     }
                     ExportState::Error(msg) => {
                         ui.label("❌ 导出失败");
-                        ui.label(
-                            egui::RichText::new(msg.as_str())
-                                .color(egui::Color32::from_rgb(255, 100, 100)),
-                        );
+                        egui::ScrollArea::vertical()
+                            .max_height(400.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(msg.as_str())
+                                        .color(egui::Color32::from_rgb(255, 100, 100)),
+                                );
+                            });
                         if ui.button("确定").clicked() {
                             dismiss = true;
                         }
