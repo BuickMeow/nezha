@@ -204,6 +204,8 @@ file_loader.reading: "正在读取文件..."
 
 track.video: "视频 %{count}"
 track.audio: "音频 %{count}"
+track.video_prefix: "视频"
+track.audio_prefix: "音频"
 clip.waterfall: "默认瀑布流 %{count}"
 clip.solid_color: "纯色 %{count}"
 clip.counter: "计数器 %{count}"

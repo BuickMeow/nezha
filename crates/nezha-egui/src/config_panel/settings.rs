@@ -1,6 +1,7 @@
 //! 设置标签页 — 主题、语言、音频设备、关于。
 
 use crate::app::ThemeMode;
+use crate::config_panel::ConfigAction;
 use eframe::egui;
 use rust_i18n::t;
 
@@ -10,7 +11,7 @@ pub fn show(
     locale: &mut String,
     audio_device_name: &mut Option<String>,
     audio_devices: &[String],
-) {
+) -> Option<ConfigAction> {
     ui.label(t!("settings.theme"));
     ui.horizontal(|ui| {
         if ui
@@ -35,6 +36,7 @@ pub fn show(
 
     ui.separator();
     ui.label(t!("settings.language"));
+    let mut locale_changed = false;
     ui.horizontal(|ui| {
         if ui
             .selectable_label(*locale == "auto", t!("settings.language.auto"))
@@ -42,6 +44,7 @@ pub fn show(
         {
             *locale = "auto".to_string();
             rust_i18n::set_locale(crate::config::resolve_locale("auto"));
+            locale_changed = true;
         }
         if ui
             .selectable_label(*locale == "zh-CN", "中文")
@@ -49,6 +52,7 @@ pub fn show(
         {
             *locale = "zh-CN".to_string();
             rust_i18n::set_locale("zh-CN");
+            locale_changed = true;
         }
         if ui
             .selectable_label(*locale == "en-US", "English")
@@ -56,6 +60,7 @@ pub fn show(
         {
             *locale = "en-US".to_string();
             rust_i18n::set_locale("en-US");
+            locale_changed = true;
         }
     });
 
@@ -89,4 +94,10 @@ pub fn show(
     ui.separator();
     ui.label(t!("settings.about"));
     ui.label("Nezha MIDI Renderer v0.1.0");
+
+    if locale_changed {
+        Some(ConfigAction::LocaleChanged)
+    } else {
+        None
+    }
 }

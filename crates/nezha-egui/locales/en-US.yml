@@ -204,6 +204,8 @@ file_loader.reading: "Reading file..."
 
 track.video: "Video %{count}"
 track.audio: "Audio %{count}"
+track.video_prefix: "Video"
+track.audio_prefix: "Audio"
 clip.waterfall: "Waterfall %{count}"
 clip.solid_color: "Solid Color %{count}"
 clip.counter: "Counter %{count}"

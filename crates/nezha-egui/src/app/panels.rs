@@ -78,6 +78,9 @@ impl App {
             config_panel::ConfigAction::RemoveMedia(media_idx) => {
                 self.remove_media(media_idx);
             }
+            config_panel::ConfigAction::LocaleChanged => {
+                self.project.timeline_state.data.rename_all_tracks();
+            }
         }
     }
 

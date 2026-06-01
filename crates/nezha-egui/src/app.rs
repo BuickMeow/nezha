@@ -69,6 +69,10 @@ impl App {
         let theme_mode = ThemeMode::System;
         theme_mode.apply(&cc.egui_ctx);
 
+        // Load config early to set locale before ProjectState::new() creates tracks.
+        let cfg = crate::config::Config::load();
+        rust_i18n::set_locale(crate::config::resolve_locale(&cfg.locale));
+
         let mut app = Self {
             renderer: PreviewRenderer::new(cc),
             project: ProjectState::new(),
@@ -79,7 +83,6 @@ impl App {
             last_saved_config: String::new(),
         };
 
-        let cfg = crate::config::Config::load();
         app.last_saved_config = serde_json::to_string(&cfg).unwrap_or_default();
         cfg.apply(&mut app.ui, &mut app.project);
         app.ui.refresh_audio_devices();

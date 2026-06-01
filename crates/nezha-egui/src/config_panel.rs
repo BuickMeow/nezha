@@ -47,6 +47,7 @@ pub enum ConfigAction {
     ImportMedia,
     AddMediaToTimeline(usize),
     RemoveMedia(usize),
+    LocaleChanged,
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> {
@@ -101,8 +102,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                         state.locale,
                         state.audio_device_name,
                         state.audio_devices,
-                    );
-                    None
+                    )
                 }
             };
 

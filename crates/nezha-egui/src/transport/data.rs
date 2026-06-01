@@ -30,6 +30,24 @@ impl Default for TimelineData {
 }
 
 impl TimelineData {
+    /// 根据当前 locale 重新命名所有轨道。
+    pub fn rename_all_tracks(&mut self) {
+        let mut video_count = 0;
+        let mut audio_count = 0;
+        for track in &mut self.tracks {
+            match track.kind {
+                TrackKind::Video => {
+                    video_count += 1;
+                    track.name = t!("track.video", count = video_count).to_string();
+                }
+                TrackKind::Audio => {
+                    audio_count += 1;
+                    track.name = t!("track.audio", count = audio_count).to_string();
+                }
+            }
+        }
+    }
+
     pub fn alloc_clip_id(&mut self) -> usize {
         let id = self.next_clip_id;
         self.next_clip_id += 1;
@@ -280,13 +298,7 @@ impl TimelineData {
             .map(|d| d.track_was_inserted)
             .unwrap_or(false);
 
-        // 3. 根据目标轨道类型决定名称前缀
-        let name_prefix = match target_track_kind {
-            TrackKind::Video => t!("track.video").to_string(),
-            TrackKind::Audio => t!("track.audio").to_string(),
-        };
-
-        // 4. 计算目标位置
+        // 3. 计算目标位置
         // 先找到同类轨道的全局索引列表
         let same_kind_indices: Vec<usize> = self
             .tracks
@@ -302,7 +314,10 @@ impl TimelineData {
         } else if !track_already_inserted {
             // 目标超出范围，创建新轨道（如果还没创建过）
             let count = same_kind_indices.len();
-            let name = format!("{} {}", name_prefix, count + 1);
+            let name = match target_track_kind {
+                TrackKind::Video => t!("track.video", count = count + 1).to_string(),
+                TrackKind::Audio => t!("track.audio", count = count + 1).to_string(),
+            };
             let new_track = Track::new(&name, target_track_kind);
             // 新轨道插入到同类轨道组的末尾
             let insert_pos = same_kind_indices.last().map(|&i| i + 1).unwrap_or(0);
@@ -329,7 +344,10 @@ impl TimelineData {
         } else {
             // 找不到目标轨道，创建新的
             let count = same_kind_indices.len();
-            let name = format!("{} {}", name_prefix, count + 1);
+            let name = match target_track_kind {
+                TrackKind::Video => t!("track.video", count = count + 1).to_string(),
+                TrackKind::Audio => t!("track.audio", count = count + 1).to_string(),
+            };
             let mut track = Track::new(&name, target_track_kind);
             track.clips.push(clip);
             self.tracks.push(track);
@@ -477,6 +495,7 @@ mod tests {
 
     #[test]
     fn test_next_track_names() {
+        rust_i18n::set_locale("zh-CN");
         let tracks = vec![];
         assert_eq!(next_video_track_name(&tracks), "视频 1");
         assert_eq!(next_audio_track_name(&tracks), "音频 1");
