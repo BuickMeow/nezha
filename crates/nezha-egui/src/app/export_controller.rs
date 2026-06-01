@@ -1,5 +1,6 @@
 use eframe::egui;
 use nezha_encoder::{EncoderError, FfmpegEncoder};
+use rust_i18n::t;
 use std::time::{Duration, Instant};
 
 /// 导出统计信息，用于 UI 展示。
@@ -116,7 +117,7 @@ impl ExportController {
         let path = match export_path {
             Some(p) => PathBuf::from(p),
             None => {
-                self.state = Some(ExportState::Error("未选择导出路径".to_string()));
+                self.state = Some(ExportState::Error(t!("error.export.path_not_selected").to_string()));
                 return;
             }
         };
@@ -140,7 +141,7 @@ impl ExportController {
         let backend: EncoderBackend = match encoder_backend.parse() {
             Ok(b) => b,
             Err(e) => {
-                self.state = Some(ExportState::Error(format!("加速后端解析失败: {}", e)));
+                self.state = Some(ExportState::Error(format!("{}: {}", t!("error.export.backend_parse"), e)));
                 return;
             }
         };
@@ -193,11 +194,11 @@ impl ExportController {
             }
             Err(EncoderError::FfmpegNotFound) => {
                 self.state = Some(ExportState::Error(
-                    "未找到 ffmpeg。请将 ffmpeg 放在程序所在目录或加入 PATH 环境变量。".into(),
+                    t!("error.export.ffmpeg_not_found").to_string(),
                 ));
             }
             Err(e) => {
-                self.state = Some(ExportState::Error(format!("启动编码器失败: {}", e)));
+                self.state = Some(ExportState::Error(format!("{}: {}", t!("error.export.encoder_start").to_string(), e)));
             }
         }
     }
@@ -223,7 +224,7 @@ impl ExportController {
                     egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
                 );
 
-            egui::Window::new("导出视频")
+            egui::Window::new(t!("export_dialog.title"))
                 .order(egui::Order::Tooltip)
                 .collapsible(false)
                 .resizable(false)
@@ -234,23 +235,23 @@ impl ExportController {
                         if let Some(stats) = status.stats() {
                             Self::render_export_progress(ui, &stats, render_fps);
                         }
-                        if ui.button("取消").clicked() {
+                        if ui.button(t!("export_dialog.cancel")).clicked() {
                             dismiss = true;
                         }
                     }
                     ExportState::Finalizing { .. } => {
                         if let Some(stats) = &finalizing_stats {
-                            ui.label("⏳ 正在完成编码...");
+                            ui.label(t!("export_dialog.finalizing"));
                             ui.separator();
                             Self::render_export_progress(ui, stats, render_fps);
                             ui.separator();
-                            ui.label("(ffmpeg 正在封装文件，请稍候)");
+                            ui.label(t!("export_dialog.finalizing.hint"));
                             ui.add_space(8.0);
                             ui.horizontal(|ui| {
-                                if ui.button("✅ 强制完成").clicked() {
+                                if ui.button(t!("export_dialog.force_finish")).clicked() {
                                     force_finish = true;
                                 }
-                                ui.label("视频已可用，跳过等待");
+                                ui.label(t!("export_dialog.force_finish.hint"));
                             });
                         }
                     }
@@ -259,28 +260,28 @@ impl ExportController {
                         elapsed,
                         avg_fps,
                     } => {
-                        ui.label("✅ 导出完成！");
+                        ui.label(t!("export_dialog.completed"));
                         ui.separator();
-                        ui.label(format!("总帧数: {}", total_frames));
+                        ui.label(t!("export_dialog.completed.total_frames", count = total_frames));
                         let total_secs = *total_frames as f64 / render_fps as f64;
-                        ui.label(format!("时长: {}", format_duration(total_secs)));
-                        ui.label(format!(
-                            "总用时: {}",
-                            format_duration(elapsed.as_secs_f64())
+                        ui.label(t!("export_dialog.completed.duration", duration = format_duration(total_secs)));
+                        ui.label(t!(
+                            "export_dialog.completed.elapsed",
+                            duration = format_duration(elapsed.as_secs_f64())
                         ));
-                        ui.label(format!("平均速度: {:.0} fps", avg_fps));
+                        ui.label(t!("export_dialog.completed.avg_fps", fps = format!("{:.0}", avg_fps)));
                         if *elapsed > Duration::ZERO && total_secs > 0.0 {
-                            ui.label(format!(
-                                "倍率: {:.1}x 原速",
-                                total_secs / elapsed.as_secs_f64()
+                            ui.label(t!(
+                                "export_dialog.completed.speedup",
+                                speed = format!("{:.1}", total_secs / elapsed.as_secs_f64())
                             ));
                         }
-                        if ui.button("确定").clicked() {
+                        if ui.button(t!("export_dialog.completed.ok")).clicked() {
                             dismiss = true;
                         }
                     }
                     ExportState::Error(msg) => {
-                        ui.label("❌ 导出失败");
+                        ui.label(t!("export_dialog.error"));
                         egui::ScrollArea::vertical()
                             .max_height(400.0)
                             .show(ui, |ui| {
@@ -289,7 +290,7 @@ impl ExportController {
                                         .color(egui::Color32::from_rgb(255, 100, 100)),
                                 );
                             });
-                        if ui.button("确定").clicked() {
+                        if ui.button(t!("export_dialog.error.ok")).clicked() {
                             dismiss = true;
                         }
                     }
@@ -312,24 +313,25 @@ impl ExportController {
         let progress = stats.current_frame as f32 / stats.total_frames.max(1) as f32;
         let fps_f = fps as f64;
 
-        ui.label(format!(
-            "帧: {} / {}",
-            stats.current_frame, stats.total_frames
+        ui.label(t!(
+            "export_progress.frames",
+            current = stats.current_frame,
+            total = stats.total_frames
         ));
 
         let current_secs = stats.current_frame as f64 / fps_f.max(1.0);
         let total_secs = stats.total_frames as f64 / fps_f.max(1.0);
-        ui.label(format!(
-            "时间: {} / {}",
-            format_duration(current_secs),
-            format_duration(total_secs)
+        ui.label(t!(
+            "export_progress.time",
+            current = format_duration(current_secs),
+            total = format_duration(total_secs)
         ));
 
         ui.add(egui::ProgressBar::new(progress).show_percentage());
 
         ui.separator();
 
-        ui.label(format!("渲染速度: {:.0} fps", stats.current_fps));
+        ui.label(t!("export_progress.speed", fps = format!("{:.0}", stats.current_fps)));
 
         let speed = if stats.elapsed.as_secs_f64() > 0.0 && fps_f > 0.0 {
             let rendered_duration = stats.current_frame as f64 / fps_f;
@@ -337,19 +339,19 @@ impl ExportController {
         } else {
             0.0
         };
-        ui.label(format!("速度: {:.1}x 原速", speed));
+        ui.label(t!("export_progress.speedup", speed = format!("{:.1}", speed)));
 
         let elapsed = stats.elapsed;
         if stats.current_frame > 0 && stats.current_fps > 0.0 {
             let remaining_frames = stats.total_frames - stats.current_frame;
             let remaining_secs = remaining_frames as f64 / stats.current_fps;
-            ui.label(format!(
-                "已用: {} / 剩余: {}",
-                format_duration(elapsed.as_secs_f64()),
-                format_duration(remaining_secs)
+            ui.label(t!(
+                "export_progress.elapsed",
+                elapsed = format_duration(elapsed.as_secs_f64()),
+                remaining = format_duration(remaining_secs)
             ));
         } else {
-            ui.label(format!("已用: {}", format_duration(elapsed.as_secs_f64())));
+            ui.label(t!("export_progress.elapsed_only", elapsed = format_duration(elapsed.as_secs_f64())));
         }
     }
 }

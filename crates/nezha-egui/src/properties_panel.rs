@@ -13,6 +13,7 @@ use crate::app::project_state::MidiEntry;
 use crate::transport::{ClipKind, TimelineState};
 use common::show_common;
 use eframe::egui;
+use rust_i18n::t;
 
 pub fn show(
     ui: &mut egui::Ui,
@@ -25,14 +26,14 @@ pub fn show(
         .id_salt("properties_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.heading(format!("属性（{:.0}%）", zoom * 100.0));
+            ui.heading(t!("properties.title", zoom = (zoom * 100.0) as u32));
             ui.separator();
 
             let Some(selected_id) = timeline_state.selection.selected_clip_id else {
-                ui.label("未选中任何图层");
+                ui.label(t!("properties.none_selected"));
                 ui.add_space(4.0);
                 ui.label(
-                    egui::RichText::new("在时间轴上点击一个片段\n以编辑其属性")
+                    egui::RichText::new(t!("properties.none_selected.hint"))
                         .size(11.0)
                         .color(ui.visuals().weak_text_color()),
                 );
@@ -50,15 +51,15 @@ pub fn show(
                         ui.label(egui::RichText::new(&clip.name).strong());
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
-                            ui.label("开始:");
+                            ui.label(t!("properties.start"));
                             ui.label(format!("{:.2}s", clip.start));
                         });
                         ui.horizontal(|ui| {
-                            ui.label("结束:");
+                            ui.label(t!("properties.end"));
                             ui.label(format!("{:.2}s", clip.end));
                         });
                         ui.horizontal(|ui| {
-                            ui.label("时长:");
+                            ui.label(t!("properties.duration"));
                             ui.label(format!("{:.2}s", clip.end - clip.start));
                         });
 
@@ -67,7 +68,7 @@ pub fn show(
                         // 删除按钮
                         if ui
                             .button(
-                                egui::RichText::new("🗑 删除此图层")
+                                egui::RichText::new(format!("🗑 {}", t!("properties.delete")))
                                     .color(egui::Color32::from_rgb(255, 120, 100)),
                             )
                             .clicked()
@@ -95,21 +96,24 @@ pub fn show(
                                 counter::show(ui, clip, midi_files);
                             }
                             ClipKind::Audio => {
-                                ui.label("音频图层");
+                                ui.label(t!("properties.layer.audio"));
                                 if let Some(audio_idx) = clip.audio_idx {
-                                    ui.label(format!("音频 ID: {}", audio_idx));
+                                    let msg = t!("properties.layer.audio_id", audio_idx = audio_idx);
+                                    ui.label(msg);
                                 }
                             }
                             ClipKind::Image => {
-                                ui.label("图片图层");
+                                ui.label(t!("properties.layer.image"));
                                 if let Some(media_idx) = clip.media_idx {
-                                    ui.label(format!("素材 ID: {}", media_idx));
+                                    let msg = t!("properties.layer.image_id", media_idx = media_idx);
+                                    ui.label(msg);
                                 }
                             }
                             ClipKind::Video => {
-                                ui.label("视频图层");
+                                ui.label(t!("properties.layer.video"));
                                 if let Some(media_idx) = clip.media_idx {
-                                    ui.label(format!("素材 ID: {}", media_idx));
+                                    let msg = t!("properties.layer.video_id", media_idx = media_idx);
+                                    ui.label(msg);
                                 }
                             }
                         }

@@ -31,3 +31,5 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 puffin = { workspace = true, optional = true }
 puffin_http = { version = "0.17", optional = true }
+rust-i18n = { workspace = true }
+sys-locale = { workspace = true }

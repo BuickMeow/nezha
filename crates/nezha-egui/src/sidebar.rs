@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum SidebarTab {
@@ -17,11 +18,11 @@ pub fn show(ui: &mut egui::Ui, active_tab: &mut SidebarTab, panel_visible: &mut 
         ui.add_space(20.0);
 
         let tabs = [
-            (SidebarTab::Style, "🎨", "样式"),
-            (SidebarTab::Project, "🎵", "项目"),
-            (SidebarTab::Media, "📦", "素材"),
-            (SidebarTab::Export, "📤", "导出"),
-            (SidebarTab::Settings, "\u{2699}", "设置"),
+            (SidebarTab::Style, "🎨", t!("sidebar.style")),
+            (SidebarTab::Project, "🎵", t!("sidebar.project")),
+            (SidebarTab::Media, "📦", t!("sidebar.media")),
+            (SidebarTab::Export, "📤", t!("sidebar.export")),
+            (SidebarTab::Settings, "\u{2699}", t!("sidebar.settings")),
         ];
 
         for (tab, icon, label) in tabs {

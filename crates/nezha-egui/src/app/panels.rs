@@ -136,6 +136,7 @@ impl App {
                         encoder_backend: &mut self.ui.encoder_backend,
                         export_path: &mut self.ui.export_path,
                         theme_mode: &mut self.ui.theme_mode,
+                        locale: &mut self.ui.locale,
                         soundfonts: &self.project.soundfonts,
                         audio_device_name: &mut self.ui.audio_device_name,
                         audio_devices: &self.ui.audio_devices,

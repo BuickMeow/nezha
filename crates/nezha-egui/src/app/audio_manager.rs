@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc;
 
 use crate::app::audio_player::AudioPlayback;
@@ -46,7 +47,7 @@ struct RenderState {
 /// Parameters for [`AudioManager::start_render`].
 pub struct RenderParams<'a> {
     pub midi_idx: usize,
-    pub midi: &'a nezha_core::MidiFile,
+    pub midi: Arc<nezha_core::MidiFile>,
     pub sample_rate: u32,
     pub channels: ChannelCount,
     pub use_limiter: bool,
@@ -219,7 +220,7 @@ impl AudioManager {
             let id = project.timeline_state.data.alloc_clip_id();
             let mut clip = TrackClip::new_audio(
                 id,
-                format!("音频: {}", self.cached_midi_name),
+                rust_i18n::t!("clip.audio_name", name = self.cached_midi_name).to_string(),
                 audio_idx,
                 duration_secs as f32,
             );

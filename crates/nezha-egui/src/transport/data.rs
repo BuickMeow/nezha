@@ -1,16 +1,17 @@
 use eframe::egui;
+use rust_i18n::t;
 
 use super::interaction::TimelineInteraction;
 use super::types::{ClipKind, Track, TrackClip, TrackKind};
 
 pub fn next_video_track_name(tracks: &[Track]) -> String {
     let count = tracks.iter().filter(|t| t.kind == TrackKind::Video).count();
-    format!("视频 {}", count + 1)
+    t!("track.video", count = count + 1).to_string()
 }
 
 pub fn next_audio_track_name(tracks: &[Track]) -> String {
     let count = tracks.iter().filter(|t| t.kind == TrackKind::Audio).count();
-    format!("音频 {}", count + 1)
+    t!("track.audio", count = count + 1).to_string()
 }
 
 #[derive(Clone, Debug)]
@@ -67,24 +68,24 @@ impl TimelineData {
         let mut clip = match kind {
             ClipKind::Waterfall => {
                 let mut c = TrackClip::new_waterfall(id, midi_idx);
-                c.name = format!("默认瀑布流 {}", type_count);
+                c.name = t!("clip.waterfall", count = type_count).to_string();
                 c.content_start_offset = content_start_offset;
                 c.content_end_offset = content_end_offset;
                 c
             }
             ClipKind::SolidColor => {
                 let mut c = TrackClip::new_solid_color(id, color);
-                c.name = format!("纯色 {}", type_count);
+                c.name = t!("clip.solid_color", count = type_count).to_string();
                 c
             }
             ClipKind::Counter => {
                 let mut c = TrackClip::new_counter(id, midi_idx);
-                c.name = format!("计数器 {}", type_count);
+                c.name = t!("clip.counter", count = type_count).to_string();
                 c
             }
-            ClipKind::Audio => TrackClip::new_audio(id, format!("音频 {}", type_count), 0, 5.0),
-            ClipKind::Image => TrackClip::new_image(id, format!("图片 {}", type_count), 0, 5.0),
-            ClipKind::Video => TrackClip::new_video(id, format!("视频 {}", type_count), 0, 5.0),
+            ClipKind::Audio => TrackClip::new_audio(id, t!("clip.audio", count = type_count).to_string(), 0, 5.0),
+            ClipKind::Image => TrackClip::new_image(id, t!("clip.image", count = type_count).to_string(), 0, 5.0),
+            ClipKind::Video => TrackClip::new_video(id, t!("clip.video", count = type_count).to_string(), 0, 5.0),
         };
         clip.end = if duration > 0.0 { duration } else { 5.0 };
 
@@ -281,8 +282,8 @@ impl TimelineData {
 
         // 3. 根据目标轨道类型决定名称前缀
         let name_prefix = match target_track_kind {
-            TrackKind::Video => "视频",
-            TrackKind::Audio => "音频",
+            TrackKind::Video => t!("track.video").to_string(),
+            TrackKind::Audio => t!("track.audio").to_string(),
         };
 
         // 4. 计算目标位置

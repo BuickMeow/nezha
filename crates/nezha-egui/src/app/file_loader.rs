@@ -3,6 +3,7 @@ use super::error::AppError;
 use super::loading::{MidiLoadEvent, MidiLoader};
 use super::project_state::ProjectState;
 use eframe::egui;
+use rust_i18n::t;
 use std::sync::mpsc;
 
 pub(crate) enum MidiLoadResult {
@@ -182,7 +183,7 @@ impl FileLoader {
                     egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
                 );
 
-            egui::Window::new("正在加载 MIDI")
+            egui::Window::new(t!("file_loader.title"))
                 .order(egui::Order::Tooltip)
                 .collapsible(false)
                 .resizable(false)
@@ -190,9 +191,10 @@ impl FileLoader {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ui.ctx(), |ui| {
                     if let Some(progress) = &loader.current_progress {
-                        ui.label(format!(
-                            "正在解析音轨 {} / {}",
-                            progress.current_track, progress.total_tracks
+                        ui.label(t!(
+                            "file_loader.parsing",
+                            current = progress.current_track,
+                            total = progress.total_tracks
                         ));
                         let ratio =
                             progress.current_track as f32 / progress.total_tracks.max(1) as f32;
@@ -201,7 +203,7 @@ impl FileLoader {
                         ui.label(msg);
                         ui.add(egui::Spinner::new());
                     } else {
-                        ui.label("正在读取文件...");
+                        ui.label(t!("file_loader.reading"));
                         ui.add(egui::Spinner::new());
                     }
                 });

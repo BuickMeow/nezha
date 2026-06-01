@@ -8,6 +8,7 @@ use crate::app::ThemeMode;
 use crate::app::project_state::{MidiEntry, SoundFontEntry};
 use crate::sidebar::SidebarTab;
 use eframe::egui;
+use rust_i18n::t;
 
 pub struct ConfigState<'a> {
     pub active_tab: SidebarTab,
@@ -21,6 +22,7 @@ pub struct ConfigState<'a> {
     pub encoder_backend: &'a mut String,
     pub export_path: &'a mut Option<String>,
     pub theme_mode: &'a mut ThemeMode,
+    pub locale: &'a mut String,
     pub soundfonts: &'a [SoundFontEntry],
     pub audio_device_name: &'a mut Option<String>,
     pub audio_devices: &'a [String],
@@ -54,7 +56,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
         .id_salt("config_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.heading("配置");
+            ui.heading(t!("config.title"));
             ui.separator();
 
             let result: Option<ConfigAction> = match state.active_tab {
@@ -96,6 +98,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut ConfigState) -> Option<ConfigAction> 
                     settings::show(
                         ui,
                         state.theme_mode,
+                        state.locale,
                         state.audio_device_name,
                         state.audio_devices,
                     );

@@ -1,6 +1,7 @@
 use super::App;
 use crate::app::error::AppError;
 use eframe::egui;
+use rust_i18n::t;
 use std::sync::mpsc;
 
 use super::loading::{MidiLoadEvent, MidiLoader};
@@ -123,7 +124,7 @@ impl App {
                         egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
                     );
 
-                egui::Window::new("正在读取压缩包...")
+                egui::Window::new(t!("archive_picker.loading"))
                     .order(egui::Order::Tooltip)
                     .collapsible(false)
                     .resizable(false)
@@ -132,7 +133,7 @@ impl App {
                     .show(ui.ctx(), |ui| {
                         ui.horizontal(|ui| {
                             ui.add(egui::Spinner::new());
-                            ui.label("正在扫描压缩包内的 MIDI 文件...");
+                            ui.label(t!("archive_picker.scanning"));
                         });
                     });
                 return;
@@ -156,7 +157,7 @@ impl App {
         let mut confirmed = false;
         let mut cancelled = false;
 
-        egui::Window::new("📦 从压缩包中选择 MIDI 文件")
+        egui::Window::new(t!("archive_picker.title"))
             .order(egui::Order::Tooltip)
             .collapsible(false)
             .resizable(false)
@@ -164,13 +165,14 @@ impl App {
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .default_size([560.0, 500.0])
             .show(ui.ctx(), |ui| {
-                ui.label(format!(
-                    "来源: {}",
-                    std::path::Path::new(&picker.path)
+                let source_label = t!(
+                    "archive_picker.source",
+                    path = std::path::Path::new(&picker.path)
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or(&picker.path)
-                ));
+                );
+                ui.label(source_label);
                 ui.add_space(4.0);
 
                 // 搜索框
@@ -178,7 +180,7 @@ impl App {
                     ui.label("🔍");
                     let response = ui.add(
                         egui::TextEdit::singleline(&mut picker.search_query)
-                            .hint_text("搜索文件名...")
+                            .hint_text(t!("archive_picker.search"))
                             .desired_width(ui.available_width()),
                     );
                     if response.changed() {
@@ -199,7 +201,7 @@ impl App {
                             ui.add_space(available_height.max(200.0) / 2.0 - 12.0);
                             ui.horizontal_centered(|ui| {
                                 ui.label(
-                                    egui::RichText::new("没有匹配的文件")
+                                    egui::RichText::new(t!("archive_picker.no_match"))
                                         .color(ui.visuals().weak_text_color()),
                                 );
                             });
@@ -318,7 +320,7 @@ impl App {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         let count = picker.filtered.len();
                         ui.label(
-                            egui::RichText::new(format!("共 {count} 个 MIDI 文件"))
+                            egui::RichText::new(t!("archive_picker.count", count = count))
                                 .small()
                                 .color(ui.visuals().weak_text_color()),
                         );
@@ -327,12 +329,12 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let has_selection = picker.selected_idx.is_some();
                         let confirm_btn =
-                            ui.add_enabled(has_selection, egui::Button::new("确认导入"));
+                            ui.add_enabled(has_selection, egui::Button::new(t!("archive_picker.confirm")));
                         if confirm_btn.clicked() {
                             confirmed = true;
                         }
 
-                        if ui.button("取消").clicked() {
+                        if ui.button(t!("archive_picker.cancel")).clicked() {
                             cancelled = true;
                         }
                     });

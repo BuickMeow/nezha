@@ -2,6 +2,7 @@ use crate::transport::TimelineDrawContext;
 use crate::transport::controller::TimelineCommand;
 use crate::transport::timecode::{font, format_timecode_full};
 use eframe::egui;
+use rust_i18n::t;
 
 pub fn draw_controls(ctx: &mut TimelineDrawContext<'_>, is_playing: bool, current_time: f32) {
     let controls_rect = ctx.layout.controls_rect;
@@ -36,7 +37,7 @@ pub fn draw_controls(ctx: &mut TimelineDrawContext<'_>, is_playing: bool, curren
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(format!("缩放: {:.0}px/s", ctx.state.view.zoom))
+                egui::RichText::new(t!("timeline.zoom", zoom = format!("{:.0}", ctx.state.view.zoom)))
                     .font(font(11.0))
                     .color(ctx.c.dim_text),
             );

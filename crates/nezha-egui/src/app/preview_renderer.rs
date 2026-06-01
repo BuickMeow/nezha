@@ -210,7 +210,7 @@ impl PreviewRenderer {
         let renderer = render_ctx.get_or_create_renderer(
             clip.id,
             midi_idx,
-            &entry.file,
+            entry.file.as_ref(),
             ctx.render_width,
             clip.equal_key_width,
         );
@@ -219,7 +219,7 @@ impl PreviewRenderer {
             ctx.render_height,
             clip_time,
             clip.speed,
-            Some(&entry.file),
+            Some(entry.file.as_ref()),
             &clip_style,
         );
         let note_count = renderer.total_instances();

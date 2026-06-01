@@ -4,6 +4,7 @@ use crate::config_panel::ConfigAction;
 use crate::transport::TimelineState;
 use eframe::egui;
 use nezha_media::MediaType;
+use rust_i18n::t;
 
 pub fn show(
     ui: &mut egui::Ui,
@@ -13,11 +14,11 @@ pub fn show(
 ) -> Option<ConfigAction> {
     let mut action = None;
 
-    ui.label("素材库");
+    ui.label(t!("media.library"));
     ui.add_space(4.0);
 
     if media.is_empty() {
-        ui.label("暂无素材");
+        ui.label(t!("media.empty"));
     } else {
         for (idx, entry) in media.entries.iter().enumerate() {
             let info = &entry.info;
@@ -31,7 +32,7 @@ pub fn show(
                 MediaType::Image => "🖼",
             };
             let duration_text = if info.media_type == MediaType::Image {
-                "图片".to_string()
+                rust_i18n::t!("media.image").to_string()
             } else {
                 format!("{:.1}s", info.duration_secs)
             };
@@ -56,10 +57,10 @@ pub fn show(
                         .small()
                         .color(egui::Color32::GRAY),
                 );
-                if ui.button("➕").on_hover_text("添加到时间线").clicked() {
+                if ui.button("➕").on_hover_text(t!("media.add_to_timeline")).clicked() {
                     action = Some(ConfigAction::AddMediaToTimeline(idx));
                 }
-                if ui.button("🗑").on_hover_text("移除素材").clicked() {
+                if ui.button("🗑").on_hover_text(t!("media.remove")).clicked() {
                     action = Some(ConfigAction::RemoveMedia(idx));
                 }
             });
@@ -68,10 +69,10 @@ pub fn show(
 
     ui.add_space(8.0);
     ui.separator();
-    ui.label("导入素材");
+    ui.label(t!("media.import"));
     ui.add_space(4.0);
 
-    if ui.button("📥 导入媒体").on_hover_text("导入视频/音频/图片文件").clicked() {
+    if ui.button(format!("📥 {}", t!("media.import.btn"))).on_hover_text(t!("media.import.tooltip")).clicked() {
         action = Some(ConfigAction::ImportMedia);
     }
 

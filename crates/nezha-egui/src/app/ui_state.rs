@@ -36,6 +36,7 @@ pub struct UiState {
     pub encoder_backend: String,
     pub export_path: Option<String>,
     pub theme_mode: ThemeMode,
+    pub locale: String,
     pub zoom: f32,
     pub pan_offset: egui::Vec2,
     // 音频输出设备
@@ -53,6 +54,7 @@ impl Default for UiState {
             encoder_backend: "Software (CPU)".to_string(),
             export_path: None,
             theme_mode: ThemeMode::System,
+            locale: "auto".to_string(),
             zoom: 1.0,
             pan_offset: egui::Vec2::ZERO,
             audio_device_name: None,

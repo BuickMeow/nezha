@@ -3,6 +3,7 @@
 use crate::app::project_state::MidiEntry;
 use crate::config_panel::ConfigAction;
 use eframe::egui;
+use rust_i18n::t;
 
 pub fn show(
     ui: &mut egui::Ui,
@@ -11,11 +12,11 @@ pub fn show(
 ) -> Option<ConfigAction> {
     let mut action = None;
 
-    ui.label("MIDI 文件");
+    ui.label(t!("style.midi_files"));
     ui.add_space(4.0);
 
     if midi_files.is_empty() {
-        ui.label("暂无 MIDI 文件");
+        ui.label(t!("style.midi_files.empty"));
     } else {
         for (idx, entry) in midi_files.iter().enumerate() {
             let is_highlighted = highlighted_midi_idx == &Some(idx);
@@ -42,7 +43,7 @@ pub fn show(
                 if response.clicked() {
                     *highlighted_midi_idx = Some(idx);
                 }
-                if ui.button("🎵").on_hover_text("渲染音频").clicked() {
+                if ui.button("🎵").on_hover_text(t!("style.midi.render_audio")).clicked() {
                     action = Some(ConfigAction::RenderAudio(idx));
                 }
                 if ui.button("🗑").clicked() {
@@ -53,24 +54,24 @@ pub fn show(
     }
 
     ui.add_space(8.0);
-    if ui.button("➕ 选择 MIDI / 压缩包 / DMS").clicked() {
+    if ui.button(t!("style.midi.select")).clicked() {
         action = Some(ConfigAction::SelectMidi);
     }
 
     ui.add_space(12.0);
     ui.separator();
-    ui.label("添加图层到时间轴");
+    ui.label(t!("style.add_layers"));
     ui.add_space(4.0);
 
-    if ui.button("🌊 默认瀑布流").clicked() {
+    if ui.button(t!("style.add_waterfall")).clicked() {
         action = Some(ConfigAction::AddWaterfall);
     }
     ui.add_space(4.0);
-    if ui.button("🎨 纯色图层").clicked() {
+    if ui.button(t!("style.add_solid_color")).clicked() {
         action = Some(ConfigAction::AddSolidColor);
     }
     ui.add_space(4.0);
-    if ui.button("📊 音符计数器").clicked() {
+    if ui.button(t!("style.add_counter")).clicked() {
         action = Some(ConfigAction::AddCounter);
     }
 

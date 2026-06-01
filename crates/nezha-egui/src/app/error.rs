@@ -1,26 +1,27 @@
+use rust_i18n::t;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("媒体探测失败: {0}")]
+    #[error("{0}")]
     MediaProbe(#[from] nezha_media::MediaError),
 
-    #[error("IO 错误: {0}")]
+    #[error("{0}")]
     Io(#[from] std::io::Error),
 
-    #[error("MIDI 加载失败: {0}")]
+    #[error("{0}")]
     MidiLoad(String),
 
-    #[error("压缩包打开失败: {0}")]
+    #[error("{0}")]
     ArchiveOpen(String),
 
-    #[error("DMS 解析失败: {0}")]
+    #[error("{0}")]
     DmsLoad(String),
 
-    #[error("音频渲染失败: {0}")]
+    #[error("{0}")]
     AudioRender(String),
 
-    #[error("导出失败: {0}")]
+    #[error("{0}")]
     Export(String),
 
     #[error("{0}")]
@@ -76,5 +77,19 @@ impl AppError {
 
     pub fn export(e: impl std::fmt::Display) -> Self {
         Self::Export(e.to_string())
+    }
+
+    /// 返回用户友好的错误消息（已翻译）
+    pub fn user_message(&self) -> String {
+        match self {
+            AppError::MediaProbe(e) => format!("{}: {}", t!("error.media_probe"), e),
+            AppError::Io(e) => format!("{}: {}", t!("error.io"), e),
+            AppError::MidiLoad(e) => format!("{}: {}", t!("error.midi_load"), e),
+            AppError::ArchiveOpen(e) => format!("{}: {}", t!("error.archive_open"), e),
+            AppError::DmsLoad(e) => format!("{}: {}", t!("error.dms_load"), e),
+            AppError::AudioRender(e) => format!("{}: {}", t!("error.audio_render"), e),
+            AppError::Export(e) => format!("{}: {}", t!("error.export"), e),
+            AppError::Other(e) => e.clone(),
+        }
     }
 }

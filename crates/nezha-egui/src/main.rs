@@ -6,6 +6,8 @@ mod properties_panel;
 mod sidebar;
 mod transport;
 
+rust_i18n::i18n!("locales");
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(

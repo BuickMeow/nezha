@@ -12,6 +12,7 @@ pub struct Config {
     pub soundfont_paths: Vec<PathBuf>,
     pub audio_device_name: Option<String>,
     pub theme_mode: String, // "dark", "light", "system"
+    pub locale: String,     // "zh-CN", "en-US", or "auto"
     pub render_width: u32,
     pub render_height: u32,
     pub fps: u32,
@@ -32,6 +33,7 @@ impl Default for Config {
             soundfont_paths: Vec::new(),
             audio_device_name: None,
             theme_mode: "dark".to_string(),
+            locale: "auto".to_string(),
             render_width: constants::DEFAULT_PREVIEW_WIDTH,
             render_height: constants::DEFAULT_PREVIEW_HEIGHT,
             fps: constants::DEFAULT_FPS,
@@ -45,6 +47,26 @@ impl Default for Config {
             encoder_backend: "Software (CPU)".to_string(),
             export_path: None,
         }
+    }
+}
+
+/// Detect the best matching locale from the system.
+/// Returns "zh-CN" if system language is Chinese, "en-US" otherwise.
+fn detect_system_locale() -> &'static str {
+    let sys_locale = sys_locale::get_locale().unwrap_or_else(|| "en-US".into());
+    if sys_locale.starts_with("zh") {
+        "zh-CN"
+    } else {
+        "en-US"
+    }
+}
+
+/// Resolve the locale string: "auto" → detect system, otherwise use as-is.
+pub fn resolve_locale(locale: &str) -> &str {
+    if locale == "auto" {
+        detect_system_locale()
+    } else {
+        locale
     }
 }
 
@@ -116,6 +138,10 @@ impl Config {
         project.render.audio_layers = self.audio_layers;
         project.render.audio_min_velocity = self.audio_min_velocity;
 
+        // Locale
+        ui.locale = self.locale.clone();
+        rust_i18n::set_locale(resolve_locale(&self.locale));
+
         // Export settings
         ui.export_format = self.export_format.clone();
         ui.encoder = self.encoder.clone();
@@ -137,6 +163,7 @@ impl Config {
                 ThemeMode::Light => "light".to_string(),
                 ThemeMode::System => "system".to_string(),
             },
+            locale: ui.locale.clone(),
             render_width: project.render.width,
             render_height: project.render.height,
             fps: project.render.fps,

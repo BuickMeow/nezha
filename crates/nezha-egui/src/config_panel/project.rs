@@ -1,6 +1,7 @@
 //! 项目标签页 — 渲染设置 + 音色库管理。
 
 use eframe::egui;
+use rust_i18n::t;
 use std::path::PathBuf;
 
 use crate::app::project_state::{RenderSettings, SoundFontEntry};
@@ -14,10 +15,10 @@ pub fn show(
 ) -> Option<ProjectAction> {
     let mut action = None;
 
-    ui.label("渲染设置");
+    ui.label(t!("project.render_settings"));
 
     ui.horizontal(|ui| {
-        ui.label("分辨率:");
+        ui.label(t!("project.resolution"));
         ui.add(
             egui::DragValue::new(render_width)
                 .speed(1.0)
@@ -32,20 +33,20 @@ pub fn show(
     });
 
     ui.horizontal(|ui| {
-        ui.label("帧率:");
+        ui.label(t!("project.fps"));
         ui.add(egui::DragValue::new(fps).speed(1.0).range(1..=240));
         ui.label("fps");
     });
 
     ui.separator();
-    ui.label("音色库 (SoundFont)");
+    ui.label(t!("project.soundfont"));
     ui.add_space(4.0);
 
     // SoundFont list
     if soundfonts.is_empty() {
         ui.colored_label(
             egui::Color32::from_rgb(255, 180, 100),
-            "尚未添加音色库。渲染音频需要至少一个 SF2/SFZ 文件。",
+            t!("project.soundfont.empty"),
         );
     } else {
         let _total_height = soundfonts.len() as f32 * 24.0;
@@ -73,7 +74,7 @@ pub fn show(
             });
     }
 
-    if ui.button("添加音色库...").clicked() {
+    if ui.button(t!("project.soundfont.add_btn")).clicked() {
         action = Some(ProjectAction::AddSoundfont(PathBuf::new()));
     }
 
@@ -91,7 +92,7 @@ pub fn audio_render_dialog(
     let mut action = None;
     let mut use_stereo = matches!(render.audio_channels, nezha_xsynth::ChannelCount::Stereo);
 
-    egui::Window::new("音频渲染")
+    egui::Window::new(t!("audio_render.title"))
         .open(open)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .resizable(false)
@@ -100,9 +101,9 @@ pub fn audio_render_dialog(
             ui.label(format!("MIDI: {}", midi_name));
 
             ui.separator();
-            ui.label("音色库列表:");
+            ui.label(t!("audio_render.soundfont_list"));
             if soundfonts.is_empty() {
-                ui.colored_label(egui::Color32::RED, "⚠ 未选择音色库！");
+                ui.colored_label(egui::Color32::RED, t!("audio_render.soundfont.empty"));
             } else {
                 egui::ScrollArea::vertical()
                     .max_height(100.0)
@@ -116,7 +117,7 @@ pub fn audio_render_dialog(
 
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("采样率:");
+                ui.label(t!("audio_render.sample_rate"));
                 ui.add(
                     egui::DragValue::new(&mut render.audio_sample_rate)
                         .speed(100.0)
@@ -126,15 +127,15 @@ pub fn audio_render_dialog(
             });
 
             ui.horizontal(|ui| {
-                ui.label("声道:");
-                ui.selectable_value(&mut use_stereo, true, "立体声");
-                ui.selectable_value(&mut use_stereo, false, "单声道");
+                ui.label(t!("audio_render.channels"));
+                ui.selectable_value(&mut use_stereo, true, t!("audio_render.channels.stereo"));
+                ui.selectable_value(&mut use_stereo, false, t!("audio_render.channels.mono"));
             });
 
-            ui.checkbox(&mut render.audio_use_limiter, "启用限制器");
+            ui.checkbox(&mut render.audio_use_limiter, t!("audio_render.limiter"));
 
             ui.horizontal(|ui| {
-                ui.label("层数:");
+                ui.label(t!("audio_render.layers"));
                 ui.add(
                     egui::DragValue::new(&mut render.audio_layers)
                         .speed(1.0)
@@ -143,18 +144,18 @@ pub fn audio_render_dialog(
             });
 
             ui.horizontal(|ui| {
-                ui.label("最低力度阈值:");
+                ui.label(t!("audio_render.min_velocity"));
                 ui.add(egui::Slider::new(&mut render.audio_min_velocity, 0..=127).text(""));
             });
-            ui.label("力度 ≤ 此值的音符将被筛除（默认 1 表示只筛除力度 0~1）");
+            ui.label(t!("audio_render.min_velocity.hint"));
 
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("取消").clicked() {
+                if ui.button(t!("audio_render.cancel")).clicked() {
                     action = Some(AudioRenderAction::Cancel);
                 }
                 if ui
-                    .button(egui::RichText::new("开始渲染").strong())
+                    .button(egui::RichText::new(t!("audio_render.start")).strong())
                     .clicked()
                     && !soundfonts.is_empty()
                 {
@@ -183,13 +184,13 @@ pub fn audio_progress_dialog(
     current_voice: u64,
     open: &mut bool,
 ) {
-    egui::Window::new("音频渲染进度")
+    egui::Window::new(t!("audio_progress.title"))
         .open(open)
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .resizable(false)
         .collapsible(false)
         .show(ctx, |ui| {
-            ui.label("MIDI 音频渲染中...");
+            ui.label(t!("audio_progress.rendering"));
             ui.add_space(8.0);
 
             let progress_bar = egui::ProgressBar::new(progress as f32)
@@ -198,8 +199,8 @@ pub fn audio_progress_dialog(
             ui.add(progress_bar);
 
             ui.add_space(4.0);
-            ui.label(format!("当前音色数: {}", current_voice));
-            ui.label(format!("进度: {:.1}%", progress * 100.0));
+            ui.label(t!("audio_progress.voices", count = current_voice));
+            ui.label(t!("audio_progress.percent", percent = format!("{:.1}", progress * 100.0)));
         });
 }
 

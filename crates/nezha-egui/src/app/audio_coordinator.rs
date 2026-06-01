@@ -115,7 +115,7 @@ impl AudioCoordinator {
                         self.manager
                             .start_render(&super::audio_manager::RenderParams {
                                 midi_idx: idx,
-                                midi: &entry.file,
+                                midi: std::sync::Arc::clone(&entry.file),
                                 sample_rate: project.render.audio_sample_rate,
                                 channels: project.render.audio_channels,
                                 use_limiter: project.render.audio_use_limiter,

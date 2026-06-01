@@ -138,7 +138,7 @@ impl TrackClip {
         let mut clip = Self::new_base(
             id,
             ClipKind::Waterfall,
-            format!("默认瀑布流 {}", id),
+            rust_i18n::t!("clip.waterfall", count = id).to_string(),
             egui::Color32::from_rgb(80, 150, 220),
         );
         clip.border_width = 0.1;
@@ -148,14 +148,14 @@ impl TrackClip {
     }
 
     pub fn new_solid_color(id: usize, color: egui::Color32) -> Self {
-        Self::new_base(id, ClipKind::SolidColor, format!("纯色 {}", id), color)
+        Self::new_base(id, ClipKind::SolidColor, rust_i18n::t!("clip.solid_color", count = id).to_string(), color)
     }
 
     pub fn new_counter(id: usize, midi_idx: Option<usize>) -> Self {
         let mut clip = Self::new_base(
             id,
             ClipKind::Counter,
-            format!("计数器 {}", id),
+            rust_i18n::t!("clip.counter", count = id).to_string(),
             egui::Color32::from_rgb(0xBB, 0xB0, 0x94),
         );
         clip.midi_idx = midi_idx;

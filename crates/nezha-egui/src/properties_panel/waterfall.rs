@@ -4,14 +4,16 @@ use crate::app::project_state::MidiEntry;
 use crate::transport::TrackClip;
 use eframe::egui;
 use nezha_renderer::RenderMode;
+use rust_i18n::t;
 
 pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], fps: u32) {
     ui.add_space(4.0);
 
     // MIDI 来源
-    ui.label("MIDI 来源");
+    ui.label(t!("waterfall.midi_source"));
 
     let clip_id = clip.id;
+    let deleted_label = t!("waterfall.midi_source.deleted").to_string();
     let current_name = clip
         .midi_idx
         .and_then(|idx| midi_files.get(idx))
@@ -20,7 +22,7 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
                 .file_name()
                 .and_then(|n| n.to_str())
         })
-        .unwrap_or("（已删除）");
+        .unwrap_or(&deleted_label);
 
     egui::ComboBox::from_id_salt(format!("midi_source_{}", clip_id))
         .selected_text(current_name)
@@ -49,12 +51,12 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
     ui.add_space(4.0);
 
     // 渲染模式
-    ui.label("渲染模式");
+    ui.label(t!("waterfall.render_mode"));
     let is_tick = clip.render_mode == RenderMode::TickBased;
     let mut mode_idx: usize = if is_tick { 1 } else { 0 };
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut mode_idx, 0, "秒模式");
-        ui.selectable_value(&mut mode_idx, 1, "Tick 模式");
+        ui.selectable_value(&mut mode_idx, 0, t!("waterfall.render_mode.time"));
+        ui.selectable_value(&mut mode_idx, 1, t!("waterfall.render_mode.tick"));
     });
     if mode_idx == 0 && is_tick {
         clip.render_mode = RenderMode::TimeBased;
@@ -64,15 +66,15 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
 
     ui.add_space(4.0);
 
-    ui.label("钢琴键宽度");
+    ui.label(t!("waterfall.key_width"));
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut clip.equal_key_width, true, "等宽");
-        ui.selectable_value(&mut clip.equal_key_width, false, "真实比例");
+        ui.selectable_value(&mut clip.equal_key_width, true, t!("waterfall.key_width.equal"));
+        ui.selectable_value(&mut clip.equal_key_width, false, t!("waterfall.key_width.real"));
     });
 
     ui.add_space(4.0);
 
-    ui.label("琴键区高度");
+    ui.label(t!("waterfall.keyboard_height"));
     ui.horizontal(|ui| {
         ui.add(
             egui::Slider::new(&mut clip.keyboard_height_percent, 0.0..=0.5)
@@ -81,17 +83,14 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
         );
     });
     ui.label(
-        egui::RichText::new(format!(
-            "{:.0}%（设为 0 则隐藏键盘）",
-            clip.keyboard_height_percent * 100.0
-        ))
-        .size(11.0)
-        .color(ui.visuals().weak_text_color()),
+        egui::RichText::new(t!("waterfall.keyboard_height.hint", percent = (clip.keyboard_height_percent * 100.0) as u32))
+            .size(11.0)
+            .color(ui.visuals().weak_text_color()),
     );
 
     ui.add_space(4.0);
 
-    ui.label("流速");
+    ui.label(t!("waterfall.speed"));
     ui.horizontal(|ui| {
         ui.add(
             egui::Slider::new(&mut clip.speed, 0.1..=100.0)
@@ -100,17 +99,17 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
         );
     });
     ui.label(
-        egui::RichText::new(format!("当前: {:.1}x", clip.speed))
+        egui::RichText::new(t!("waterfall.speed.current", speed = format!("{:.1}", clip.speed)))
             .size(11.0)
             .color(ui.visuals().weak_text_color()),
     );
 
     ui.add_space(8.0);
     ui.separator();
-    ui.heading("瀑布流样式");
+    ui.heading(t!("waterfall.style"));
     ui.add_space(4.0);
 
-    ui.label("边框宽度");
+    ui.label(t!("waterfall.border_width"));
     ui.horizontal(|ui| {
         ui.add(
             egui::Slider::new(&mut clip.border_width, 0.0..=1.0)
@@ -125,7 +124,7 @@ pub fn show(ui: &mut egui::Ui, clip: &mut TrackClip, midi_files: &[MidiEntry], f
     );
 
     ui.add_space(4.0);
-    ui.label("圆角");
+    ui.label(t!("waterfall.rounding"));
     ui.horizontal(|ui| {
         ui.add(
             egui::Slider::new(&mut clip.rounding, 0.0..=1.0)

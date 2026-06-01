@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::transport::{ClipKind, TimelineState, Track, TrackClip, TrackKind};
 use nezha_core::MidiFile;
 
@@ -5,7 +7,7 @@ use nezha_core::MidiFile;
 #[derive(Clone, Debug)]
 pub struct MidiEntry {
     pub path: String,
-    pub file: MidiFile,
+    pub file: Arc<MidiFile>,
 }
 
 /// 项目中的 MIDI 资源集合与当前高亮选择。
@@ -22,7 +24,7 @@ impl MidiStore {
     pub fn highlighted_midi(&self) -> Option<&MidiFile> {
         self.highlighted_idx
             .and_then(|idx| self.entries.get(idx))
-            .map(|entry| &entry.file)
+            .map(|entry| entry.file.as_ref())
     }
 
     pub fn insert(
@@ -38,7 +40,7 @@ impl MidiStore {
         }
 
         let idx = self.entries.len();
-        self.entries.push(MidiEntry { path, file: midi });
+        self.entries.push(MidiEntry { path, file: Arc::new(midi) });
         self.highlighted_idx = Some(idx);
         self.bind_unassigned_waterfalls(idx, timeline_state);
         idx

@@ -7,7 +7,7 @@ impl App {
     pub(super) fn import_media_by_type(&mut self) {
         let mut dialog = rfd::FileDialog::new();
         dialog = dialog.add_filter(
-            "所有媒体文件",
+            &rust_i18n::t!("media.all_files").to_string(),
             &[
                 "mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "ts", "m4v", "mp3", "wav",
                 "flac", "ogg", "aac", "m4a", "wma", "opus", "png", "jpg", "jpeg", "bmp", "webp",

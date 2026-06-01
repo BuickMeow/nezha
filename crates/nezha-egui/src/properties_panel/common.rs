@@ -2,22 +2,23 @@
 
 use crate::transport::LayerCommon;
 use eframe::egui;
+use rust_i18n::t;
 
 pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
-    ui.heading("变换");
+    ui.heading(t!("common.transform"));
     ui.add_space(2.0);
 
     // ── 位置 ──
-    ui.label("位置");
+    ui.label(t!("common.position"));
     ui.horizontal(|ui| {
-        ui.label("X:");
+        ui.label(t!("common.x"));
         ui.add(
             egui::DragValue::new(&mut common.position_x)
                 .speed(1.0)
                 .range(-7680.0..=7680.0)
                 .suffix(" px"),
         );
-        ui.label("Y:");
+        ui.label(t!("common.y"));
         ui.add(
             egui::DragValue::new(&mut common.position_y)
                 .speed(1.0)
@@ -29,16 +30,16 @@ pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
     ui.add_space(4.0);
 
     // ── 缩放（带链接按钮）──
-    ui.label("缩放");
+    ui.label(t!("common.scale"));
     ui.horizontal(|ui| {
         // 链接按钮
         let link_text = if common.scale_linked { "🔗" } else { "🔓" };
         if ui
             .selectable_label(common.scale_linked, link_text)
             .on_hover_text(if common.scale_linked {
-                "已锁定横纵比"
+                t!("common.scale.locked")
             } else {
-                "未锁定横纵比"
+                t!("common.scale.unlocked")
             })
             .clicked()
         {
@@ -49,7 +50,7 @@ pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
             }
         }
 
-        ui.label("W:");
+        ui.label(t!("common.w"));
         let prev_x = common.scale_x;
         let resp_x = ui.add(
             egui::DragValue::new(&mut common.scale_x)
@@ -62,7 +63,7 @@ pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
             common.scale_y = (common.scale_y * delta * 100.0).round() / 100.0;
         }
 
-        ui.label("H:");
+        ui.label(t!("common.h"));
         let prev_y = common.scale_y;
         let resp_y = ui.add(
             egui::DragValue::new(&mut common.scale_y)
@@ -77,7 +78,7 @@ pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
     });
     if common.scale_x < 0.0 || common.scale_y < 0.0 {
         ui.label(
-            egui::RichText::new("💡 负缩放 = 翻转（部分渲染器可能尚未支持）")
+            egui::RichText::new(format!("💡 {}", t!("common.scale.negative")))
                 .size(11.0)
                 .color(egui::Color32::from_rgb(255, 200, 100)),
         );
@@ -85,11 +86,11 @@ pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
 
     ui.add_space(6.0);
     ui.separator();
-    ui.heading("合成");
+    ui.heading(t!("common.composition"));
     ui.add_space(2.0);
 
     // ── 不透明度 ──
-    ui.label("不透明度");
+    ui.label(t!("common.opacity"));
     ui.horizontal(|ui| {
         ui.add(
             egui::Slider::new(&mut common.opacity, 0.0..=1.0)
@@ -106,7 +107,7 @@ pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
     ui.add_space(4.0);
 
     // ── 合成方式 ──
-    ui.label("合成方式");
+    ui.label(t!("common.blend_mode"));
     egui::ComboBox::from_id_salt("blend_mode_common")
         .selected_text(blend_mode_label(common.blend_mode))
         .width(ui.available_width())
@@ -127,10 +128,11 @@ pub fn show_common(ui: &mut egui::Ui, common: &mut LayerCommon) {
         });
 }
 
-fn blend_mode_label(mode: crate::transport::BlendMode) -> &'static str {
+fn blend_mode_label(mode: crate::transport::BlendMode) -> String {
     match mode {
-        crate::transport::BlendMode::Normal => "正常",
-        crate::transport::BlendMode::Add => "相加（Add）",
-        crate::transport::BlendMode::Multiply => "正片叠底（Multiply）",
+        crate::transport::BlendMode::Normal => t!("common.blend_mode.normal"),
+        crate::transport::BlendMode::Add => t!("common.blend_mode.add"),
+        crate::transport::BlendMode::Multiply => t!("common.blend_mode.multiply"),
     }
+    .to_string()
 }

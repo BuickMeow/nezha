@@ -1,6 +1,7 @@
 //! 导出标签页 — 导出设置。
 
 use nezha_encoder::EncoderBackend;
+use rust_i18n::t;
 
 use crate::app::project_state::MidiEntry;
 use crate::config_panel::ConfigAction;
@@ -16,10 +17,10 @@ pub fn show(
 ) -> Option<ConfigAction> {
     let mut action = None;
 
-    ui.label("导出设置");
+    ui.label(t!("export.settings"));
 
     ui.horizontal(|ui| {
-        ui.label("渲染格式:");
+        ui.label(t!("export.format"));
         egui::ComboBox::from_id_salt("export_format")
             .selected_text(export_format.as_str())
             .show_ui(ui, |ui| {
@@ -31,7 +32,7 @@ pub fn show(
     });
 
     ui.horizontal(|ui| {
-        ui.label("编码器:");
+        ui.label(t!("export.encoder"));
         egui::ComboBox::from_id_salt("encoder")
             .selected_text(encoder.as_str())
             .show_ui(ui, |ui| {
@@ -44,7 +45,7 @@ pub fn show(
     });
 
     ui.horizontal(|ui| {
-        ui.label("加速:");
+        ui.label(t!("export.acceleration"));
         let backends = EncoderBackend::available_on_current_platform();
         egui::ComboBox::from_id_salt("encoder_backend")
             .selected_text(encoder_backend.as_str())
@@ -61,7 +62,7 @@ pub fn show(
             });
     });
 
-    ui.label("导出位置:");
+    ui.label(t!("export.location"));
     ui.horizontal(|ui| {
         if let Some(path) = export_path {
             let btn_width = 60.0;
@@ -75,9 +76,9 @@ pub fn show(
             )
             .on_hover_text(path.as_str());
         } else {
-            ui.label("未选择");
+            ui.label(t!("export.location.none"));
         }
-        if ui.button("浏览...").clicked() {
+        if ui.button(t!("export.location.browse")).clicked() {
             let default_name = midi_files
                 .first()
                 .and_then(|entry| {
@@ -104,7 +105,7 @@ pub fn show(
     });
 
     ui.add_space(12.0);
-    if ui.button("开始导出").clicked() {
+    if ui.button(t!("export.start")).clicked() {
         action = Some(ConfigAction::StartExport);
     }
 
