@@ -154,12 +154,11 @@ impl App {
                 });
         }
 
-        if self
+        if !self
             .project
             .timeline_state
             .selection
-            .selected_clip_id
-            .is_some()
+            .is_empty()
         {
             egui::Panel::right("properties_panel")
                 .exact_size(220.0)

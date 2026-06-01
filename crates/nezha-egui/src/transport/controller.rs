@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+
+use super::interaction::{BoxSelect, BoxSelectMode};
 use super::{ClipDragState, ScrollbarDrag, TimelineState, TrackKind};
 
 pub enum TimelineCommand {
@@ -13,6 +16,9 @@ pub enum TimelineCommand {
         scroll_offset: f32,
     },
     SelectClip(usize),
+    ToggleClipSelection(usize),
+    AddToSelection(usize),
+    SelectClips(HashSet<usize>),
     ClearSelection,
     MoveClipToStart {
         clip_id: usize,
@@ -34,6 +40,10 @@ pub enum TimelineCommand {
     ToggleTrackMute(usize),
     ToggleTrackHidden(usize),
     ToggleTrackLocked(usize),
+    SetSnapLine(Option<f32>),
+    StartBoxSelect(f32, f32, BoxSelectMode),
+    UpdateBoxSelect(f32, f32),
+    FinishBoxSelect(HashSet<usize>),
 }
 
 pub fn apply_timeline_commands(
@@ -66,6 +76,9 @@ pub fn apply_timeline_commands(
                 state.view.scroll_offset = scroll_offset.max(0.0);
             }
             TimelineCommand::SelectClip(clip_id) => state.selection.select(clip_id),
+            TimelineCommand::ToggleClipSelection(clip_id) => state.selection.toggle(clip_id),
+            TimelineCommand::AddToSelection(clip_id) => state.selection.add(clip_id),
+            TimelineCommand::SelectClips(ids) => state.selection.set_bulk(ids),
             TimelineCommand::ClearSelection => state.selection.clear(),
             TimelineCommand::MoveClipToStart { clip_id, start } => {
                 state.move_clip_to_start(clip_id, start);
@@ -91,6 +104,44 @@ pub fn apply_timeline_commands(
             }
             TimelineCommand::ToggleTrackLocked(track_index) => {
                 state.data.toggle_track_locked(track_index);
+            }
+            TimelineCommand::SetSnapLine(pos) => {
+                state.interaction.snap_line = pos;
+            }
+            TimelineCommand::StartBoxSelect(start_x, start_y, mode) => {
+                state.interaction.box_select = Some(BoxSelect {
+                    start_x,
+                    start_y,
+                    current_x: start_x,
+                    current_y: start_y,
+                    mode,
+                });
+            }
+            TimelineCommand::UpdateBoxSelect(x, y) => {
+                if let Some(bs) = &mut state.interaction.box_select {
+                    bs.current_x = x;
+                    bs.current_y = y;
+                }
+            }
+            TimelineCommand::FinishBoxSelect(hit_ids) => {
+                if let Some(bs) = &state.interaction.box_select {
+                    match bs.mode {
+                        BoxSelectMode::Replace => {
+                            state.selection.set_bulk(hit_ids);
+                        }
+                        BoxSelectMode::Add => {
+                            for id in &hit_ids {
+                                state.selection.add(*id);
+                            }
+                        }
+                        BoxSelectMode::Toggle => {
+                            for id in &hit_ids {
+                                state.selection.toggle(*id);
+                            }
+                        }
+                    }
+                }
+                state.interaction.box_select = None;
             }
         }
     }

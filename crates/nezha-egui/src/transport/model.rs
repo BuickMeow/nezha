@@ -70,8 +70,17 @@ impl TimelineState {
         self.selection.select(id);
     }
 
+    pub fn remove_selected_clips(&mut self) {
+        let ids: Vec<usize> = self.selection.selected_ids.iter().copied().collect();
+        for id in ids {
+            self.data.remove_clip(id);
+        }
+        self.selection.clear();
+    }
+
+    /// 向后兼容：删除单个选中的 clip
     pub fn remove_selected_clip(&mut self) {
-        if let Some(id) = self.selection.selected_clip_id {
+        if let Some(id) = self.selection.primary_selected() {
             self.data.remove_clip(id);
             self.selection.clear();
         }

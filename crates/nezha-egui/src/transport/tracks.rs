@@ -1,12 +1,27 @@
+use std::collections::HashSet;
+
 use crate::transport::controller::TimelineCommand;
 use crate::transport::hit_test::clip_hit_areas;
 use crate::transport::layout::{TimelineLayout, TimelineMetrics};
+use crate::transport::snap::{SnapPoint, collect_snap_points, find_snap};
 use crate::transport::timecode::font;
 use crate::transport::{
     ClipDragMode, ClipDragState, ClipKind, ThemeColors, TimelineDrawContext, TimelineView, Track,
     TrackKind,
 };
 use eframe::egui;
+
+/// 根据修饰键返回合适的选���命令
+fn modifier_select_command(ui: &egui::Ui, clip_id: usize) -> TimelineCommand {
+    let mods = ui.input(|i| i.modifiers);
+    if mods.ctrl || mods.command {
+        TimelineCommand::ToggleClipSelection(clip_id)
+    } else if mods.shift {
+        TimelineCommand::AddToSelection(clip_id)
+    } else {
+        TimelineCommand::SelectClip(clip_id)
+    }
+}
 
 /// Clip 交互的上下文信息（不含可变引用）。
 struct ClipInteractionContext<'a> {
@@ -19,6 +34,8 @@ struct ClipInteractionContext<'a> {
     clip_id: usize,
     clip_start: f32,
     clip_end: f32,
+    current_time: f32,
+    snap_points: &'a [SnapPoint],
 }
 
 /// Track 行绘制的上下文信息（不含可变引用）。
@@ -28,11 +45,13 @@ struct TrackRowContext<'a> {
     view: &'a TimelineView,
     colors: &'a ThemeColors,
     painter: &'a egui::Painter,
-    selected_id: Option<usize>,
+    selected_ids: &'a HashSet<usize>,
     track_kind_index: usize,
     track_kind: TrackKind,
     _dragged_clip_kind: Option<ClipKind>,
     fps: u32,
+    current_time: f32,
+    snap_points: &'a [SnapPoint],
 }
 
 pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -> (f32, bool) {
@@ -58,9 +77,13 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
             .map(|c| c.kind)
     });
 
+    // 收集吸附点（排除被拖拽的 clip）
+    let dragged_id = ctx.state.interaction.clip_drag.map(|d| d.clip_id);
+    let snap_points = collect_snap_points(ctx.state, ctx.current_time, dragged_id);
+
     let mut y = ctx.layout.ruler_rect.max.y - ctx.state.view.scroll_y;
     let view = &ctx.state.view;
-    let selected_id = ctx.state.selection.selected_clip_id;
+    let selected_ids = &ctx.state.selection.selected_ids;
     let tracks = &ctx.state.data.tracks;
     let fps = ctx.fps;
 
@@ -78,11 +101,13 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
                 view,
                 colors: ctx.c,
                 painter,
-                selected_id,
+                selected_ids,
                 track_kind_index: video_track_index,
                 track_kind: TrackKind::Video,
                 _dragged_clip_kind: dragged_clip_kind,
                 fps,
+                current_time: ctx.current_time,
+                snap_points: &snap_points,
             };
             let (new_y, row_clicked) = draw_track_row(
                 ctx.ui,
@@ -113,11 +138,13 @@ pub fn draw_tracks(ctx: &mut TimelineDrawContext<'_>, painter: &egui::Painter) -
                 view,
                 colors: ctx.c,
                 painter,
-                selected_id,
+                selected_ids,
                 track_kind_index: audio_track_index,
                 track_kind: TrackKind::Audio,
                 _dragged_clip_kind: dragged_clip_kind,
                 fps,
+                current_time: ctx.current_time,
+                snap_points: &snap_points,
             };
             let (new_y, row_clicked) = draw_track_row(
                 ctx.ui,
@@ -485,7 +512,12 @@ fn handle_selected_clip_interaction(
             && drag.mode == ClipDragMode::ResizeStart
         {
             let pointer_time = ctx.view.time_at_screen_x(&ctx.layout.timeline_rect, pointer_pos.x);
-            let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+            let mut new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+            let threshold = 5.0 / ctx.view.zoom;
+            if let Some(snap) = find_snap(new_start, ctx.snap_points, threshold) {
+                new_start = snap.snapped_time;
+                commands.push(TimelineCommand::SetSnapLine(Some(snap.snapped_time)));
+            }
             commands.push(TimelineCommand::ResizeClipStartTo {
                 clip_id: ctx.clip_id,
                 start: new_start,
@@ -528,7 +560,12 @@ fn handle_selected_clip_interaction(
             && drag.mode == ClipDragMode::ResizeEnd
         {
             let pointer_time = ctx.view.time_at_screen_x(&ctx.layout.timeline_rect, pointer_pos.x);
-            let new_end = drag.anchor_end + (pointer_time - drag.anchor_pointer_time);
+            let mut new_end = drag.anchor_end + (pointer_time - drag.anchor_pointer_time);
+            let threshold = 5.0 / ctx.view.zoom;
+            if let Some(snap) = find_snap(new_end, ctx.snap_points, threshold) {
+                new_end = snap.snapped_time;
+                commands.push(TimelineCommand::SetSnapLine(Some(snap.snapped_time)));
+            }
             commands.push(TimelineCommand::ResizeClipEndTo {
                 clip_id: ctx.clip_id,
                 end: new_end,
@@ -547,7 +584,7 @@ fn handle_selected_clip_interaction(
             )
             .on_hover_cursor(egui::CursorIcon::Grab);
         if mid_interact.clicked() {
-            commands.push(TimelineCommand::SelectClip(ctx.clip_id));
+            commands.push(modifier_select_command(ui, ctx.clip_id));
             *clip_clicked = true;
         }
         if mid_interact.drag_started() {
@@ -577,7 +614,12 @@ fn handle_selected_clip_interaction(
                 && drag.mode == ClipDragMode::Move
             {
                 let pointer_time = ctx.view.time_at_screen_x(&ctx.layout.timeline_rect, pointer_pos.x);
-                let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+                let mut new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+                let threshold = 5.0 / ctx.view.zoom;
+                if let Some(snap) = find_snap(new_start, ctx.snap_points, threshold) {
+                    new_start = snap.snapped_time;
+                    commands.push(TimelineCommand::SetSnapLine(Some(snap.snapped_time)));
+                }
                 commands.push(TimelineCommand::MoveClipToStart {
                     clip_id: ctx.clip_id,
                     start: new_start,
@@ -616,7 +658,7 @@ fn handle_unselected_clip_interaction(
         )
         .on_hover_cursor(egui::CursorIcon::Grab);
     if clip_interact.clicked() {
-        commands.push(TimelineCommand::SelectClip(ctx.clip_id));
+        commands.push(modifier_select_command(ui, ctx.clip_id));
         *clip_clicked = true;
     }
     if clip_interact.drag_started() {
@@ -646,7 +688,12 @@ fn handle_unselected_clip_interaction(
             && drag.mode == ClipDragMode::Move
         {
             let pointer_time = ctx.view.time_at_screen_x(&ctx.layout.timeline_rect, pointer_pos.x);
-            let new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+            let mut new_start = drag.anchor_start + (pointer_time - drag.anchor_pointer_time);
+            let threshold = 5.0 / ctx.view.zoom;
+            if let Some(snap) = find_snap(new_start, ctx.snap_points, threshold) {
+                new_start = snap.snapped_time;
+                commands.push(TimelineCommand::SetSnapLine(Some(snap.snapped_time)));
+            }
             commands.push(TimelineCommand::MoveClipToStart {
                 clip_id: ctx.clip_id,
                 start: new_start,
@@ -729,7 +776,7 @@ fn draw_track_row(
         let hit_areas = clip_hit_areas(ctx.layout, ctx.metrics, ctx.view, &track_rect, clip_start, clip_end);
         let clip_rect = hit_areas.clip_rect;
         if clip_rect.width() > 0.0 {
-            let is_selected = ctx.selected_id == Some(clip_id);
+            let is_selected = ctx.selected_ids.contains(&clip_id);
             if !track.locked {
                 let clip_ctx = ClipInteractionContext {
                     layout: ctx.layout,
@@ -741,6 +788,8 @@ fn draw_track_row(
                     clip_id,
                     clip_start,
                     clip_end,
+                    current_time: ctx.current_time,
+                    snap_points: ctx.snap_points,
                 };
                 if is_selected {
                     handle_selected_clip_interaction(
@@ -771,7 +820,7 @@ fn draw_track_row(
                     egui::Sense::click(),
                 );
                 if clip_interact.clicked() {
-                    commands.push(TimelineCommand::SelectClip(clip_id));
+                    commands.push(modifier_select_command(ui, clip_id));
                     clip_clicked = true;
                 }
             }

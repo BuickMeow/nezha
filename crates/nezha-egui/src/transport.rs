@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use eframe::egui;
 
 // ── Shared draw context ──
@@ -13,6 +15,7 @@ pub(crate) struct TimelineDrawContext<'a> {
     pub response: &'a egui::Response,
     pub duration: f32,
     pub fps: u32,
+    pub current_time: f32,
     pub commands: &'a mut Vec<TimelineCommand>,
 }
 
@@ -30,6 +33,7 @@ mod playhead;
 mod ruler;
 mod scrollbar;
 mod selection;
+mod snap;
 mod theme;
 mod timecode;
 mod tracks;
@@ -105,6 +109,7 @@ pub fn show(
         response: &response,
         duration,
         fps,
+        current_time: *current_time,
         commands: &mut commands,
     };
 
@@ -135,5 +140,85 @@ pub fn show(
         ctx.commands.push(TimelineCommand::ClearSelection);
     }
 
+    // 绘制吸附指示线
+    if let Some(snap_time) = state.interaction.snap_line {
+        let x = state.view.screen_x_for_time(&timeline_rect, snap_time);
+        if x >= timeline_rect.min.x + state.view.header_width {
+            painter.line_segment(
+                [
+                    egui::pos2(x, layout.ruler_rect.max.y),
+                    egui::pos2(x, layout.content_bottom),
+                ],
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 200, 255)),
+            );
+        }
+    }
+
+    // 绘制框选矩形
+    if let Some(bs) = &state.interaction.box_select {
+        let sel_rect = egui::Rect::from_two_pos(
+            egui::pos2(bs.start_x, bs.start_y),
+            egui::pos2(bs.current_x, bs.current_y),
+        );
+        painter.rect_filled(sel_rect, 0.0, egui::Color32::from_rgba_premultiplied(0, 120, 255, 40));
+        painter.rect_stroke(
+            sel_rect,
+            0.0,
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 120, 255)),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    // ── 框选交互 ──
+    if response.drag_started()
+        && !clip_clicked
+        && let Some(pos) = response.interact_pointer_pos()
+        && pos.y >= layout.ruler_rect.max.y
+        && pos.y <= layout.content_bottom
+    {
+        let mode = if ui.input(|i| i.modifiers.ctrl || i.modifiers.command) {
+            interaction::BoxSelectMode::Toggle
+        } else if ui.input(|i| i.modifiers.shift) {
+            interaction::BoxSelectMode::Add
+        } else {
+            interaction::BoxSelectMode::Replace
+        };
+        commands.push(TimelineCommand::StartBoxSelect(pos.x, pos.y, mode));
+    }
+
+    if state.interaction.box_select.is_some() {
+        if response.dragged()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            commands.push(TimelineCommand::UpdateBoxSelect(pos.x, pos.y));
+        }
+        if response.drag_stopped()
+            && let Some(bs) = &state.interaction.box_select
+        {
+            let sel_rect = egui::Rect::from_two_pos(
+                egui::pos2(bs.start_x, bs.start_y),
+                egui::pos2(bs.current_x, bs.current_y),
+            );
+            let mut hit_ids = HashSet::new();
+            for track in &state.data.tracks {
+                for clip in &track.clips {
+                    let clip_start_x = state.view.screen_x_for_time(&timeline_rect, clip.start);
+                    let clip_end_x = state.view.screen_x_for_time(&timeline_rect, clip.end);
+                    let clip_rect = egui::Rect::from_min_max(
+                        egui::pos2(clip_start_x, layout.ruler_rect.max.y),
+                        egui::pos2(clip_end_x, layout.content_bottom),
+                    );
+                    if sel_rect.intersects(clip_rect) {
+                        hit_ids.insert(clip.id);
+                    }
+                }
+            }
+            commands.push(TimelineCommand::FinishBoxSelect(hit_ids));
+        }
+    }
+
     apply_timeline_commands(is_playing, current_time, state, commands);
+
+    // 清除吸附线状态（每帧重置）
+    state.interaction.snap_line = None;
 }

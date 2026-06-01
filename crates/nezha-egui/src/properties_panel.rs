@@ -29,7 +29,8 @@ pub fn show(
             ui.heading(t!("properties.title", zoom = (zoom * 100.0) as u32));
             ui.separator();
 
-            let Some(selected_id) = timeline_state.selection.selected_clip_id else {
+            let selected_count = timeline_state.selection.selected_count();
+            let Some(selected_id) = timeline_state.selection.primary_selected() else {
                 ui.label(t!("properties.none_selected"));
                 ui.add_space(4.0);
                 ui.label(
@@ -39,6 +40,25 @@ pub fn show(
                 );
                 return;
             };
+
+            // 多选时显示概要信息
+            if selected_count > 1 {
+                ui.label(egui::RichText::new(
+                    t!("properties.multi_selected", count = selected_count),
+                ).strong());
+                ui.add_space(8.0);
+                if ui
+                    .button(
+                        egui::RichText::new(format!("🗑 {}", t!("properties.delete_all")))
+                            .color(egui::Color32::from_rgb(255, 120, 100)),
+                    )
+                    .clicked()
+                {
+                    timeline_state.remove_selected_clips();
+                    return;
+                }
+                return;
+            }
 
             // 查找选中的 clip
             let mut found = false;
