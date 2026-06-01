@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-xsynth-core = { git = "https://github.com/BuickMeow/xsynth.git", branch = "dysonsphere" }
-xsynth-soundfonts = { git = "https://github.com/BuickMeow/xsynth.git", branch = "dysonsphere" }
+#xsynth-core = { git = "https://github.com/BuickMeow/xsynth.git", branch = "dysonsphere" }
+#xsynth-soundfonts = { git = "https://github.com/BuickMeow/xsynth.git", branch = "dysonsphere" }
+xsynth-core = "0.4"
+xsynth-soundfonts = "0.4"
 nezha-core = { path = "../nezha-core" }
 hound = { workspace = true }
 thiserror = { workspace = true }
